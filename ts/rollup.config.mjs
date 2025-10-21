@@ -13,15 +13,11 @@ export default {
   plugins: [
     // Allows node_modules resolution
     resolve({ extensions }),
-
     // Compile TypeScript
     typescript(),
-
     json(),
-
     // Resolve CommonJS modules
     commonJS({ extensions }),
-
     // Transpile to ES5
     babel({
       extensions,
@@ -30,5 +26,8 @@ export default {
   ],
   output: {
     file: 'build/index.js',
+    format: 'cjs',
+    exports: 'default',
+    name: 'InitModule',
   },
 };
