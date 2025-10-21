@@ -3,7 +3,7 @@ import commonJS from '@rollup/plugin-commonjs';
 import json from '@rollup/plugin-json';
 import babel from '@rollup/plugin-babel';
 import typescript from '@rollup/plugin-typescript';
-import packageJson from "./package.json" with { type: 'json' };
+import pkg from './package.json' with {type: 'json'};
 
 const extensions = ['.mjs', '.js', '.ts', '.json'];
 
@@ -13,11 +13,15 @@ export default {
   plugins: [
     // Allows node_modules resolution
     resolve({ extensions }),
+
     // Compile TypeScript
     typescript(),
+
     json(),
+
     // Resolve CommonJS modules
     commonJS({ extensions }),
+
     // Transpile to ES5
     babel({
       extensions,
