@@ -1,0 +1,5 @@
+name: block-server
+session:
+  token_expiry_sec: 14400
+metrics:
+   prometheus_port: 9100

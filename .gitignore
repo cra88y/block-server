@@ -1,0 +1,16 @@
+# ts build artifacts
+/ts/node_modules
+/ts/build
+
+# go build artifacts
+*.so
+*.a
+*.o
+
+# editors 
+.vscode/
+.idea/
+
+# misc
+.DS_Store
+Thumbs.db
