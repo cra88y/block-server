@@ -3,9 +3,10 @@ package main
 import (
 	"context"
 	"database/sql"
+	"time"
+
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
-	"time"
 )
 
 const (
@@ -57,6 +58,8 @@ WHERE
 // Limit the number of concurrent realtime sessions active for a user to just one.
 func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtime.Logger, *api.Event) {
 	return func(ctx context.Context, logger runtime.Logger, evt *api.Event) {
+		TryClaimDailyDrops(ctx, logger, nk)
+
 		userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 		if !ok {
 			logger.Error("context did not contain user ID.")

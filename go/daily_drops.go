@@ -45,7 +45,7 @@ func RpcCanClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.D
 	return string(respBytes), nil
 }
 
-func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, out *api.Session, in *api.AuthenticateDeviceRequest) error {
+func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule) error {
 
 	// get UserID from context
 	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
@@ -223,7 +223,7 @@ func grantCappedDrops(ctx context.Context, logger runtime.Logger, nk runtime.Nak
 	}
 	// update wallet
 	changeset := map[string]int64{
-		"dropsLeft": dropsToGrant,
+		walletKeyDropsLeft: dropsToGrant,
 	}
 	if _, _, err := nk.WalletUpdate(ctx, userID, changeset, map[string]interface{}{}, false); err != nil {
 		logger.Error("WalletUpdate error: %v", err)

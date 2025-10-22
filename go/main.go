@@ -25,15 +25,15 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 	initStart := time.Now()
 
 	// after first time player init
-	if err := initializer.RegisterAfterAuthenticateDevice(InitializeUser); err != nil {
+	if err := initializer.RegisterAfterAuthenticateDevice(AfterAuthroizeUserDevice); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterAfterAuthenticateDevice(TryClaimDailyDrops); err != nil {
+	if err := initializer.RegisterAfterAuthenticateGameCenter(AfterAuthroizeUserGC); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	// session events
+
 	if err := registerSessionEvents(db, nk, initializer); err != nil {
 		return err
 	}
