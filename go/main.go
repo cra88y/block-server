@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"database/sql"
-	"github.com/heroiclabs/nakama-common/runtime"
-	"google.golang.org/protobuf/encoding/protojson"
 	"time"
+
+	"github.com/heroiclabs/nakama-common/runtime"
 )
 
 var (
@@ -24,22 +24,15 @@ const (
 func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, initializer runtime.Initializer) error {
 	initStart := time.Now()
 
-	marshaler := &protojson.MarshalOptions{
-		UseEnumNumbers: true,
-	}
-	unmarshaler := &protojson.UnmarshalOptions{
-		DiscardUnknown: false,
-	}
-
 	// after first time player init
 	if err := initializer.RegisterAfterAuthenticateDevice(InitializeUser); err != nil {
-	  logger.Error("Unable to register: %v", err)
-	  return err
+		logger.Error("Unable to register: %v", err)
+		return err
 	}
 	// session events
 	if err := registerSessionEvents(db, nk, initializer); err != nil {
 		return err
 	}
-	logger.Info("Plugin loaded in '%d' msec.", time.Now().Sub(initStart).Milliseconds())
+	logger.Info("Plugin loaded in '%d' msec.", time.Since(initStart).Milliseconds())
 	return nil
 }

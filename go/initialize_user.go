@@ -3,35 +3,33 @@ package main
 import (
 	"context"
 	"database/sql"
+
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
-	"time"
 )
 
 // Initialize user wallet currencies
-func InitializeUser(ctx context.Context, logger Logger, db *sql.DB, nk NakamaModule, out *api.Session, in *api.AuthenticateDeviceRequest) error {
-	if !out.Created{
-		return;
+func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, out *api.Session, in *api.AuthenticateDeviceRequest) error {
+	if !out.Created {
+		return nil
 	} // Only run if the authenticated account is new
 
 	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 	if !ok {
-	  return "", errors.New("Invalid context")
+		return runtime.NewError("Invalid context", 13)
 	}
-
 	// initial wallet configuration
-	changeset := map[string]interface{}{
-	  "gold": 500,
-	  "gems":  100,
-	  "treats": 1,
-	  "lootboxes": 0,
-	  "dropsLeft":  3,
+	changeset := map[string]int64{
+		"gold":      500,
+		"gems":      100,
+		"treats":    1,
+		"lootboxes": 0,
+		"dropsLeft": 0,
 	}
 
-	var metadata map[string]interface{}(
-		"dailyRewardReset": ""
-	)
-	if err := nk.WalletUpdate(ctx, userID, changeset, metadata, true); err != nil {
-	  // Handle error
+	var metadata map[string]interface{}
+	if _, _, err := nk.WalletUpdate(ctx, userID, changeset, metadata, true); err != nil {
+		return runtime.NewError("WalletUpdate error", 13)
 	}
+	return nil
 }

@@ -3,62 +3,65 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"time"
+
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
-	"time"
 )
 
 const (
-    storageCollectionDrops = "drops"
-    storageKeyDaily        = "daily"
-    walletKeyDropsLeft     = "dropsLeft"
-    maxDrops               = 5
-    dailyDropGrantCount    = 3
+	storageCollectionDrops = "drops"
+	storageKeyDaily        = "daily"
+	walletKeyDropsLeft     = "dropsLeft"
+	maxDrops               = 5
+	dailyDropGrantCount    = 3
 )
 
 type dailyDrops struct {
-    LastClaimUnix int64 `json:"last_claim_unix"` // The last time the user claimed the daily drops in UNIX time.
+	LastClaimUnix int64 `json:"last_claim_unix"` // The last time the user claimed the daily drops in UNIX time.
 }
+
 func RpcCanClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
-    var resp struct {
-        CanClaimDailyDrops bool `json:"canClaimDailyDrops"`
-    }
+	var resp struct {
+		CanClaimDailyDrops bool `json:"canClaimDailyDrops"`
+	}
 
-    dailyDropsState, _, err := getDailyDropsState(ctx, logger, nk)
-    if err != nil {
-        logger.Error("Error getting daily drops: %v", err)
-        return "", errInternalError
-    }
+	dailyDropsState, _, err := getDailyDropsState(ctx, logger, nk)
+	if err != nil {
+		logger.Error("Error getting daily drops: %v", err)
+		return "", errInternalError
+	}
 
-    resp.CanClaimDailyDrops = canUserClaimDailyDrops(dailyDropsState)
+	resp.CanClaimDailyDrops = canUserClaimDailyDrops(dailyDropsState)
 
-    respBytes, err := json.Marshal(resp)
-    if err != nil {
-        logger.Error("Marshal error: %v", err)
-        return "", errMarshal
-    }
+	respBytes, err := json.Marshal(resp)
+	if err != nil {
+		logger.Error("Marshal error: %v", err)
+		return "", errMarshal
+	}
 
-    logger.Debug("RpcCanClaimDailyDrops resp: %v", string(respBytes))
-    return string(respBytes), nil
+	logger.Debug("RpcCanClaimDailyDrops resp: %v", string(respBytes))
+	return string(respBytes), nil
 }
 
 func RpcClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 
 	// get UserID from context
-    userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
+	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 
-    // reject if not from valid client
-    if !ok {
-        return "", errNoUserIdFound
-    }
+	// reject if not from valid client
+	if !ok {
+		return "", errNoUserIdFound
+	}
 
-    var resp struct {
-        DropsLeft int64 `json:"dropsLeft"`
-    }
-    resp.DropsLeft = int64(0)
+	var resp struct {
+		DropsLeft int64 `json:"dropsLeft"`
+	}
+	resp.DropsLeft = int64(0)
 
 	// get current dailyDrops state
-    dailyDropsState, dropsStorageObj, err := getDailyDropsState(ctx, logger, nk)
+	dailyDropsState, dropsStorageObj, err := getDailyDropsState(ctx, logger, nk)
 	if err != nil {
 		return "", err
 	}
@@ -72,17 +75,25 @@ func RpcClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 
 	// get drops total before
 	currentDropsBefore := int64(0)
-	if val, ok := account.Wallet["dropsLeft"]; ok {
-		currentDropsBefore = val
+
+	var wallet map[string]int64
+	if err := json.Unmarshal([]byte(account.Wallet), &wallet); err != nil {
+		logger.Error("Unmarshal error: %v", err)
+		return "", errUnmarshal
 	}
+	drops, ok := wallet[walletKeyDropsLeft]
+	if !ok {
+		logger.Error("wallet JSON is valid but missing required key: %s", walletKeyDropsLeft)
+	}
+	currentDropsBefore = drops
 
 	// check if user has already claimed
 	if !canUserClaimDailyDrops(dailyDropsState) {
-        logger.Debug("User has already claimed daily drop today.")
-        resp.DropsLeft = currentDropsBefore
-        out, _ := json.Marshal(resp) // resp.DropsGranted is already 0
-        return string(out), nil
-    }
+		logger.Debug("User has already claimed daily drop today.")
+		resp.DropsLeft = currentDropsBefore
+		out, _ := json.Marshal(resp)
+		return string(out), nil
+	}
 	newTotalDrops, err := grantCappedDrops(ctx, logger, nk, userID, dailyDropGrantCount)
 	if err != nil {
 		return "", err
@@ -91,22 +102,22 @@ func RpcClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 	// grant drops
 	resp.DropsLeft = newTotalDrops
 	// calc amount actually granted
-    amountActuallyGranted := newTotalDrops - currentDropsBefore
+	//amountActuallyGranted := newTotalDrops - currentDropsBefore
 	// send user notification
-// 	err := nk.NotificationsSend(ctx, []*runtime.NotificationSend{{
-// 		Code: 1001,
-// 		Content: map[string]interface{}{
-// 			"dropsLeft": changeset["dropsLeft"],
-// 		},
-// 		Persistent: true,
-// 		Sender:     "", // sent by server
-// 		Subject:    "Daily drops granted!",
-// 		UserID:     userID,
-// 	}})
-// 	if err != nil {
-// 		logger.Error("NotificationsSend error: %v", err)
-// 		return "", errInternalError
-// 	}
+	// 	err := nk.NotificationsSend(ctx, []*runtime.NotificationSend{{
+	// 		Code: 1001,
+	// 		Content: map[string]interface{}{
+	// 			"dropsLeft": changeset["dropsLeft"],
+	// 		},
+	// 		Persistent: true,
+	// 		Sender:     "", // sent by server
+	// 		Subject:    "Daily drops granted!",
+	// 		UserID:     userID,
+	// 	}})
+	// 	if err != nil {
+	// 		logger.Error("NotificationsSend error: %v", err)
+	// 		return "", errInternalError
+	// 	}
 	// write current time to dailyDrops
 	dailyDropsState.LastClaimUnix = time.Now().UTC().Unix()
 	// marshall the response object
@@ -135,14 +146,14 @@ func RpcClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 		return "", errInternalError
 	}
 
-    out, err := json.Marshal(resp)
-    if err != nil {
-        logger.Error("Marshal error: %v", err)
-        return "", errMarshal
-    }
+	out, err := json.Marshal(resp)
+	if err != nil {
+		logger.Error("Marshal error: %v", err)
+		return "", errMarshal
+	}
 
-    logger.Debug("RpcClaimDailyDrops resp: %v", string(out))
-    return string(out), nil
+	logger.Debug("RpcClaimDailyDrops resp: %v", string(out))
+	return string(out), nil
 }
 
 // get last daily drop object
@@ -186,15 +197,24 @@ func grantCappedDrops(ctx context.Context, logger runtime.Logger, nk runtime.Nak
 		return 0, runtime.NewError("could not get user account", 13)
 	}
 	// get the current number of drops from the wallet
-	currentDrops := int64(0)
-	if val, ok := account.Wallet[walletKeyDropsLeft]; ok {
-		currentDrops = val
+	// get drops total before
+	currentDropsBefore := int64(0)
+
+	var wallet map[string]int64
+	if err := json.Unmarshal([]byte(account.Wallet), &wallet); err != nil {
+		logger.Error("Unmarshal error: %v", err)
+		return 0, errUnmarshal
 	}
+	drops, ok := wallet[walletKeyDropsLeft]
+	if !ok {
+		logger.Error("wallet JSON is valid but missing required key: %s", walletKeyDropsLeft)
+	}
+	currentDropsBefore = drops
 	// determine how many drops can granted
-	spaceAvailable := maxDrops - currentDrops
+	spaceAvailable := maxDrops - currentDropsBefore
 	if spaceAvailable <= 0 {
-		logger.Info("User '%s' already at or over drop cap. No drops granted. Current total: %d", userID, currentDrops)
-		return currentDrops, nil // No space, no drops granted, currentDrops returned
+		logger.Info("User '%s' already at or over drop cap. No drops granted. Current total: %d", userID, currentDropsBefore)
+		return currentDropsBefore, nil // No space, no drops granted, currentDrops returned
 	}
 	// clamp to space available
 	dropsToGrant := amountToAdd
@@ -204,20 +224,21 @@ func grantCappedDrops(ctx context.Context, logger runtime.Logger, nk runtime.Nak
 	// update wallet
 	changeset := map[string]int64{
 		"dropsLeft": dropsToGrant,
-	}	if _, _, err := nk.WalletUpdate(ctx, userID, changeset, map[string]interface{}{}, false); err != nil {
+	}
+	if _, _, err := nk.WalletUpdate(ctx, userID, changeset, map[string]interface{}{}, false); err != nil {
 		logger.Error("WalletUpdate error: %v", err)
 		return 0, runtime.NewError("could not update wallet", 13)
 	}
 	//return new current drops total
-	newTotalDrops := currentDrops + dropsToGrant
+	newTotalDrops := currentDropsBefore + dropsToGrant
 	logger.Info("Granted %d drops to user '%s'. New total: %d.", dropsToGrant, userID, newTotalDrops)
 	return newTotalDrops, nil
 }
 
- // check the last claimed time was before midnight
+// check the last claimed time was before midnight
 func canUserClaimDailyDrops(d dailyDrops) bool {
 	nowUTC := time.Now().UTC()
 	midnightUTC := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC)
 	lastClaimTime := time.Unix(d.LastClaimUnix, 0).UTC()
 	return lastClaimTime.Before(midnightUTC)
-}  
+}
