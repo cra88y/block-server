@@ -45,14 +45,14 @@ func RpcCanClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.D
 	return string(respBytes), nil
 }
 
-func RpcClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
+func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, out *api.Session, in *api.AuthenticateDeviceRequest) error {
 
 	// get UserID from context
 	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 
 	// reject if not from valid client
 	if !ok {
-		return "", errNoUserIdFound
+		return errNoUserIdFound
 	}
 
 	var resp struct {
@@ -63,14 +63,14 @@ func RpcClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 	// get current dailyDrops state
 	dailyDropsState, dropsStorageObj, err := getDailyDropsState(ctx, logger, nk)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	// get account data
 	account, err := nk.AccountGetId(ctx, userID)
 	if err != nil {
 		logger.Error("AccountGetId error: %v", err)
-		return "", runtime.NewError("could not get user account", 13)
+		return runtime.NewError("could not get user account", 13)
 	}
 
 	// get drops total before
@@ -79,7 +79,7 @@ func RpcClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 	var wallet map[string]int64
 	if err := json.Unmarshal([]byte(account.Wallet), &wallet); err != nil {
 		logger.Error("Unmarshal error: %v", err)
-		return "", errUnmarshal
+		return errUnmarshal
 	}
 	drops, ok := wallet[walletKeyDropsLeft]
 	if !ok {
@@ -91,12 +91,12 @@ func RpcClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 	if !canUserClaimDailyDrops(dailyDropsState) {
 		logger.Debug("User has already claimed daily drop today.")
 		resp.DropsLeft = currentDropsBefore
-		out, _ := json.Marshal(resp)
-		return string(out), nil
+		// out, _ := json.Marshal(resp)
+		return runtime.NewError("drops already claimed for user", 13)
 	}
 	newTotalDrops, err := grantCappedDrops(ctx, logger, nk, userID, dailyDropGrantCount)
 	if err != nil {
-		return "", err
+		logger.Error("wallet JSON is valid but missing required key (%s): %v", walletKeyDropsLeft, err)
 	}
 
 	// grant drops
@@ -124,7 +124,7 @@ func RpcClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 	dailyDropsBytes, err := json.Marshal(dailyDropsState)
 	if err != nil {
 		logger.Error("Marshal error: %v", err)
-		return "", errInternalError
+		return errMarshal
 	}
 	// OCC/optimistic locking to prevent concurrent writes
 	version := ""
@@ -143,17 +143,17 @@ func RpcClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 	}})
 	if err != nil {
 		logger.Error("StorageWrite error: %v", err)
-		return "", errInternalError
+		return errInternalError
 	}
 
-	out, err := json.Marshal(resp)
-	if err != nil {
-		logger.Error("Marshal error: %v", err)
-		return "", errMarshal
-	}
+	// out, err := json.Marshal(resp)
+	// if err != nil {
+	// 	logger.Error("Marshal error: %v", err)
+	// 	return errMarshal
+	// }
 
-	logger.Debug("RpcClaimDailyDrops resp: %v", string(out))
-	return string(out), nil
+	logger.Debug("ClaimDailyDrops compelted for user: %v", userID)
+	return nil
 }
 
 // get last daily drop object

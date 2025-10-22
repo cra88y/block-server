@@ -29,6 +29,10 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
+	if err := initializer.RegisterAfterAuthenticateDevice(TryClaimDailyDrops); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
 	// session events
 	if err := registerSessionEvents(db, nk, initializer); err != nil {
 		return err
