@@ -1,10 +1,12 @@
-package main
+package items
 
 import (
 	"context"
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"block-server/errors"
 
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
@@ -30,7 +32,7 @@ func RpcCanClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.D
 	dailyDropsState, _, err := getDailyDropsState(ctx, logger, nk)
 	if err != nil {
 		logger.Error("Error getting daily drops: %v", err)
-		return "", errInternalError
+		return "", errors.ErrInternalError
 	}
 
 	resp.CanClaimDailyDrops = canUserClaimDailyDrops(dailyDropsState)
@@ -38,7 +40,7 @@ func RpcCanClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.D
 	respBytes, err := json.Marshal(resp)
 	if err != nil {
 		logger.Error("Marshal error: %v", err)
-		return "", errMarshal
+		return "", errors.ErrMarshal
 	}
 
 	logger.Debug("RpcCanClaimDailyDrops resp: %v", string(respBytes))
@@ -52,7 +54,7 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 
 	// reject if not from valid client
 	if !ok {
-		return errNoUserIdFound
+		return errors.ErrNoUserIdFound
 	}
 
 	var resp struct {
@@ -79,7 +81,7 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 	var wallet map[string]int64
 	if err := json.Unmarshal([]byte(account.Wallet), &wallet); err != nil {
 		logger.Error("Unmarshal error: %v", err)
-		return errUnmarshal
+		return errors.ErrUnmarshal
 	}
 	drops, ok := wallet[walletKeyDropsLeft]
 	if !ok {
@@ -116,7 +118,7 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 	// 	}})
 	// 	if err != nil {
 	// 		logger.Error("NotificationsSend error: %v", err)
-	// 		return "", errInternalError
+	// 		return "", errors.ErrInternalError
 	// 	}
 	// write current time to dailyDrops
 	dailyDropsState.LastClaimUnix = time.Now().UTC().Unix()
@@ -124,7 +126,7 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 	dailyDropsBytes, err := json.Marshal(dailyDropsState)
 	if err != nil {
 		logger.Error("Marshal error: %v", err)
-		return errMarshal
+		return errors.ErrMarshal
 	}
 	// OCC/optimistic locking to prevent concurrent writes
 	version := ""
@@ -143,13 +145,13 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 	}})
 	if err != nil {
 		logger.Error("StorageWrite error: %v", err)
-		return errInternalError
+		return errors.ErrInternalError
 	}
 
 	// out, err := json.Marshal(resp)
 	// if err != nil {
 	// 	logger.Error("Marshal error: %v", err)
-	// 	return errMarshal
+	// 	return errors.ErrMarshal
 	// }
 
 	logger.Debug("ClaimDailyDrops compelted for user: %v", userID)
@@ -203,7 +205,7 @@ func grantCappedDrops(ctx context.Context, logger runtime.Logger, nk runtime.Nak
 	var wallet map[string]int64
 	if err := json.Unmarshal([]byte(account.Wallet), &wallet); err != nil {
 		logger.Error("Unmarshal error: %v", err)
-		return 0, errUnmarshal
+		return 0, errors.ErrUnmarshal
 	}
 	drops, ok := wallet[walletKeyDropsLeft]
 	if !ok {

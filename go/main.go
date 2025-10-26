@@ -5,15 +5,10 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/heroiclabs/nakama-common/runtime"
-)
+	"block-server/items"
+	"block-server/session"
 
-var (
-	errInternalError  = runtime.NewError("internal server error", 13) // INTERNAL
-	errMarshal        = runtime.NewError("cannot marshal type", 13)   // INTERNAL
-	errNoInputAllowed = runtime.NewError("no input allowed", 3)       // INVALID_ARGUMENT
-	errNoUserIdFound  = runtime.NewError("no user ID in context", 3)  // INVALID_ARGUMENT
-	errUnmarshal      = runtime.NewError("cannot unmarshal type", 13) // INTERNAL
+	"github.com/heroiclabs/nakama-common/runtime"
 )
 
 const (
@@ -23,18 +18,27 @@ const (
 
 func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, initializer runtime.Initializer) error {
 	initStart := time.Now()
-
+	if err := items.LoadGameData(); err != nil {
+		logger.Error("Failed to load game data: %v", err)
+		return err
+	}
+	logger.Info("Loaded game data: %d pets, %d classes, %d backgrounds, %d styles, %d level trees",
+		len(items.GameData.Pets),
+		len(items.GameData.Classes),
+		len(items.GameData.Backgrounds),
+		len(items.GameData.PieceStyles),
+		len(items.GameData.LevelTrees))
 	// after first time player init
-	if err := initializer.RegisterAfterAuthenticateDevice(AfterAuthroizeUserDevice); err != nil {
+	if err := initializer.RegisterAfterAuthenticateDevice(session.AfterAuthroizeUserDevice); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterAfterAuthenticateGameCenter(AfterAuthroizeUserGC); err != nil {
+	if err := initializer.RegisterAfterAuthenticateGameCenter(session.AfterAuthroizeUserGC); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
 
-	if err := registerSessionEvents(db, nk, initializer); err != nil {
+	if err := session.RegisterSessionEvents(db, nk, initializer); err != nil {
 		return err
 	}
 	logger.Info("Plugin loaded in '%d' msec.", time.Since(initStart).Milliseconds())

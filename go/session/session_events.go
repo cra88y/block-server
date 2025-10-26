@@ -1,9 +1,11 @@
-package main
+package session
 
 import (
 	"context"
 	"database/sql"
 	"time"
+
+	"block-server/items"
 
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
@@ -15,7 +17,7 @@ const (
 	streamModeNotification = 0
 )
 
-func registerSessionEvents(db *sql.DB, nk runtime.NakamaModule, initializer runtime.Initializer) error {
+func RegisterSessionEvents(db *sql.DB, nk runtime.NakamaModule, initializer runtime.Initializer) error {
 	if err := initializer.RegisterEventSessionStart(eventSessionStartFunc(nk)); err != nil {
 		return err
 	}
@@ -58,7 +60,7 @@ WHERE
 // Limit the number of concurrent realtime sessions active for a user to just one.
 func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtime.Logger, *api.Event) {
 	return func(ctx context.Context, logger runtime.Logger, evt *api.Event) {
-		TryClaimDailyDrops(ctx, logger, nk)
+		items.TryClaimDailyDrops(ctx, logger, nk)
 
 		userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 		if !ok {
