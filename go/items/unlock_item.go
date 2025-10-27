@@ -71,10 +71,13 @@ func addToInventory(ctx context.Context, nk runtime.NakamaModule, userID, itemTy
 	}
 
 	var current []uint32
-	if len(objs) > 0 && objs[0].Value != "" {
+	var version string
+	if len(objs) > 0 {
+		// Unmarshal existing items
 		if err := json.Unmarshal([]byte(objs[0].Value), &current); err != nil {
 			return err
 		}
+		version = objs[0].Version // set version if object exists
 	}
 
 	// Check if already owned
@@ -96,7 +99,7 @@ func addToInventory(ctx context.Context, nk runtime.NakamaModule, userID, itemTy
 			Value:           string(value),
 			PermissionRead:  2,
 			PermissionWrite: 0,
-			Version:         objs[0].Version, // OCC
+			Version:         version,
 		},
 	})
 	return err
