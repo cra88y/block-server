@@ -3,6 +3,7 @@ package items
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 
 	"block-server/errors"
@@ -10,40 +11,33 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-func GetItemProgression(ctx context.Context, nk runtime.NakamaModule, userID string, ProgressionKey string, itemID uint32) (*ItemProgression, error) {
+func GetItemProgression(ctx context.Context, nk runtime.NakamaModule,
+	userID string, keyPrefix string, itemID uint32) (*ItemProgression, error) {
+
+	key := fmt.Sprintf("%s%d", keyPrefix, itemID)
 	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{
-		{Collection: storageCollectionProgression, Key: ProgressionKey + strconv.Itoa(int(itemID)), UserID: userID},
+		{
+			Collection: storageCollectionProgression,
+			Key:        key,
+			UserID:     userID,
+		},
 	})
-
-	if err != nil || len(objects) == 0 {
-		return &ItemProgression{
-			Level:             1,
-			AbilitiesUnlocked: 1,
-			SpritesUnlocked:   1,
-		}, nil
+	if err != nil {
+		return nil, err
 	}
 
-	var prog ItemProgression
-	if err := json.Unmarshal([]byte(objects[0].Value), &prog); err != nil {
-		return nil, errors.ErrUnmarshal
+	prog := &ItemProgression{}
+	if len(objects) > 0 {
+		if err := json.Unmarshal([]byte(objects[0].Value), prog); err != nil {
+			return nil, err
+		}
+		prog.Version = objects[0].Version
 	}
-	return &prog, nil
+	return prog, nil
 }
 func SaveItemProgression(ctx context.Context, nk runtime.NakamaModule, userID string, ProgressionKey string, itemID uint32, prog *ItemProgression) error {
 
-	key := ProgressionKeyPet + strconv.Itoa(int(itemID))
-
-	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{
-		{Collection: storageCollectionProgression, Key: key, UserID: userID},
-	})
-	if err != nil {
-		return err
-	}
-
-	version := ""
-	if len(objects) > 0 {
-		version = objects[0].Version
-	}
+	key := ProgressionKey + strconv.Itoa(int(itemID))
 
 	value, err := json.Marshal(prog)
 	if err != nil {
@@ -52,11 +46,13 @@ func SaveItemProgression(ctx context.Context, nk runtime.NakamaModule, userID st
 
 	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{
 		{
-			Collection: storageCollectionProgression,
-			Key:        key,
-			UserID:     userID,
-			Value:      string(value),
-			Version:    version,
+			Collection:      storageCollectionProgression,
+			Key:             key,
+			UserID:          userID,
+			Value:           string(value),
+			Version:         prog.Version,
+			PermissionRead:  2,
+			PermissionWrite: 0,
 		},
 	})
 	return err
@@ -91,12 +87,12 @@ func CalculateLevel(treeName string, exp int) (int, error) {
 	return high, nil
 }
 
-func GetPet(id uint32) (Pet, bool) {
+func GetPet(id uint32) (*Pet, bool) {
 	pet, exists := GameData.Pets[id]
 	return pet, exists
 }
 
-func GetClass(id uint32) (Class, bool) {
+func GetClass(id uint32) (*Class, bool) {
 	class, exists := GameData.Classes[id]
 	return class, exists
 }

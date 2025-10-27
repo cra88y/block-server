@@ -15,4 +15,5 @@ var (
 	ErrNoCategory       = runtime.NewError("invalid category", 13)
 	ErrInvalidItem      = runtime.NewError("invalid item", 13)
 	ErrInvalidLevelTree = runtime.NewError("level tree doesnt exist", 13)
+	ErrParse            = runtime.NewError("error parsing value", 13)
 )

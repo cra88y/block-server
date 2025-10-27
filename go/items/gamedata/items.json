@@ -1,0 +1,200 @@
+{
+  "pets": {
+    "0": {
+      "name": "Cosmic Cat",
+      "spriteCount": 1,
+      "abilityIds": [
+        0,
+        1
+      ],
+      "backgroundIds": null,
+      "styleIds": null,
+      "levelTreeName": "pet_basic"
+    },
+    "1": {
+      "name": "White Dragon",
+      "spriteCount": 1,
+      "abilityIds": [
+        2,
+        3
+      ],
+      "backgroundIds": null,
+      "styleIds": null,
+      "levelTreeName": "pet_basic"
+    },
+    "2": {
+      "name": "Froggie",
+      "spriteCount": 1,
+      "abilityIds": [
+        2,
+        3
+      ],
+      "backgroundIds": null,
+      "styleIds": null,
+      "levelTreeName": "pet_basic"
+    }
+  },
+  "classes": {
+    "1": {
+      "name": "Cleric",
+      "spriteCount": 1,
+      "abilityIds": [
+        1,
+        3
+      ],
+      "backgroundIds": [
+        1
+      ],
+      "styleIds": [
+        3
+      ],
+      "levelTreeName": "class_basic"
+    },
+    "0": {
+      "name": "Knight",
+      "spriteCount": 1,
+      "abilityIds": [
+        1,
+        2
+      ],
+      "backgroundIds": [
+        3
+      ],
+      "styleIds": [
+        4
+      ],
+      "levelTreeName": "class_basic"
+    },
+    "2": {
+      "name": "Mage",
+      "spriteCount": 1,
+      "abilityIds": [
+        4,
+        5
+      ],
+      "backgroundIds": [
+        5
+      ],
+      "styleIds": [
+        6
+      ],
+      "levelTreeName": "class_basic"
+    }
+  },
+  "backgrounds": {
+    "5": {
+      "name": "Blue Spheres"
+    },
+    "4": {
+      "name": "Celestial Orange"
+    },
+    "3": {
+      "name": "Golden Voyage"
+    },
+    "0": {
+      "name": "Waterside"
+    },
+    "2": {
+      "name": "Blue Earth"
+    },
+    "1": {
+      "name": "Sunset"
+    }
+  },
+  "piece_styles": {
+    "7": {
+      "name": "Blackout"
+    },
+    "0": {
+      "name": "Tealeous"
+    },
+    "1": {
+      "name": "Teal to Gray"
+    },
+    "2": {
+      "name": "Drab Paints"
+    },
+    "3": {
+      "name": "Pastel"
+    },
+    "4": {
+      "name": "Purplink"
+    },
+    "5": {
+      "name": "Vibrant Seas"
+    },
+    "6": {
+      "name": "Teal Seas"
+    },
+    "8": {
+      "name": "Whiteout"
+    }
+  },
+  "level_trees": {
+    "pet_basic": {
+      "max_level": 25,
+      "base_xp": 3200,
+      "rewarded_levels": [
+        1,
+        5,
+        12,
+        18,
+        25
+      ],
+      "rewards": {
+        "1": {
+          "gold": "250"
+        },
+        "2": {
+          "backgrounds": "1",
+          "gold": "150"
+        },
+        "3": {
+          "abilities": "1"
+        },
+        "4": {
+          "gems": "25"
+        },
+        "5": {
+          "piece_styles": "1",
+          "gold": "150"
+        },
+        "6": {
+          "sprites": "1",
+          "gold": "150"
+        }
+      }
+    },
+    "class_basic": {
+      "max_level": 10,
+      "base_xp": 10000,
+      "rewarded_levels": [
+        1,
+        3,
+        5,
+        8,
+        10
+      ],
+      "rewards": {
+        "1": {
+          "gems": "10"
+        },
+        "2": {
+          "backgrounds": "1"
+        },
+        "3": {
+          "gems": "15"
+        },
+        "4": {
+          "abilities": "1"
+        },
+        "5": {
+          "piece_styles": "1"
+        },
+        "6": {
+          "sprites": "1"
+        }
+      }
+    }
+  }
+}

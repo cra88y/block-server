@@ -12,8 +12,7 @@ import (
 )
 
 const (
-	rpcIdRewards   = "rewards"
-	rpcIdFindMatch = "find_match"
+	rpcIdRewards = "rewards"
 )
 
 func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, initializer runtime.Initializer) error {
@@ -29,16 +28,28 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		len(items.GameData.PieceStyles),
 		len(items.GameData.LevelTrees))
 	// after first time player init
-	if err := initializer.RegisterAfterAuthenticateDevice(session.AfterAuthroizeUserDevice); err != nil {
+	if err := initializer.RegisterAfterAuthenticateDevice(items.AfterAuthroizeUserDevice); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterAfterAuthenticateGameCenter(session.AfterAuthroizeUserGC); err != nil {
+	if err := initializer.RegisterAfterAuthenticateGameCenter(items.AfterAuthroizeUserGC); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-
+	if err := initializer.RegisterRpc("get_inventory", items.RpcGetInventory); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
+	if err := initializer.RegisterRpc("get_equipment", items.RpcGetEquipment); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
+	if err := initializer.RegisterRpc("get_progression", items.RpcGetProgression); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
 	if err := session.RegisterSessionEvents(db, nk, initializer); err != nil {
+		logger.Error("Unable to register: %v", err)
 		return err
 	}
 	logger.Info("Plugin loaded in '%d' msec.", time.Since(initStart).Milliseconds())

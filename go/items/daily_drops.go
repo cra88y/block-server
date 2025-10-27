@@ -137,8 +137,8 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{{
 		Collection:      storageCollectionDrops,
 		Key:             storageKeyDaily,
-		PermissionRead:  1,
-		PermissionWrite: 0, // No client write.
+		PermissionRead:  1, // user access only
+		PermissionWrite: 0, // no client writes
 		Value:           string(dailyDropsBytes),
 		Version:         version,
 		UserID:          userID,

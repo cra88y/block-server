@@ -3,27 +3,56 @@ package items
 import (
 	"context"
 	"encoding/json"
-	"strconv"
+	"math"
 
 	"block-server/errors"
 
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-func RpcEquipPetAbility(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, payload string) (string, error) {
-	if err := EquipAbility(ctx, logger, nk, storageKeyPet, payload); err != nil {
-		logger.Error("Error equipping ability: %v", err)
-		return "", runtime.NewError("couldn't equip ability", 3)
+func EquipDefaults(ctx context.Context, nk runtime.NakamaModule, userID string) error {
+	reads := []*runtime.StorageRead{
+		{Collection: storageCollectionEquipment, Key: storageKeyPet, UserID: userID},
+		{Collection: storageCollectionEquipment, Key: storageKeyClass, UserID: userID},
+		{Collection: storageCollectionEquipment, Key: storageKeyBackground, UserID: userID},
+		{Collection: storageCollectionEquipment, Key: storageKeyPieceStyle, UserID: userID},
 	}
-	return `{"success": true}`, nil
-}
 
-func RpcEquipClassAbility(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, payload string) (string, error) {
-	if err := EquipAbility(ctx, logger, nk, storageKeyClass, payload); err != nil {
-		logger.Error("Error equipping ability: %v", err)
-		return "", runtime.NewError("couldn't equip ability", 3)
+	objects, _ := nk.StorageRead(ctx, reads)
+	writes := make([]*runtime.StorageWrite, 0, 4)
+
+	for i, key := range []string{storageKeyPet, storageKeyClass, storageKeyBackground, storageKeyPieceStyle} {
+		var version string
+		if i < len(objects) && objects[i] != nil {
+			version = objects[i].Version
+		}
+
+		var itemID uint32
+		switch key {
+		case storageKeyPet:
+			itemID = DefaultPetID
+		case storageKeyClass:
+			itemID = DefaultClassID
+		case storageKeyBackground:
+			itemID = DefaultBackgroundID
+		case storageKeyPieceStyle:
+			itemID = DefaultPieceStyleID
+		}
+
+		value, _ := json.Marshal(itemID)
+		writes = append(writes, &runtime.StorageWrite{
+			Collection:      storageCollectionEquipment,
+			Key:             key,
+			UserID:          userID,
+			Value:           string(value),
+			PermissionRead:  2,
+			PermissionWrite: 0,
+			Version:         version,
+		})
 	}
-	return `{"success": true}`, nil
+
+	_, err := nk.StorageWrite(ctx, writes)
+	return err
 }
 
 func EquipAbility(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, itemType string, payload string) error {
@@ -90,6 +119,9 @@ func EquipAbility(ctx context.Context, logger runtime.Logger, nk runtime.NakamaM
 			break
 		}
 	}
+	if abilityIndex < 0 {
+		return runtime.NewError("ability not unlocked", 3)
+	}
 	if abilityIndex >= prog.AbilitiesUnlocked {
 		return runtime.NewError("ability not unlocked", 3)
 	}
@@ -107,27 +139,18 @@ func IsAbilityAvailable(ctx context.Context, nk runtime.NakamaModule, userID str
 	switch itemType {
 	case storageKeyPet:
 		if pet, exists := GetPet(itemID); exists {
+			if _, exists := pet.AbilitySet[abilityID]; !exists {
+				return runtime.NewError("invalid ability for pet", 3)
+			}
 			abilities = pet.AbilityIDs
 		}
 	case storageKeyClass:
 		if class, exists := GetClass(itemID); exists {
+			if _, exists := class.AbilitySet[abilityID]; !exists {
+				return runtime.NewError("invalid ability for class", 3)
+			}
 			abilities = class.AbilityIDs
 		}
-	}
-
-	if len(abilities) == 0 {
-		return runtime.NewError("no abilities available", 3)
-	}
-
-	abilityExists := false
-	for _, id := range abilities {
-		if id == abilityID {
-			abilityExists = true
-			break
-		}
-	}
-	if !abilityExists {
-		return runtime.NewError("invalid ability for item", 3)
 	}
 
 	var prog *ItemProgression
@@ -155,41 +178,6 @@ func IsAbilityAvailable(ctx context.Context, nk runtime.NakamaModule, userID str
 	return nil
 }
 
-func RpcEquipPet(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, payload string) (string, error) {
-	if err := EquipItem(ctx, logger, nk, storageKeyPet, payload); err != nil {
-		logger.Error("Error equipping item: %v", err)
-		return "", runtime.NewError("couldn't equip item", 3)
-	}
-
-	return `{"success": true}`, nil
-}
-
-func RpcEquipClass(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, payload string) (string, error) {
-	if err := EquipItem(ctx, logger, nk, storageKeyClass, payload); err != nil {
-		logger.Error("Error equipping class: %v", err)
-		return "", runtime.NewError("couldn't equip class", 3)
-	}
-
-	return `{"success": true}`, nil
-}
-
-func RpcEquipBackground(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, payload string) (string, error) {
-	if err := EquipItem(ctx, logger, nk, storageKeyBackground, payload); err != nil {
-		logger.Error("Error equipping background: %v", err)
-		return "", runtime.NewError("couldn't equip background", 3)
-	}
-
-	return `{"success": true}`, nil
-}
-
-func RpcEquipPieceStyle(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, payload string) (string, error) {
-	if err := EquipItem(ctx, logger, nk, storageKeyPieceStyle, payload); err != nil {
-		logger.Error("Error equipping style: %v", err)
-		return "", runtime.NewError("couldn't equip style", 3)
-	}
-
-	return `{"success": true}`, nil
-}
 func EquipItem(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, itemStorageKey string, payload string) error {
 	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 	if !ok {
@@ -214,7 +202,16 @@ func EquipItem(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModu
 	if err != nil {
 		return errors.ErrMarshal
 	}
-
+	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{
+		{Collection: storageCollectionEquipment, Key: itemStorageKey, UserID: userID},
+	})
+	if err != nil {
+		return err
+	}
+	var version string
+	if len(objects) > 0 {
+		version = objects[0].Version
+	}
 	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{
 		{
 			Collection:      storageCollectionEquipment,
@@ -223,6 +220,7 @@ func EquipItem(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModu
 			Value:           string(itemIDBytes),
 			PermissionRead:  2,
 			PermissionWrite: 0,
+			Version:         version,
 		},
 	})
 	return err
@@ -240,15 +238,25 @@ func AddPetExp(ctx context.Context, nk runtime.NakamaModule, userID string, petI
 		return err
 	}
 
-	// Update EXP
-	prog.Exp += int(exp)
+	// Add XP
+	newExp := prog.Exp + int(exp)
+	if newExp < prog.Exp {
+		newExp = math.MaxInt32
+	}
+	prog.Exp = newExp
 
-	// Calculate new level with dynamic tree
 	newLevel, err := CalculateLevel(treeName, prog.Exp)
 	if err != nil {
 		return err
 	}
-
+	tree, exists := GetLevelTree(treeName)
+	if !exists {
+		return errors.ErrInvalidLevelTree
+	}
+	if newLevel > tree.MaxLevel {
+		newLevel = tree.MaxLevel
+		prog.Exp = tree.LevelThresholds[tree.MaxLevel]
+	}
 	// Check for level up
 	if newLevel > prog.Level {
 		oldLevel := prog.Level
@@ -277,7 +285,12 @@ func AddClassExp(ctx context.Context, nk runtime.NakamaModule, userID string, cl
 		return err
 	}
 
-	prog.Exp += int(exp)
+	newExp := prog.Exp + int(exp)
+	if newExp < prog.Exp {
+		newExp = math.MaxInt32
+	}
+	prog.Exp = newExp
+
 	newLevel, err := CalculateLevel(treeName, prog.Exp)
 	if err != nil {
 		return err
@@ -320,35 +333,4 @@ func IsItemOwned(ctx context.Context, nk runtime.NakamaModule, userID string, it
 		}
 	}
 	return false, nil
-}
-
-func AtomicIncrement(ctx context.Context, nk runtime.NakamaModule, userID string, collection string, key string, delta int) error {
-	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{
-		{Collection: collection, Key: key, UserID: userID},
-	})
-	if err != nil {
-		return err
-	}
-
-	version := ""
-	current := 0
-	if len(objects) > 0 {
-		var err error
-		current, err = strconv.Atoi(objects[0].Value)
-		if err != nil {
-			return err
-		}
-		version = objects[0].Version
-	}
-
-	newValue := strconv.Itoa(current + delta)
-	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{
-		{
-			Collection: collection,
-			Key:        key,
-			Value:      newValue,
-			Version:    version,
-		},
-	})
-	return err
 }

@@ -24,38 +24,58 @@ func GrantLevelRewards(ctx context.Context, nk runtime.NakamaModule, userID stri
 
 	rewards := make(map[string]uint32)
 
-	// Parse currency rewards
+	// currency rewards
 	if rewardData.Gold != "" {
-		if val, err := strconv.ParseUint(rewardData.Gold, 10, 32); err == nil {
-			rewards["gold"] = uint32(val)
+		val, err := strconv.ParseUint(rewardData.Gold, 10, 32)
+		if err != nil {
+			return errors.ErrParse
 		}
+		rewards["gold"] = uint32(val)
 	}
 	if rewardData.Gems != "" {
-		if val, err := strconv.ParseUint(rewardData.Gems, 10, 32); err == nil {
-			rewards["gems"] = uint32(val)
+		val, err := strconv.ParseUint(rewardData.Gems, 10, 32)
+		if err != nil {
+			return errors.ErrParse
 		}
+		rewards["gems"] = uint32(val)
 	}
 
-	// Parse progression rewards
+	// progression rewards
 	if rewardData.Abilities != "" {
-		if val, err := strconv.ParseUint(rewardData.Abilities, 10, 32); err == nil && val > 0 {
+		val, err := strconv.ParseUint(rewardData.Abilities, 10, 32)
+		if err != nil {
+			return errors.ErrParse
+		}
+		if val > 0 {
 			rewards["abilities"] = uint32(val)
 		}
 	}
 	if rewardData.Sprites != "" {
-		if val, err := strconv.ParseUint(rewardData.Sprites, 10, 32); err == nil && val > 0 {
+		val, err := strconv.ParseUint(rewardData.Sprites, 10, 32)
+		if err != nil {
+			return errors.ErrParse
+		}
+		if val > 0 {
 			rewards["sprites"] = uint32(val)
 		}
 	}
 
-	// Parse item rewards
+	// item rewards
 	if rewardData.Backgrounds != "" {
-		if val, err := strconv.ParseUint(rewardData.Backgrounds, 10, 32); err == nil && val > 0 {
+		val, err := strconv.ParseUint(rewardData.Backgrounds, 10, 32)
+		if err != nil {
+			return errors.ErrParse
+		}
+		if val > 0 {
 			rewards["backgrounds"] = uint32(val)
 		}
 	}
 	if rewardData.PieceStyles != "" {
-		if val, err := strconv.ParseUint(rewardData.PieceStyles, 10, 32); err == nil && val > 0 {
+		val, err := strconv.ParseUint(rewardData.PieceStyles, 10, 32)
+		if err != nil {
+			return errors.ErrParse
+		}
+		if val > 0 {
 			rewards["piece_styles"] = uint32(val)
 		}
 	}
@@ -75,8 +95,6 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, userID strin
 		case "abilities", "sprites":
 			var maxAbilitiesAvailable int
 			var maxSpritesAvailable int
-			// var abilityIDs []uint32
-
 			switch itemType {
 			case "pet":
 				if pet, exists := GetPet(itemID); exists {
@@ -112,7 +130,7 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, userID strin
 				continue
 			}
 
-			// Calculate actual unlock amount
+			// Calculate new unlocks count
 			newUnlocked := currentUnlocked + int(amount)
 			if newUnlocked > maxAvailable {
 				amount = uint32(maxAvailable - currentUnlocked)
@@ -151,7 +169,9 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, userID strin
 			})
 
 			var ownedItems []uint32
+			var version string
 			if len(objects) > 0 {
+				version = objects[0].Version
 				if err := json.Unmarshal([]byte(objects[0].Value), &ownedItems); err != nil {
 					return err
 				}
@@ -184,8 +204,9 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, userID strin
 					Key:             storageKey,
 					UserID:          userID,
 					Value:           string(itemsBytes),
-					PermissionRead:  1,
+					PermissionRead:  2,
 					PermissionWrite: 0,
+					Version:         version,
 				})
 			}
 		}
@@ -229,9 +250,12 @@ func GetRewardItemIDs(itemType string, itemID uint32, rewardType string, amount 
 			}
 		}
 	}
-
+	if ids == nil {
+		return []uint32{}
+	}
 	if len(ids) > int(amount) {
 		return ids[:amount]
 	}
+
 	return ids
 }

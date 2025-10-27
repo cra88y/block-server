@@ -1,8 +1,8 @@
 package items
 
 type GameDataStuct struct {
-	Pets        map[uint32]Pet        `json:"pets"`
-	Classes     map[uint32]Class      `json:"classes"`
+	Pets        map[uint32]*Pet       `json:"pets"`
+	Classes     map[uint32]*Class     `json:"classes"`
 	Backgrounds map[uint32]Background `json:"backgrounds"`
 	PieceStyles map[uint32]PieceStyle `json:"piece_styles"`
 	LevelTrees  map[string]LevelTree  `json:"level_trees"`
@@ -12,6 +12,7 @@ type Pet struct {
 	Name          string   `json:"name"`
 	SpriteCount   int      `json:"spriteCount"`
 	AbilityIDs    []uint32 `json:"abilityIds"`
+	AbilitySet    map[uint32]struct{}
 	BackgroundIDs []uint32 `json:"backgroundIds"`
 	StyleIDs      []uint32 `json:"styleIds"`
 	LevelTreeName string   `json:"levelTreeName"`
@@ -21,6 +22,7 @@ type Class struct {
 	Name          string   `json:"name"`
 	SpriteCount   int      `json:"spriteCount"`
 	AbilityIDs    []uint32 `json:"abilityIds"`
+	AbilitySet    map[uint32]struct{}
 	BackgroundIDs []uint32 `json:"backgroundIds"`
 	StyleIDs      []uint32 `json:"styleIds"`
 	LevelTreeName string   `json:"levelTreeName"`
@@ -70,8 +72,8 @@ const (
 )
 
 type ItemProgression struct {
-	Level int `json:"l"`
-	Exp   int `json:"e"`
+	Level int `json:"level"`
+	Exp   int `json:"xp"`
 
 	EquippedAbility int `json:"ea"`
 	EquippedSprite  int `json:"es"`
@@ -80,6 +82,8 @@ type ItemProgression struct {
 	SpritesUnlocked     int `json:"su"`
 	BackgroundsUnlocked int `json:"bu"`
 	PieceStylesUnlocked int `json:"pu"`
+
+	Version string `json:"-"`
 }
 
 type EquipRequest struct {
@@ -98,4 +102,23 @@ type LevelReward struct {
 	Backgrounds []uint32 `json:"backgrounds,omitempty"`
 	PieceStyles []uint32 `json:"piece_styles,omitempty"`
 	Sprites     []uint32 `json:"sprites,omitempty"`
+}
+
+type EquiptmentResponse struct {
+	Pet        uint32 `json:"pet"`
+	Class      uint32 `json:"class"`
+	Background uint32 `json:"background"`
+	PieceStyle uint32 `json:"piece_style"`
+}
+
+type InventoryResponse struct {
+	Pets        []uint32 `json:"pets"`
+	Classes     []uint32 `json:"classes"`
+	Backgrounds []uint32 `json:"backgrounds"`
+	PieceStyles []uint32 `json:"piece_styles"`
+}
+
+type ProgressionResponse struct {
+	Pets    map[uint32]ItemProgression `json:"pets"`
+	Classes map[uint32]ItemProgression `json:"classes"`
 }
