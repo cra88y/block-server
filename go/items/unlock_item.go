@@ -72,7 +72,7 @@ func addToInventory(ctx context.Context, nk runtime.NakamaModule, logger runtime
 		return err
 	}
 
-	var current []uint32
+	var current InventoryData
 	var version string
 	if len(objs) > 0 {
 		// Unmarshal existing items
@@ -83,14 +83,14 @@ func addToInventory(ctx context.Context, nk runtime.NakamaModule, logger runtime
 	}
 
 	// Check if already owned
-	for _, id := range current {
+	for _, id := range current.Items {
 		if id == itemID {
 			return nil // already owned
 		}
 	}
 
 	// write item to inventory
-	newItems := append(current, itemID)
+	newItems := append(current.Items, itemID)
 	data := InventoryData{Items: newItems}
 	value, err := json.Marshal(data)
 	if err != nil {

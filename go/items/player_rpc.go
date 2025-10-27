@@ -31,17 +31,17 @@ func RpcGetEquipment(ctx context.Context, logger runtime.Logger, db *sql.DB, nk 
 	equipmentObjs, err := nk.StorageRead(ctx, equipmentReads)
 	if err == nil {
 		for _, obj := range equipmentObjs {
-			var id uint32
-			if err := json.Unmarshal([]byte(obj.Value), &id); err == nil {
+			var data EquipmentData
+			if err := json.Unmarshal([]byte(obj.Value), &data); err == nil {
 				switch obj.Key {
 				case storageKeyPet:
-					equipped.Pet = id
+					equipped.Pet = data.ID
 				case storageKeyClass:
-					equipped.Class = id
+					equipped.Class = data.ID
 				case storageKeyBackground:
-					equipped.Background = id
+					equipped.Background = data.ID
 				case storageKeyPieceStyle:
-					equipped.PieceStyle = id
+					equipped.PieceStyle = data.ID
 				}
 			}
 		}

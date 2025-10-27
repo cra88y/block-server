@@ -3,6 +3,7 @@ package items
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 
 	"block-server/errors"
@@ -173,13 +174,15 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runti
 				{Collection: storageCollectionInventory, Key: storageKey, UserID: userID},
 			})
 
-			var ownedItems []uint32
+			var ownedItems InventoryData
+
 			var version string
+
 			if len(objects) > 0 {
-				version = objects[0].Version
 				if err := json.Unmarshal([]byte(objects[0].Value), &ownedItems); err != nil {
-					return err
+					return fmt.Errorf("inventory read failed: %w", err)
 				}
+				version = objects[0].Version
 			}
 
 			// Get actual reward items
@@ -188,7 +191,7 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runti
 
 			for _, id := range rewardIDs {
 				exists := false
-				for _, owned := range ownedItems {
+				for _, owned := range ownedItems.Items {
 					if owned == id {
 						exists = true
 						break
@@ -201,7 +204,7 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runti
 
 			if len(newItems) > 0 {
 				// Add new items to inventory
-				updatedItems := append(ownedItems, newItems...)
+				updatedItems := append(ownedItems.Items, newItems...)
 				data := InventoryData{Items: updatedItems}
 				value, err := json.Marshal(data)
 				if err != nil {
