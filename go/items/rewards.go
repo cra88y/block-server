@@ -10,7 +10,7 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-func GrantLevelRewards(ctx context.Context, nk runtime.NakamaModule, userID string, treeName string, level int, itemType string, itemID uint32) error {
+func GrantLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, treeName string, level int, itemType string, itemID uint32) error {
 	tree, exists := GetLevelTree(treeName)
 	if !exists {
 		return errors.ErrInvalidLevelTree
@@ -79,11 +79,16 @@ func GrantLevelRewards(ctx context.Context, nk runtime.NakamaModule, userID stri
 			rewards["piece_styles"] = uint32(val)
 		}
 	}
-
-	return GrantRewardItems(ctx, nk, userID, rewards, itemType, itemID)
+	logger.Debug("Granting level %d rewards for %s %d: %+v", level, itemType, itemID, rewards)
+	if err := GrantRewardItems(ctx, nk, logger, userID, rewards, itemType, itemID); err != nil {
+		logger.WithField("rewards", rewards).Error("Reward grant failed")
+		return err
+	}
+	logger.Debug("Rewards granted successfully")
+	return nil
 }
 
-func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, userID string, rewards map[string]uint32, itemType string, itemID uint32) error {
+func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, rewards map[string]uint32, itemType string, itemID uint32) error {
 	writes := make([]*runtime.StorageWrite, 0)
 	walletUpdates := make(map[string]int64)
 
@@ -150,9 +155,9 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, userID strin
 			}
 
 			if itemType == "pet" {
-				err = SaveItemProgression(ctx, nk, userID, ProgressionKeyPet, itemID, prog)
+				err = SaveItemProgression(ctx, nk, logger, userID, ProgressionKeyPet, itemID, prog)
 			} else {
-				err = SaveItemProgression(ctx, nk, userID, ProgressionKeyClass, itemID, prog)
+				err = SaveItemProgression(ctx, nk, logger, userID, ProgressionKeyClass, itemID, prog)
 			}
 			if err != nil {
 				return err

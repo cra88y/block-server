@@ -3,6 +3,7 @@ package items
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
@@ -50,24 +51,29 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		"treats":    1,
 		"dropsLeft": 0,
 	}
-	if _, _, err := nk.WalletUpdate(ctx, userID, changeset, nil, true); err != nil {
-		return err
+	if _, _, err := nk.WalletUpdate(ctx, userID, changeset, map[string]interface{}{}, true); err != nil {
+		logger.WithFields(map[string]interface{}{
+			"user":   userID,
+			"wallet": changeset,
+			"error":  err.Error(),
+		}).Error("Wallet initialization failed")
+		return fmt.Errorf("wallet setup error: %w", err)
 	}
 
 	// Grant default items
-	if err := GivePet(ctx, nk, userID, DefaultPetID); err != nil {
+	if err := GivePet(ctx, nk, logger, userID, DefaultPetID); err != nil {
 		return err
 	}
-	if err := GiveClass(ctx, nk, userID, DefaultClassID); err != nil {
+	if err := GiveClass(ctx, nk, logger, userID, DefaultClassID); err != nil {
 		return err
 	}
-	if err := GiveBackground(ctx, nk, userID, DefaultBackgroundID); err != nil {
+	if err := GiveBackground(ctx, nk, logger, userID, DefaultBackgroundID); err != nil {
 		return err
 	}
-	if err := GivePieceStyle(ctx, nk, userID, DefaultPieceStyleID); err != nil {
+	if err := GivePieceStyle(ctx, nk, logger, userID, DefaultPieceStyleID); err != nil {
 		return err
 	}
-	if err := GivePieceStyle(ctx, nk, userID, WhiteoutPieceStyleID); err != nil {
+	if err := GivePieceStyle(ctx, nk, logger, userID, WhiteoutPieceStyleID); err != nil {
 		return err
 	}
 

@@ -129,9 +129,9 @@ func EquipAbility(ctx context.Context, logger runtime.Logger, nk runtime.NakamaM
 	prog.EquippedAbility = abilityIndex
 
 	if itemType == storageKeyPet {
-		return SaveItemProgression(ctx, nk, userID, ProgressionKeyPet, req.ItemID, prog)
+		return SaveItemProgression(ctx, nk, logger, userID, ProgressionKeyPet, req.ItemID, prog)
 	}
-	return SaveItemProgression(ctx, nk, userID, ProgressionKeyClass, req.ItemID, prog)
+	return SaveItemProgression(ctx, nk, logger, userID, ProgressionKeyClass, req.ItemID, prog)
 }
 
 func IsAbilityAvailable(ctx context.Context, nk runtime.NakamaModule, userID string, itemID uint32, abilityID uint32, itemType string) error {
@@ -225,7 +225,7 @@ func EquipItem(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModu
 	})
 	return err
 }
-func AddPetExp(ctx context.Context, nk runtime.NakamaModule, userID string, petID uint32, exp uint32) error {
+func AddPetExp(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, petID uint32, exp uint32) error {
 	// Get level tree name for this pet
 	treeName, err := GetLevelTreeName(storageKeyPet, petID)
 	if err != nil {
@@ -264,17 +264,17 @@ func AddPetExp(ctx context.Context, nk runtime.NakamaModule, userID string, petI
 
 		// Grant rewards for each level achieved
 		for l := oldLevel + 1; l <= newLevel; l++ {
-			if err := GrantLevelRewards(ctx, nk, userID, treeName, l, "pet", petID); err != nil {
+			if err := GrantLevelRewards(ctx, nk, logger, userID, treeName, l, "pet", petID); err != nil {
 				return err
 			}
 		}
 	}
 
 	// Save updated progression
-	return SaveItemProgression(ctx, nk, userID, ProgressionKeyPet, petID, prog)
+	return SaveItemProgression(ctx, nk, logger, userID, ProgressionKeyPet, petID, prog)
 }
 
-func AddClassExp(ctx context.Context, nk runtime.NakamaModule, userID string, classID uint32, exp uint32) error {
+func AddClassExp(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, classID uint32, exp uint32) error {
 	treeName, err := GetLevelTreeName(storageKeyClass, classID)
 	if err != nil {
 		return runtime.NewError("invalid class configuration", 13)
@@ -301,13 +301,13 @@ func AddClassExp(ctx context.Context, nk runtime.NakamaModule, userID string, cl
 		prog.Level = newLevel
 
 		for l := oldLevel + 1; l <= newLevel; l++ {
-			if err := GrantLevelRewards(ctx, nk, userID, treeName, l, "class", classID); err != nil {
+			if err := GrantLevelRewards(ctx, nk, logger, userID, treeName, l, "class", classID); err != nil {
 				return err
 			}
 		}
 	}
 
-	return SaveItemProgression(ctx, nk, userID, ProgressionKeyClass, classID, prog)
+	return SaveItemProgression(ctx, nk, logger, userID, ProgressionKeyClass, classID, prog)
 }
 
 func IsItemOwned(ctx context.Context, nk runtime.NakamaModule, userID string, itemID uint32, itemStorageKey string) (bool, error) {

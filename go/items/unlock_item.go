@@ -13,55 +13,55 @@ var (
 )
 
 // Gives pet to user with initialized progression
-func GivePet(ctx context.Context, nk runtime.NakamaModule, userID string, petID uint32) error {
+func GivePet(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, petID uint32) error {
 	if !ValidateItemExists(storageKeyPet, petID) {
 		return ErrInvalidItem
 	}
 
-	if err := addToInventory(ctx, nk, userID, storageKeyPet, petID); err != nil {
+	if err := addToInventory(ctx, nk, logger, userID, storageKeyPet, petID); err != nil {
 		return err
 	}
 
 	// Initialize progression if none
 	prog, err := GetItemProgression(ctx, nk, userID, ProgressionKeyPet, petID)
 	if err != nil || prog == nil {
-		return InitializeProgression(ctx, nk, userID, ProgressionKeyPet, petID)
+		return InitializeProgression(ctx, nk, logger, userID, ProgressionKeyPet, petID)
 	}
 	return nil
 }
 
 // Gives class to user with initialized progression
-func GiveClass(ctx context.Context, nk runtime.NakamaModule, userID string, classID uint32) error {
+func GiveClass(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, classID uint32) error {
 	if !ValidateItemExists(storageKeyClass, classID) {
 		return ErrInvalidItem
 	}
 
-	if err := addToInventory(ctx, nk, userID, storageKeyClass, classID); err != nil {
+	if err := addToInventory(ctx, nk, logger, userID, storageKeyClass, classID); err != nil {
 		return err
 	}
 
 	prog, err := GetItemProgression(ctx, nk, userID, ProgressionKeyClass, classID)
 	if err != nil || prog == nil {
-		return InitializeProgression(ctx, nk, userID, ProgressionKeyClass, classID)
+		return InitializeProgression(ctx, nk, logger, userID, ProgressionKeyClass, classID)
 	}
 	return nil
 }
 
-func GiveBackground(ctx context.Context, nk runtime.NakamaModule, userID string, backgroundID uint32) error {
+func GiveBackground(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, backgroundID uint32) error {
 	if !ValidateItemExists(storageKeyBackground, backgroundID) {
 		return ErrInvalidItem
 	}
-	return addToInventory(ctx, nk, userID, storageKeyBackground, backgroundID)
+	return addToInventory(ctx, nk, logger, userID, storageKeyBackground, backgroundID)
 }
 
-func GivePieceStyle(ctx context.Context, nk runtime.NakamaModule, userID string, styleID uint32) error {
+func GivePieceStyle(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, styleID uint32) error {
 	if !ValidateItemExists(storageKeyPieceStyle, styleID) {
 		return ErrInvalidItem
 	}
-	return addToInventory(ctx, nk, userID, storageKeyPieceStyle, styleID)
+	return addToInventory(ctx, nk, logger, userID, storageKeyPieceStyle, styleID)
 }
 
-func addToInventory(ctx context.Context, nk runtime.NakamaModule, userID, itemType string, itemID uint32) error {
+func addToInventory(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, itemType string, itemID uint32) error {
 	// fetch current inventory
 	objs, err := nk.StorageRead(ctx, []*runtime.StorageRead{
 		{Collection: storageCollectionInventory, Key: itemType, UserID: userID},
@@ -105,7 +105,7 @@ func addToInventory(ctx context.Context, nk runtime.NakamaModule, userID, itemTy
 	return err
 }
 
-func InitializeProgression(ctx context.Context, nk runtime.NakamaModule, userID, progressionKey string, itemID uint32) error {
+func InitializeProgression(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, progressionKey string, itemID uint32) error {
 	prog := &ItemProgression{
 		Level:               1,
 		Exp:                 0,
@@ -116,5 +116,5 @@ func InitializeProgression(ctx context.Context, nk runtime.NakamaModule, userID,
 		BackgroundsUnlocked: 0,
 		PieceStylesUnlocked: 0,
 	}
-	return SaveItemProgression(ctx, nk, userID, progressionKey, itemID, prog)
+	return SaveItemProgression(ctx, nk, logger, userID, progressionKey, itemID, prog)
 }

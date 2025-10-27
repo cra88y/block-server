@@ -35,12 +35,13 @@ func GetItemProgression(ctx context.Context, nk runtime.NakamaModule,
 	}
 	return prog, nil
 }
-func SaveItemProgression(ctx context.Context, nk runtime.NakamaModule, userID string, ProgressionKey string, itemID uint32, prog *ItemProgression) error {
+func SaveItemProgression(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, ProgressionKey string, itemID uint32, prog *ItemProgression) error {
 
 	key := ProgressionKey + strconv.Itoa(int(itemID))
 
 	value, err := json.Marshal(prog)
 	if err != nil {
+		logger.Error("error saving item progression %v", err)
 		return errors.ErrMarshal
 	}
 

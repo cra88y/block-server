@@ -76,8 +76,12 @@ func RpcGetInventory(ctx context.Context, logger runtime.Logger, db *sql.DB, nk 
 
 	objs, err := nk.StorageRead(ctx, inventoryReads)
 	if err != nil {
-		logger.Error("Inventory read error: %v", err)
-		return "", runtime.NewError("inventory unavailable", 13)
+		logger.WithFields(map[string]interface{}{
+			"user":       userID,
+			"collection": storageCollectionInventory,
+			"error":      err.Error(),
+		}).Error("Inventory storage read failure")
+		return "", runtime.NewError("Inventory system unavailable", 13)
 	}
 
 	for _, obj := range objs {

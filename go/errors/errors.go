@@ -16,4 +16,7 @@ var (
 	ErrInvalidItem      = runtime.NewError("invalid item", 13)
 	ErrInvalidLevelTree = runtime.NewError("level tree doesnt exist", 13)
 	ErrParse            = runtime.NewError("error parsing value", 13)
+	ErrInvalidInput     = runtime.NewError("Invalid request", 3)
+	ErrNotOwned         = runtime.NewError("Item not owned", 3)
+	ErrInventoryFailure = runtime.NewError("Inventory system error", 13)
 )
