@@ -218,7 +218,7 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runti
 	}
 
 	if len(walletUpdates) > 0 {
-		if _, _, err := nk.WalletUpdate(ctx, userID, walletUpdates, nil, true); err != nil {
+		if _, _, err := nk.WalletUpdate(ctx, userID, walletUpdates, map[string]interface{}{}, true); err != nil {
 			return err
 		}
 	}

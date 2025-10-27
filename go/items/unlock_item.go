@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/heroiclabs/nakama-common/runtime"
 )
@@ -89,7 +90,12 @@ func addToInventory(ctx context.Context, nk runtime.NakamaModule, logger runtime
 
 	// write item to inventory
 	newItems := append(current, itemID)
-	value, _ := json.Marshal(newItems)
+	data := InventoryData{Items: newItems}
+	value, err := json.Marshal(data)
+	if err != nil {
+		logger.WithField("items", newItems).Error("Inventory marshal failed")
+		return fmt.Errorf("inventory marshal error: %w", err)
+	}
 
 	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{
 		{
@@ -97,7 +103,7 @@ func addToInventory(ctx context.Context, nk runtime.NakamaModule, logger runtime
 			Key:             itemType,
 			UserID:          userID,
 			Value:           string(value),
-			PermissionRead:  2,
+			PermissionRead:  2, // Inventory is public
 			PermissionWrite: 0,
 			Version:         version,
 		},

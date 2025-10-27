@@ -321,13 +321,12 @@ func IsItemOwned(ctx context.Context, nk runtime.NakamaModule, userID string, it
 		return false, nil
 	}
 
-	var ownedItems []uint32
-	if err := json.Unmarshal([]byte(objects[0].Value), &ownedItems); err != nil {
+	var data InventoryData
+	if err := json.Unmarshal([]byte(objects[0].Value), &data); err != nil {
 		return false, err
 	}
 
-	// Check both direct ownership and unlocked through progression
-	for _, id := range ownedItems {
+	for _, id := range data.Items {
 		if id == itemID {
 			return true, nil
 		}

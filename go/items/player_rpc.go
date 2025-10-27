@@ -89,21 +89,18 @@ func RpcGetInventory(ctx context.Context, logger runtime.Logger, db *sql.DB, nk 
 			continue
 		}
 
-		var items []uint32
-		if err := json.Unmarshal([]byte(obj.Value), &items); err != nil {
-			logger.Warn("Partial inventory failure at key %s: %v", obj.Key, err)
-			continue
-		}
-
-		switch obj.Key {
-		case storageKeyPet:
-			inventory.Pets = items
-		case storageKeyClass:
-			inventory.Classes = items
-		case storageKeyBackground:
-			inventory.Backgrounds = items
-		case storageKeyPieceStyle:
-			inventory.PieceStyles = items
+		var data InventoryData
+		if err := json.Unmarshal([]byte(obj.Value), &data); err == nil {
+			switch obj.Key {
+			case storageKeyPet:
+				inventory.Pets = data.Items
+			case storageKeyClass:
+				inventory.Classes = data.Items
+			case storageKeyBackground:
+				inventory.Backgrounds = data.Items
+			case storageKeyPieceStyle:
+				inventory.PieceStyles = data.Items
+			}
 		}
 	}
 	resp, err := json.Marshal(inventory)

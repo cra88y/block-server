@@ -122,3 +122,6 @@ type ProgressionResponse struct {
 	Pets    map[uint32]ItemProgression `json:"pets"`
 	Classes map[uint32]ItemProgression `json:"classes"`
 }
+type InventoryData struct {
+	Items []uint32 `json:"items"`
+}
