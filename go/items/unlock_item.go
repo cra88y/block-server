@@ -52,6 +52,7 @@ func GiveBackground(ctx context.Context, nk runtime.NakamaModule, logger runtime
 	if !ValidateItemExists(storageKeyBackground, backgroundID) {
 		return ErrInvalidItem
 	}
+
 	return addToInventory(ctx, nk, logger, userID, storageKeyBackground, backgroundID)
 }
 

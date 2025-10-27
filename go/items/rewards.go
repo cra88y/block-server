@@ -202,13 +202,17 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runti
 			if len(newItems) > 0 {
 				// Add new items to inventory
 				updatedItems := append(ownedItems, newItems...)
-				itemsBytes, _ := json.Marshal(updatedItems)
+				data := InventoryData{Items: updatedItems}
+				value, err := json.Marshal(data)
+				if err != nil {
+					return err
+				}
 
 				writes = append(writes, &runtime.StorageWrite{
 					Collection:      storageCollectionInventory,
 					Key:             storageKey,
 					UserID:          userID,
-					Value:           string(itemsBytes),
+					Value:           string(value),
 					PermissionRead:  2,
 					PermissionWrite: 0,
 					Version:         version,

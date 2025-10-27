@@ -39,7 +39,11 @@ func EquipDefaults(ctx context.Context, nk runtime.NakamaModule, userID string) 
 			itemID = DefaultPieceStyleID
 		}
 
-		value, _ := json.Marshal(itemID)
+		data := EquipmentData{ID: itemID}
+		value, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
 		writes = append(writes, &runtime.StorageWrite{
 			Collection:      storageCollectionEquipment,
 			Key:             key,
@@ -184,7 +188,7 @@ func EquipItem(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModu
 		return errors.ErrNoUserIdFound
 	}
 
-	var req EquipRequest
+	var req EquipmentData
 	if err := json.Unmarshal([]byte(payload), &req); err != nil {
 		return errors.ErrUnmarshal
 	}
@@ -198,7 +202,7 @@ func EquipItem(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModu
 		return runtime.NewError("item not owned", 403)
 	}
 
-	itemIDBytes, err := json.Marshal(req.ID)
+	value, err := json.Marshal(req)
 	if err != nil {
 		return errors.ErrMarshal
 	}
@@ -217,7 +221,7 @@ func EquipItem(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModu
 			Collection:      storageCollectionEquipment,
 			Key:             itemStorageKey,
 			UserID:          userID,
-			Value:           string(itemIDBytes),
+			Value:           string(value),
 			PermissionRead:  2,
 			PermissionWrite: 0,
 			Version:         version,

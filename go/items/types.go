@@ -86,10 +86,6 @@ type ItemProgression struct {
 	Version string `json:"-"`
 }
 
-type EquipRequest struct {
-	ID uint32 `json:"id"`
-}
-
 type AbilityEquipRequest struct {
 	ItemID    uint32 `json:"id"`
 	AbilityID uint32 `json:"ability_id"`
@@ -124,4 +120,7 @@ type ProgressionResponse struct {
 }
 type InventoryData struct {
 	Items []uint32 `json:"items"`
+}
+type EquipmentData struct {
+	ID uint32 `json:"id"`
 }

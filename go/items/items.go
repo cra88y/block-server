@@ -75,6 +75,9 @@ func CalculateLevel(treeName string, exp int) (int, error) {
 
 	thresholds := tree.LevelThresholds
 	low, high := 1, tree.MaxLevel
+	if len(thresholds) < high {
+		return 0, runtime.NewError("invalid level thresholds", 3)
+	}
 	// binary search for threshold
 	for low <= high {
 		mid := (low + high) / 2
