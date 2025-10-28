@@ -12,7 +12,7 @@ import (
 var gamedata []byte
 
 var (
-	GameData     *GameDataStuct
+	GameData     *GameDataStruct
 	GameDataOnce sync.Once
 )
 
@@ -33,7 +33,7 @@ func LoadGameData() error {
 			return
 		}
 
-		GameData = &GameDataStuct{
+		GameData = &GameDataStruct{
 			Pets:        make(map[uint32]*Pet, len(raw.Pets)),
 			Classes:     make(map[uint32]*Class, len(raw.Classes)),
 			Backgrounds: make(map[uint32]Background, len(raw.Backgrounds)),

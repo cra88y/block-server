@@ -3,6 +3,7 @@ package items
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 
 	"block-server/errors"
@@ -18,7 +19,10 @@ func EquipDefaults(ctx context.Context, nk runtime.NakamaModule, userID string) 
 		{Collection: storageCollectionEquipment, Key: storageKeyPieceStyle, UserID: userID},
 	}
 
-	objects, _ := nk.StorageRead(ctx, reads)
+	objects, err := nk.StorageRead(ctx, reads)
+	if err != nil {
+		return fmt.Errorf("failed to read equipment defaults: %w", err)
+	}
 	writes := make([]*runtime.StorageWrite, 0, 4)
 
 	for i, key := range []string{storageKeyPet, storageKeyClass, storageKeyBackground, storageKeyPieceStyle} {
@@ -42,7 +46,7 @@ func EquipDefaults(ctx context.Context, nk runtime.NakamaModule, userID string) 
 		data := EquipmentData{ID: itemID}
 		value, err := json.Marshal(data)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to marshal equipment data for %s: %w", key, err)
 		}
 		writes = append(writes, &runtime.StorageWrite{
 			Collection:      storageCollectionEquipment,
@@ -55,14 +59,18 @@ func EquipDefaults(ctx context.Context, nk runtime.NakamaModule, userID string) 
 		})
 	}
 
-	_, err := nk.StorageWrite(ctx, writes)
-	return err
+	_, err = nk.StorageWrite(ctx, writes)
+	if err != nil {
+		return fmt.Errorf("failed to write equipment defaults: %w", err)
+	}
+
+	return nil
 }
 
 func EquipAbility(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, itemType string, payload string) error {
-	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-	if !ok {
-		return errors.ErrNoUserIdFound
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
+		return err
 	}
 
 	var req AbilityEquipRequest
@@ -71,24 +79,33 @@ func EquipAbility(ctx context.Context, logger runtime.Logger, nk runtime.NakamaM
 	}
 
 	if !ValidateItemExists(itemType, req.ItemID) {
-		return runtime.NewError("invalid item ID", 3)
+		LogWarn(ctx, logger, "Invalid item ID for equip_ability")
+		return errors.ErrInvalidItemID
 	}
 
 	owned, err := IsItemOwned(ctx, nk, userID, req.ItemID, itemType)
 	if err != nil || !owned {
-		return runtime.NewError("item not owned", 3)
+		return errors.ErrNotOwned
 	}
 
 	var abilities []uint32
+	var itemExists bool
+
 	switch itemType {
 	case storageKeyPet:
 		if pet, exists := GetPet(req.ItemID); exists {
 			abilities = pet.AbilityIDs
+			itemExists = true
 		}
 	case storageKeyClass:
 		if class, exists := GetClass(req.ItemID); exists {
 			abilities = class.AbilityIDs
+			itemExists = true
 		}
+	}
+
+	if !itemExists {
+		return runtime.NewError("item not found", 3)
 	}
 
 	if len(abilities) == 0 {
@@ -107,11 +124,15 @@ func EquipAbility(ctx context.Context, logger runtime.Logger, nk runtime.NakamaM
 	}
 
 	var prog *ItemProgression
+	var progressionKey string
+
 	if itemType == storageKeyPet {
-		prog, err = GetItemProgression(ctx, nk, logger, userID, ProgressionKeyPet, req.ItemID)
+		progressionKey = ProgressionKeyPet
 	} else {
-		prog, err = GetItemProgression(ctx, nk, logger, userID, ProgressionKeyClass, req.ItemID)
+		progressionKey = ProgressionKeyClass
 	}
+
+	prog, err = GetItemProgression(ctx, nk, logger, userID, progressionKey, req.ItemID)
 	if err != nil {
 		return err
 	}
@@ -132,14 +153,18 @@ func EquipAbility(ctx context.Context, logger runtime.Logger, nk runtime.NakamaM
 
 	prog.EquippedAbility = abilityIndex
 
-	if itemType == storageKeyPet {
-		return SaveItemProgression(ctx, nk, logger, userID, ProgressionKeyPet, req.ItemID, prog)
-	}
-	return SaveItemProgression(ctx, nk, logger, userID, ProgressionKeyClass, req.ItemID, prog)
+	return SaveItemProgression(ctx, nk, logger, userID, progressionKey, req.ItemID, prog)
 }
 
 func IsAbilityAvailable(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, userID string, itemID uint32, abilityID uint32, itemType string) error {
+	// Validate item exists first
+	if !ValidateItemExists(itemType, itemID) {
+		return errors.ErrInvalidItemID
+	}
+
 	var abilities []uint32
+	var itemExists bool
+
 	switch itemType {
 	case storageKeyPet:
 		if pet, exists := GetPet(itemID); exists {
@@ -147,6 +172,7 @@ func IsAbilityAvailable(ctx context.Context, logger runtime.Logger, nk runtime.N
 				return runtime.NewError("invalid ability for pet", 3)
 			}
 			abilities = pet.AbilityIDs
+			itemExists = true
 		}
 	case storageKeyClass:
 		if class, exists := GetClass(itemID); exists {
@@ -154,17 +180,33 @@ func IsAbilityAvailable(ctx context.Context, logger runtime.Logger, nk runtime.N
 				return runtime.NewError("invalid ability for class", 3)
 			}
 			abilities = class.AbilityIDs
+			itemExists = true
 		}
 	}
 
-	var prog *ItemProgression
-	var err error
-	if itemType == storageKeyPet {
-		prog, err = GetItemProgression(ctx, nk, logger, userID, ProgressionKeyPet, itemID)
-	} else {
-		prog, err = GetItemProgression(ctx, nk, logger, userID, ProgressionKeyClass, itemID)
+	if !itemExists {
+		LogWarn(ctx, logger, "Attempted to check ability for non-existent item")
+		return runtime.NewError("item not found", 3)
 	}
+
+	if len(abilities) == 0 {
+		LogWarn(ctx, logger, "No abilities available for item")
+		return runtime.NewError("no abilities available", 3)
+	}
+
+	var prog *ItemProgression
+	var progressionKey string
+	var err error
+
+	if itemType == storageKeyPet {
+		progressionKey = ProgressionKeyPet
+	} else {
+		progressionKey = ProgressionKeyClass
+	}
+
+	prog, err = GetItemProgression(ctx, nk, logger, userID, progressionKey, itemID)
 	if err != nil {
+		LogError(ctx, logger, "Failed to get item progression for ability check", err)
 		return err
 	}
 
@@ -175,17 +217,25 @@ func IsAbilityAvailable(ctx context.Context, logger runtime.Logger, nk runtime.N
 			break
 		}
 	}
+
+	if abilityIndex < 0 {
+		LogWarn(ctx, logger, "Ability not found in item ability list")
+		return runtime.NewError("ability not found", 3)
+	}
+
 	if abilityIndex >= prog.AbilitiesUnlocked {
+		LogWarn(ctx, logger, "Ability not unlocked")
 		return runtime.NewError("ability not unlocked", 3)
 	}
 
+	// Ability availability check passed - no need to log this as it's a normal flow
 	return nil
 }
 
 func EquipItem(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, itemStorageKey string, payload string) error {
-	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-	if !ok {
-		return errors.ErrNoUserIdFound
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
+		return err
 	}
 
 	var req EquipmentData
@@ -194,12 +244,12 @@ func EquipItem(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModu
 	}
 
 	if !ValidateItemExists(itemStorageKey, req.ID) {
-		return runtime.NewError("invalid item ID", 3)
+		return errors.ErrInvalidItemID
 	}
 
 	owned, err := IsItemOwned(ctx, nk, userID, req.ID, itemStorageKey)
 	if err != nil || !owned {
-		return runtime.NewError("item not owned", 403)
+		return errors.ErrItemNotOwnedForbidden
 	}
 
 	value, err := json.Marshal(req)
@@ -230,88 +280,88 @@ func EquipItem(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModu
 	return err
 }
 func AddPetExp(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, petID uint32, exp uint32) error {
-	// Get level tree name for this pet
-	treeName, err := GetLevelTreeName(storageKeyPet, petID)
-	if err != nil {
-		return runtime.NewError("invalid pet configuration", 13)
-	}
-
-	// Get current progression
-	prog, err := GetItemProgression(ctx, nk, logger, userID, ProgressionKeyPet, petID)
-	if err != nil {
-		return err
-	}
-
-	// Add XP
-	newExp := prog.Exp + int(exp)
-	if newExp < prog.Exp {
-		newExp = math.MaxInt32
-	}
-	prog.Exp = newExp
-
-	newLevel, err := CalculateLevel(treeName, prog.Exp)
-	if err != nil {
-		return err
-	}
-	tree, exists := GetLevelTree(treeName)
-	if !exists {
-		return errors.ErrInvalidLevelTree
-	}
-	if newLevel > tree.MaxLevel {
-		newLevel = tree.MaxLevel
-		prog.Exp = tree.LevelThresholds[tree.MaxLevel]
-	}
-	// Check for level up
-	if newLevel > prog.Level {
-		oldLevel := prog.Level
-		prog.Level = newLevel
-
-		// Grant rewards for each level achieved
-		for l := oldLevel + 1; l <= newLevel; l++ {
-			if err := GrantLevelRewards(ctx, nk, logger, userID, treeName, l, "pet", petID); err != nil {
-				return err
-			}
-		}
-	}
-
-	// Save updated progression
-	return SaveItemProgression(ctx, nk, logger, userID, ProgressionKeyPet, petID, prog)
+	return addExperience(ctx, nk, logger, userID, storageKeyPet, petID, exp)
 }
 
 func AddClassExp(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, classID uint32, exp uint32) error {
-	treeName, err := GetLevelTreeName(storageKeyClass, classID)
+	return addExperience(ctx, nk, logger, userID, storageKeyClass, classID, exp)
+}
+
+func addExperience(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, itemType string, itemID uint32, exp uint32) error {
+	// Validate input
+	if exp == 0 {
+		LogInfo(ctx, logger, "Zero experience provided, skipping update")
+		return nil
+	}
+	if exp > 1000000 {
+		LogWarn(ctx, logger, "Unusually large experience value provided")
+		return errors.ErrInvalidExperience
+	}
+
+	// Get level tree name for this item
+	treeName, err := GetLevelTreeName(itemType, itemID)
 	if err != nil {
-		return runtime.NewError("invalid class configuration", 13)
+		LogError(ctx, logger, "Invalid item configuration", err)
+		return errors.ErrInvalidConfig
 	}
 
-	prog, err := GetItemProgression(ctx, nk, logger, userID, ProgressionKeyClass, classID)
-	if err != nil {
-		return err
+	var progressionKey string
+	switch itemType {
+	case storageKeyPet:
+		progressionKey = ProgressionKeyPet
+	case storageKeyClass:
+		progressionKey = ProgressionKeyClass
+	default:
+		return errors.ErrInvalidItemType
 	}
 
-	newExp := prog.Exp + int(exp)
-	if newExp < prog.Exp {
-		newExp = math.MaxInt32
-	}
-	prog.Exp = newExp
+	return UpdateProgressionAtomic(ctx, nk, logger, userID, progressionKey, itemID, func(prog *ItemProgression) error {
+		// Add XP with overflow protection
+		newExp := prog.Exp + int(exp)
+		if newExp < prog.Exp { // Overflow detected
+			newExp = math.MaxInt32
+		}
 
-	newLevel, err := CalculateLevel(treeName, prog.Exp)
-	if err != nil {
-		return err
-	}
+		// Get level tree to check max level and cap experience
+		tree, exists := GetLevelTree(treeName)
+		if !exists {
+			return errors.ErrInvalidLevelTree
+		}
 
-	if newLevel > prog.Level {
-		oldLevel := prog.Level
-		prog.Level = newLevel
+		// Cap experience at max level threshold if needed
+		maxExp := tree.LevelThresholds[tree.MaxLevel]
+		if newExp > maxExp {
+			newExp = maxExp
+		}
 
-		for l := oldLevel + 1; l <= newLevel; l++ {
-			if err := GrantLevelRewards(ctx, nk, logger, userID, treeName, l, "class", classID); err != nil {
-				return err
+		prog.Exp = newExp
+
+		newLevel, err := CalculateLevel(treeName, prog.Exp)
+		if err != nil {
+			return err
+		}
+
+		// Cap level at max level
+		if newLevel > tree.MaxLevel {
+			newLevel = tree.MaxLevel
+			prog.Exp = maxExp
+		}
+
+		// Check for level up
+		if newLevel > prog.Level {
+			oldLevel := prog.Level
+			prog.Level = newLevel
+
+			// Grant rewards for each level achieved
+			for l := oldLevel + 1; l <= newLevel; l++ {
+				if err := GrantLevelRewards(ctx, nk, logger, userID, treeName, l, itemType, itemID); err != nil {
+					return err
+				}
 			}
 		}
-	}
 
-	return SaveItemProgression(ctx, nk, logger, userID, ProgressionKeyClass, classID, prog)
+		return nil
+	})
 }
 
 func IsItemOwned(ctx context.Context, nk runtime.NakamaModule, userID string, itemID uint32, itemStorageKey string) (bool, error) {

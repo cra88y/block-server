@@ -1,6 +1,6 @@
 package items
 
-type GameDataStuct struct {
+type GameDataStruct struct {
 	Pets        map[uint32]*Pet       `json:"pets"`
 	Classes     map[uint32]*Class     `json:"classes"`
 	Backgrounds map[uint32]Background `json:"backgrounds"`
@@ -59,10 +59,6 @@ const (
 	storageKeyPieceStyle       = "piece_styles" //[0]
 
 	storageCollectionEquipment = "equipment"
-	// storageKeyPet              = "pet"         // 0
-	// storageKeyClass            = "class"       // 2
-	// storageKeyBackground       = "background"  // 2
-	// storageKeyPieceStyle       = "piece_style" // 0
 	storageCollectionProgression = "progression"
 )
 
@@ -100,7 +96,7 @@ type LevelReward struct {
 	Sprites     []uint32 `json:"sprites,omitempty"`
 }
 
-type EquiptmentResponse struct {
+type EquipmentResponse struct {
 	Pet        uint32 `json:"pet"`
 	Class      uint32 `json:"class"`
 	Background uint32 `json:"background"`
@@ -125,4 +121,8 @@ type InventoryData struct {
 
 type EquipmentData struct {
 	ID uint32 `json:"id"`
+}
+
+type PetTreatRequest struct {
+	PetID uint32 `json:"pet_id"`
 }

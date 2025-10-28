@@ -28,11 +28,11 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		len(items.GameData.PieceStyles),
 		len(items.GameData.LevelTrees))
 	// after first time player init
-	if err := initializer.RegisterAfterAuthenticateDevice(items.AfterAuthroizeUserDevice); err != nil {
+	if err := initializer.RegisterAfterAuthenticateDevice(items.AfterAuthorizeUserDevice); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterAfterAuthenticateGameCenter(items.AfterAuthroizeUserGC); err != nil {
+	if err := initializer.RegisterAfterAuthenticateGameCenter(items.AfterAuthorizeUserGC); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
@@ -45,6 +45,10 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		return err
 	}
 	if err := initializer.RegisterRpc("get_progression", items.RpcGetProgression); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
+	if err := initializer.RegisterRpc("use_pet_treat", items.RpcUsePetTreat); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}

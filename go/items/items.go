@@ -11,6 +11,8 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
+// GetItemProgression retrieves a user's item progression for a specific item.
+// If no progression is found, it initializes a new one.
 func GetItemProgression(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger,
 	userID string, keyPrefix string, itemID uint32) (*ItemProgression, error) {
 	key := fmt.Sprintf("%s%d", keyPrefix, itemID)
@@ -37,9 +39,10 @@ func GetItemProgression(ctx context.Context, nk runtime.NakamaModule, logger run
 	return prog, nil
 }
 
-func SaveItemProgression(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, ProgressionKey string, itemID uint32, prog *ItemProgression) error {
+// SaveItemProgression saves the current state of an item's progression.
+func SaveItemProgression(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, progressionKey string, itemID uint32, prog *ItemProgression) error {
 
-	key := ProgressionKey + strconv.Itoa(int(itemID))
+	key := progressionKey + strconv.Itoa(int(itemID))
 
 	value, err := json.Marshal(prog)
 	if err != nil {
@@ -61,6 +64,7 @@ func SaveItemProgression(ctx context.Context, nk runtime.NakamaModule, logger ru
 	return err
 }
 
+// CalculateLevel determines the current level based on the provided experience points and a level tree.
 func CalculateLevel(treeName string, exp int) (int, error) {
 	tree, exists := GetLevelTree(treeName)
 	if !exists {
@@ -78,36 +82,40 @@ func CalculateLevel(treeName string, exp int) (int, error) {
 	thresholds := tree.LevelThresholds
 	low, high := 1, tree.MaxLevel
 	if len(thresholds) < high {
-		return 0, runtime.NewError("invalid level thresholds", 3)
+		return 0, errors.ErrInvalidLevelThresholds
 	}
-	// binary search for threshold
+	// Binary search to find the level
 	for low <= high {
 		mid := (low + high) / 2
-		if exp >= thresholds[mid] {
-			low = mid + 1
+		if exp >= thresholds[mid] { // If current experience is greater than or equal to the threshold for mid-level
+			low = mid + 1 // Move to the upper half
 		} else {
-			high = mid - 1
+			high = mid - 1 // Move to the lower half
 		}
 	}
 
 	return high, nil
 }
 
+// GetPet retrieves a pet by its ID from the game data.
 func GetPet(id uint32) (*Pet, bool) {
 	pet, exists := GameData.Pets[id]
 	return pet, exists
 }
 
+// GetClass retrieves a class by its ID from the game data.
 func GetClass(id uint32) (*Class, bool) {
 	class, exists := GameData.Classes[id]
 	return class, exists
 }
 
+// GetLevelTree retrieves a level tree by its name from the game data.
 func GetLevelTree(name string) (LevelTree, bool) {
 	tree, exists := GameData.LevelTrees[name]
 	return tree, exists
 }
 
+// GetPetLevelTree retrieves the level tree associated with a specific pet.
 func GetPetLevelTree(petID uint32) (LevelTree, bool) {
 	if pet, exists := GetPet(petID); exists {
 		return GetLevelTree(pet.LevelTreeName)
@@ -115,6 +123,7 @@ func GetPetLevelTree(petID uint32) (LevelTree, bool) {
 	return LevelTree{}, false
 }
 
+// GetClassLevelTree retrieves the level tree associated with a specific class.
 func GetClassLevelTree(classID uint32) (LevelTree, bool) {
 	if class, exists := GetClass(classID); exists {
 		return GetLevelTree(class.LevelTreeName)
@@ -122,6 +131,7 @@ func GetClassLevelTree(classID uint32) (LevelTree, bool) {
 	return LevelTree{}, false
 }
 
+// GetLevelTreeName retrieves the name of the level tree for a given item category and ID.
 func GetLevelTreeName(category string, id uint32) (string, error) {
 	switch category {
 	case storageKeyPet:
@@ -138,6 +148,7 @@ func GetLevelTreeName(category string, id uint32) (string, error) {
 	return "", errors.ErrInvalidItem
 }
 
+// ValidateItemExists checks if an item exists within a given category.
 func ValidateItemExists(category string, id uint32) bool {
 	switch category {
 	case storageKeyPet:
@@ -156,4 +167,40 @@ func ValidateItemExists(category string, id uint32) bool {
 		return false
 	}
 
+}
+
+func UpdateProgressionAtomic(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger,
+	userID string, progressionKey string, itemID uint32, updateFunc func(*ItemProgression) error) error {
+
+	prog, err := GetItemProgression(ctx, nk, logger, userID, progressionKey, itemID)
+	if err != nil {
+		LogWithUser(ctx, logger, "error", "Failed to read progression for update", map[string]interface{}{
+			"error":          err,
+			"progressionKey": progressionKey,
+			"itemID":         itemID,
+		})
+		return err
+	}
+
+	// Apply the update function to the retrieved progression
+	if err := updateFunc(prog); err != nil {
+		LogWithUser(ctx, logger, "error", "Failed to apply progression update", map[string]interface{}{
+			"error":          err,
+			"progressionKey": progressionKey,
+			"itemID":         itemID,
+		})
+		return err
+	}
+
+	err = SaveItemProgression(ctx, nk, logger, userID, progressionKey, itemID, prog)
+	if err != nil {
+		LogWithUser(ctx, logger, "error", "Failed to save progression", map[string]interface{}{
+			"error":          err,
+			"progressionKey": progressionKey,
+			"itemID":         itemID,
+		})
+		return fmt.Errorf("failed to save progression: %w", err)
+	}
+
+	return nil
 }

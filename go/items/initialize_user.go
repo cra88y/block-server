@@ -18,7 +18,7 @@ const (
 	WhiteoutPieceStyleID = 8
 )
 
-func AfterAuthroizeUserGC(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, out *api.Session, in *api.AuthenticateGameCenterRequest) error {
+func AfterAuthorizeUserGC(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, out *api.Session, in *api.AuthenticateGameCenterRequest) error {
 
 	if err := InitializeUser(ctx, logger, db, nk, out); err != nil {
 		logger.Error("User initialization failed: %v", err)
@@ -27,7 +27,7 @@ func AfterAuthroizeUserGC(ctx context.Context, logger runtime.Logger, db *sql.DB
 	return nil
 }
 
-func AfterAuthroizeUserDevice(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, out *api.Session, in *api.AuthenticateDeviceRequest) error {
+func AfterAuthorizeUserDevice(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, out *api.Session, in *api.AuthenticateDeviceRequest) error {
 
 	if err := InitializeUser(ctx, logger, db, nk, out); err != nil {
 		logger.Error("User initialization failed: %v", err)

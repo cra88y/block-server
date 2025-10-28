@@ -43,7 +43,6 @@ func RpcCanClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.D
 		return "", errors.ErrMarshal
 	}
 
-	logger.Debug("RpcCanClaimDailyDrops resp: %v", string(respBytes))
 	return string(respBytes), nil
 }
 
@@ -72,7 +71,7 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 	account, err := nk.AccountGetId(ctx, userID)
 	if err != nil {
 		logger.Error("AccountGetId error: %v", err)
-		return runtime.NewError("could not get user account", 13)
+		return errors.ErrCouldNotGetAccount
 	}
 
 	// get drops total before
@@ -91,10 +90,8 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 
 	// check if user has already claimed
 	if !canUserClaimDailyDrops(dailyDropsState) {
-		logger.Debug("User has already claimed daily drop today.")
 		resp.DropsLeft = currentDropsBefore
-		// out, _ := json.Marshal(resp)
-		return runtime.NewError("drops already claimed for user", 13)
+		return errors.ErrDropsAlreadyClaimed
 	}
 	newTotalDrops, err := grantCappedDrops(ctx, logger, nk, userID, dailyDropGrantCount)
 	if err != nil {
@@ -103,23 +100,6 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 
 	// grant drops
 	resp.DropsLeft = newTotalDrops
-	// calc amount actually granted
-	//amountActuallyGranted := newTotalDrops - currentDropsBefore
-	// send user notification
-	// 	err := nk.NotificationsSend(ctx, []*runtime.NotificationSend{{
-	// 		Code: 1001,
-	// 		Content: map[string]interface{}{
-	// 			"dropsLeft": changeset["dropsLeft"],
-	// 		},
-	// 		Persistent: true,
-	// 		Sender:     "", // sent by server
-	// 		Subject:    "Daily drops granted!",
-	// 		UserID:     userID,
-	// 	}})
-	// 	if err != nil {
-	// 		logger.Error("NotificationsSend error: %v", err)
-	// 		return "", errors.ErrInternalError
-	// 	}
 	// write current time to dailyDrops
 	dailyDropsState.LastClaimUnix = time.Now().UTC().Unix()
 	// marshall the response object
@@ -145,16 +125,9 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 	}})
 	if err != nil {
 		logger.Error("StorageWrite error: %v", err)
-		return errors.ErrInternalError
+		return errors.ErrCouldNotWriteStorage
 	}
 
-	// out, err := json.Marshal(resp)
-	// if err != nil {
-	// 	logger.Error("Marshal error: %v", err)
-	// 	return errors.ErrMarshal
-	// }
-
-	logger.Debug("ClaimDailyDrops compelted for user: %v", userID)
 	return nil
 }
 
@@ -163,11 +136,10 @@ func getDailyDropsState(ctx context.Context, logger runtime.Logger, nk runtime.N
 	var data dailyDrops
 	data.LastClaimUnix = 0 // Default for new users
 
-	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-	if !ok {
-		return data, nil, runtime.NewError("user ID not found", 3)
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
+		return data, nil, errors.ErrNoUserIdFound
 	}
-
 	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
 		Collection: storageCollectionDrops,
 		Key:        storageKeyDaily,
@@ -175,7 +147,7 @@ func getDailyDropsState(ctx context.Context, logger runtime.Logger, nk runtime.N
 	}})
 	if err != nil {
 		logger.Error("StorageRead error: %v", err)
-		return data, nil, runtime.NewError("could not read storage", 13)
+		return data, nil, errors.ErrCouldNotReadStorage
 	}
 
 	if len(objects) == 0 {
@@ -185,7 +157,7 @@ func getDailyDropsState(ctx context.Context, logger runtime.Logger, nk runtime.N
 	storageObj := objects[0]
 	if err := json.Unmarshal([]byte(storageObj.GetValue()), &data); err != nil {
 		logger.Error("Unmarshal error: %v", err)
-		return data, nil, runtime.NewError("could not unmarshal storage data", 13)
+		return data, nil, errors.ErrUnmarshal
 	}
 
 	return data, storageObj, nil
@@ -196,7 +168,7 @@ func grantCappedDrops(ctx context.Context, logger runtime.Logger, nk runtime.Nak
 	account, err := nk.AccountGetId(ctx, userID)
 	if err != nil {
 		logger.Error("AccountGetId error: %v", err)
-		return 0, runtime.NewError("could not get user account", 13)
+		return 0, errors.ErrCouldNotGetAccount
 	}
 	// get the current number of drops from the wallet
 	// get drops total before
@@ -229,7 +201,7 @@ func grantCappedDrops(ctx context.Context, logger runtime.Logger, nk runtime.Nak
 	}
 	if _, _, err := nk.WalletUpdate(ctx, userID, changeset, map[string]interface{}{}, false); err != nil {
 		logger.Error("WalletUpdate error: %v", err)
-		return 0, runtime.NewError("could not update wallet", 13)
+		return 0, errors.ErrCouldNotUpdateWallet
 	}
 	//return new current drops total
 	newTotalDrops := currentDropsBefore + dropsToGrant

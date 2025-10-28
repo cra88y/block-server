@@ -20,6 +20,7 @@ func GrantLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger runt
 	levelStr := strconv.Itoa(level)
 	rewardData, exists := tree.Rewards[levelStr]
 	if !exists {
+		LogWarn(ctx, logger, "No reward configuration found for level")
 		return nil
 	}
 
@@ -27,71 +28,75 @@ func GrantLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger runt
 
 	// currency rewards
 	if rewardData.Gold != "" {
-		val, err := strconv.ParseUint(rewardData.Gold, 10, 32)
+		val, err := ParseUint32Safely(rewardData.Gold, logger)
 		if err != nil {
 			return errors.ErrParse
 		}
-		rewards["gold"] = uint32(val)
+		rewards["gold"] = val
 	}
 	if rewardData.Gems != "" {
-		val, err := strconv.ParseUint(rewardData.Gems, 10, 32)
+		val, err := ParseUint32Safely(rewardData.Gems, logger)
 		if err != nil {
 			return errors.ErrParse
 		}
-		rewards["gems"] = uint32(val)
+		rewards["gems"] = val
 	}
 
 	// progression rewards
 	if rewardData.Abilities != "" {
-		val, err := strconv.ParseUint(rewardData.Abilities, 10, 32)
+		val, err := ParseUint32Safely(rewardData.Abilities, logger)
 		if err != nil {
 			return errors.ErrParse
 		}
 		if val > 0 {
-			rewards["abilities"] = uint32(val)
+			rewards["abilities"] = val
 		}
 	}
 	if rewardData.Sprites != "" {
-		val, err := strconv.ParseUint(rewardData.Sprites, 10, 32)
+		val, err := ParseUint32Safely(rewardData.Sprites, logger)
 		if err != nil {
 			return errors.ErrParse
 		}
 		if val > 0 {
-			rewards["sprites"] = uint32(val)
+			rewards["sprites"] = val
 		}
 	}
 
 	// item rewards
 	if rewardData.Backgrounds != "" {
-		val, err := strconv.ParseUint(rewardData.Backgrounds, 10, 32)
+		val, err := ParseUint32Safely(rewardData.Backgrounds, logger)
 		if err != nil {
 			return errors.ErrParse
 		}
 		if val > 0 {
-			rewards["backgrounds"] = uint32(val)
+			rewards["backgrounds"] = val
 		}
 	}
 	if rewardData.PieceStyles != "" {
-		val, err := strconv.ParseUint(rewardData.PieceStyles, 10, 32)
+		val, err := ParseUint32Safely(rewardData.PieceStyles, logger)
 		if err != nil {
 			return errors.ErrParse
 		}
 		if val > 0 {
-			rewards["piece_styles"] = uint32(val)
+			rewards["piece_styles"] = val
 		}
 	}
-	logger.Debug("Granting level %d rewards for %s %d: %+v", level, itemType, itemID, rewards)
 	if err := GrantRewardItems(ctx, nk, logger, userID, rewards, itemType, itemID); err != nil {
-		logger.WithField("rewards", rewards).Error("Reward grant failed")
+		LogError(ctx, logger, "Reward grant failed", err)
 		return err
 	}
-	logger.Debug("Rewards granted successfully")
 	return nil
 }
 
 func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, rewards map[string]uint32, itemType string, itemID uint32) error {
 	writes := make([]*runtime.StorageWrite, 0)
 	walletUpdates := make(map[string]int64)
+
+	// Validate item exists before processing rewards
+	if !ValidateItemExists(itemType, itemID) {
+		LogWarn(ctx, logger, "Invalid item ID for grant_reward_items")
+		return errors.ErrInvalidItemID
+	}
 
 	for rewardType, amount := range rewards {
 		switch rewardType {
@@ -101,66 +106,74 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runti
 		case "abilities", "sprites":
 			var maxAbilitiesAvailable int
 			var maxSpritesAvailable int
+			var itemExists bool
+
 			switch itemType {
 			case "pet":
 				if pet, exists := GetPet(itemID); exists {
 					maxAbilitiesAvailable = len(pet.AbilityIDs)
 					maxSpritesAvailable = pet.SpriteCount
+					itemExists = true
 				}
 			case "class":
 				if class, exists := GetClass(itemID); exists {
 					maxAbilitiesAvailable = len(class.AbilityIDs)
 					maxSpritesAvailable = class.SpriteCount
+					itemExists = true
 				}
 			}
 
-			var prog *ItemProgression
-			var err error
-			if itemType == "pet" {
-				prog, err = GetItemProgression(ctx, nk, logger, userID, ProgressionKeyPet, itemID)
-			} else {
-				prog, err = GetItemProgression(ctx, nk, logger, userID, ProgressionKeyClass, itemID)
-			}
-			if err != nil {
-				return err
-			}
-
-			currentUnlocked := prog.AbilitiesUnlocked
-			maxAvailable := maxAbilitiesAvailable
-			if rewardType == "sprites" {
-				currentUnlocked = prog.SpritesUnlocked
-				maxAvailable = maxSpritesAvailable
-			}
-
-			if maxAvailable <= 0 {
+			if !itemExists {
+				LogWarn(ctx, logger, "Attempted to grant rewards for non-existent item")
 				continue
 			}
 
-			// Calculate new unlocks count
-			newUnlocked := currentUnlocked + int(amount)
-			if newUnlocked > maxAvailable {
-				amount = uint32(maxAvailable - currentUnlocked)
-			}
-			if amount == 0 {
-				continue
-			}
-
-			// Update progression
-			switch rewardType {
-			case "abilities":
-				prog.AbilitiesUnlocked += int(amount)
-
-			case "sprites":
-				prog.SpritesUnlocked += int(amount)
-
+			// Use atomic progression update for ability/sprite unlocks
+			var progressionKey string
+			switch itemType {
+			case "pet":
+				progressionKey = ProgressionKeyPet
+			case "class":
+				progressionKey = ProgressionKeyClass
+			default:
+				return errors.ErrInvalidItemType
 			}
 
-			if itemType == "pet" {
-				err = SaveItemProgression(ctx, nk, logger, userID, ProgressionKeyPet, itemID, prog)
-			} else {
-				err = SaveItemProgression(ctx, nk, logger, userID, ProgressionKeyClass, itemID, prog)
-			}
+			err := UpdateProgressionAtomic(ctx, nk, logger, userID,
+				progressionKey, itemID, func(prog *ItemProgression) error {
+					currentUnlocked := prog.AbilitiesUnlocked
+					maxAvailable := maxAbilitiesAvailable
+					if rewardType == "sprites" {
+						currentUnlocked = prog.SpritesUnlocked
+						maxAvailable = maxSpritesAvailable
+					}
+
+					if maxAvailable <= 0 {
+						return nil
+					}
+
+					// Calculate new unlocks count
+					newUnlocked := currentUnlocked + int(amount)
+					if newUnlocked > maxAvailable {
+						amount = uint32(maxAvailable - currentUnlocked)
+					}
+					if amount == 0 {
+						return nil
+					}
+
+					// Update progression
+					switch rewardType {
+					case "abilities":
+						prog.AbilitiesUnlocked += int(amount)
+					case "sprites":
+						prog.SpritesUnlocked += int(amount)
+					}
+
+					return nil
+				})
+
 			if err != nil {
+				LogError(ctx, logger, "Failed to update item progression for rewards", err)
 				return err
 			}
 
@@ -170,17 +183,21 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runti
 				storageKey = storageKeyPieceStyle
 			}
 
-			objects, _ := nk.StorageRead(ctx, []*runtime.StorageRead{
+			objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{
 				{Collection: storageCollectionInventory, Key: storageKey, UserID: userID},
 			})
+			if err != nil {
+				LogError(ctx, logger, "Failed to read inventory for rewards", err)
+				return fmt.Errorf("inventory read failed: %w", err)
+			}
 
 			var ownedItems InventoryData
-
 			var version string
 
 			if len(objects) > 0 {
 				if err := json.Unmarshal([]byte(objects[0].Value), &ownedItems); err != nil {
-					return fmt.Errorf("inventory read failed: %w", err)
+					LogError(ctx, logger, "Failed to unmarshal inventory data", err)
+					return fmt.Errorf("inventory unmarshal failed: %w", err)
 				}
 				version = objects[0].Version
 			}
@@ -208,6 +225,7 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runti
 				data := InventoryData{Items: updatedItems}
 				value, err := json.Marshal(data)
 				if err != nil {
+					LogError(ctx, logger, "Failed to marshal inventory data", err)
 					return err
 				}
 
@@ -220,18 +238,21 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runti
 					PermissionWrite: 0,
 					Version:         version,
 				})
+
 			}
 		}
 	}
 
 	if len(walletUpdates) > 0 {
 		if _, _, err := nk.WalletUpdate(ctx, userID, walletUpdates, map[string]interface{}{}, true); err != nil {
+			LogError(ctx, logger, "Failed to update wallet with rewards", err)
 			return err
 		}
 	}
 
 	if len(writes) > 0 {
 		if _, err := nk.StorageWrite(ctx, writes); err != nil {
+			LogError(ctx, logger, "Failed to write inventory updates", err)
 			return err
 		}
 	}
