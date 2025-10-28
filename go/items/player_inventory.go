@@ -108,9 +108,9 @@ func EquipAbility(ctx context.Context, logger runtime.Logger, nk runtime.NakamaM
 
 	var prog *ItemProgression
 	if itemType == storageKeyPet {
-		prog, err = GetItemProgression(ctx, nk, userID, ProgressionKeyPet, req.ItemID)
+		prog, err = GetItemProgression(ctx, nk, logger, userID, ProgressionKeyPet, req.ItemID)
 	} else {
-		prog, err = GetItemProgression(ctx, nk, userID, ProgressionKeyClass, req.ItemID)
+		prog, err = GetItemProgression(ctx, nk, logger, userID, ProgressionKeyClass, req.ItemID)
 	}
 	if err != nil {
 		return err
@@ -138,7 +138,7 @@ func EquipAbility(ctx context.Context, logger runtime.Logger, nk runtime.NakamaM
 	return SaveItemProgression(ctx, nk, logger, userID, ProgressionKeyClass, req.ItemID, prog)
 }
 
-func IsAbilityAvailable(ctx context.Context, nk runtime.NakamaModule, userID string, itemID uint32, abilityID uint32, itemType string) error {
+func IsAbilityAvailable(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, userID string, itemID uint32, abilityID uint32, itemType string) error {
 	var abilities []uint32
 	switch itemType {
 	case storageKeyPet:
@@ -160,9 +160,9 @@ func IsAbilityAvailable(ctx context.Context, nk runtime.NakamaModule, userID str
 	var prog *ItemProgression
 	var err error
 	if itemType == storageKeyPet {
-		prog, err = GetItemProgression(ctx, nk, userID, ProgressionKeyPet, itemID)
+		prog, err = GetItemProgression(ctx, nk, logger, userID, ProgressionKeyPet, itemID)
 	} else {
-		prog, err = GetItemProgression(ctx, nk, userID, ProgressionKeyClass, itemID)
+		prog, err = GetItemProgression(ctx, nk, logger, userID, ProgressionKeyClass, itemID)
 	}
 	if err != nil {
 		return err
@@ -237,7 +237,7 @@ func AddPetExp(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logg
 	}
 
 	// Get current progression
-	prog, err := GetItemProgression(ctx, nk, userID, ProgressionKeyPet, petID)
+	prog, err := GetItemProgression(ctx, nk, logger, userID, ProgressionKeyPet, petID)
 	if err != nil {
 		return err
 	}
@@ -284,7 +284,7 @@ func AddClassExp(ctx context.Context, nk runtime.NakamaModule, logger runtime.Lo
 		return runtime.NewError("invalid class configuration", 13)
 	}
 
-	prog, err := GetItemProgression(ctx, nk, userID, ProgressionKeyClass, classID)
+	prog, err := GetItemProgression(ctx, nk, logger, userID, ProgressionKeyClass, classID)
 	if err != nil {
 		return err
 	}

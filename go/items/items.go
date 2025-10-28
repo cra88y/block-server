@@ -11,9 +11,8 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-func GetItemProgression(ctx context.Context, nk runtime.NakamaModule,
+func GetItemProgression(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger,
 	userID string, keyPrefix string, itemID uint32) (*ItemProgression, error) {
-
 	key := fmt.Sprintf("%s%d", keyPrefix, itemID)
 	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{
 		{
@@ -26,15 +25,18 @@ func GetItemProgression(ctx context.Context, nk runtime.NakamaModule,
 		return nil, err
 	}
 
-	prog := &ItemProgression{}
-	if len(objects) > 0 {
-		if err := json.Unmarshal([]byte(objects[0].Value), prog); err != nil {
-			return nil, err
-		}
-		prog.Version = objects[0].Version
+	if len(objects) == 0 {
+		return InitializeProgression(ctx, nk, logger, userID, keyPrefix, itemID)
 	}
+
+	prog := &ItemProgression{}
+	if err := json.Unmarshal([]byte(objects[0].Value), prog); err != nil {
+		return nil, err
+	}
+	prog.Version = objects[0].Version
 	return prog, nil
 }
+
 func SaveItemProgression(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, ProgressionKey string, itemID uint32, prog *ItemProgression) error {
 
 	key := ProgressionKey + strconv.Itoa(int(itemID))
@@ -153,4 +155,5 @@ func ValidateItemExists(category string, id uint32) bool {
 	default:
 		return false
 	}
+
 }

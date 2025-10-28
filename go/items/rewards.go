@@ -117,9 +117,9 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runti
 			var prog *ItemProgression
 			var err error
 			if itemType == "pet" {
-				prog, err = GetItemProgression(ctx, nk, userID, ProgressionKeyPet, itemID)
+				prog, err = GetItemProgression(ctx, nk, logger, userID, ProgressionKeyPet, itemID)
 			} else {
-				prog, err = GetItemProgression(ctx, nk, userID, ProgressionKeyClass, itemID)
+				prog, err = GetItemProgression(ctx, nk, logger, userID, ProgressionKeyClass, itemID)
 			}
 			if err != nil {
 				return err

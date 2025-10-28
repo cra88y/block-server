@@ -23,10 +23,8 @@ func GivePet(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger
 		return err
 	}
 
-	// Initialize progression if none
-	prog, err := GetItemProgression(ctx, nk, userID, ProgressionKeyPet, petID)
-	if err != nil || prog == nil {
-		return InitializeProgression(ctx, nk, logger, userID, ProgressionKeyPet, petID)
+	if _, err := InitializeProgression(ctx, nk, logger, userID, ProgressionKeyPet, petID); err != nil {
+		return err
 	}
 	return nil
 }
@@ -41,10 +39,10 @@ func GiveClass(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logg
 		return err
 	}
 
-	prog, err := GetItemProgression(ctx, nk, userID, ProgressionKeyClass, classID)
-	if err != nil || prog == nil {
-		return InitializeProgression(ctx, nk, logger, userID, ProgressionKeyClass, classID)
+	if _, err := InitializeProgression(ctx, nk, logger, userID, ProgressionKeyClass, classID); err != nil {
+		return err
 	}
+
 	return nil
 }
 
@@ -112,7 +110,7 @@ func addToInventory(ctx context.Context, nk runtime.NakamaModule, logger runtime
 	return err
 }
 
-func InitializeProgression(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, progressionKey string, itemID uint32) error {
+func InitializeProgression(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, progressionKey string, itemID uint32) (*ItemProgression, error) {
 	prog := &ItemProgression{
 		Level:               1,
 		Exp:                 0,
@@ -123,5 +121,8 @@ func InitializeProgression(ctx context.Context, nk runtime.NakamaModule, logger 
 		BackgroundsUnlocked: 0,
 		PieceStylesUnlocked: 0,
 	}
-	return SaveItemProgression(ctx, nk, logger, userID, progressionKey, itemID, prog)
+	if err := SaveItemProgression(ctx, nk, logger, userID, progressionKey, itemID, prog); err != nil {
+		return nil, err
+	}
+	return prog, nil
 }
