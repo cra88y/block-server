@@ -17,6 +17,11 @@ func GetUserIDFromContext(ctx context.Context, logger runtime.Logger) (string, e
 		logger.Error("No user ID found in context")
 		return "", errors.ErrNoUserIdFound
 	}
+
+	if userID == "" {
+		logger.Error("Empty user ID found in context")
+		return "", errors.ErrNoUserIdFound
+	}
 	return userID, nil
 }
 

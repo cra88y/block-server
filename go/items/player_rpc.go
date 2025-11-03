@@ -14,8 +14,8 @@ import (
 
 // get equipped items
 func RpcGetEquipment(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
-	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-	if !ok {
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
 		logger.Error("No user ID found in context for get equipment")
 		return "", errors.ErrNoUserIdFound
 	}
@@ -83,8 +83,8 @@ func RpcGetEquipment(ctx context.Context, logger runtime.Logger, db *sql.DB, nk 
 
 // get all items in inventory
 func RpcGetInventory(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
-	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-	if !ok {
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
 		logger.Error("No user ID found in context for get inventory")
 		return "", errors.ErrNoUserIdFound
 	}
@@ -151,8 +151,8 @@ func RpcGetInventory(ctx context.Context, logger runtime.Logger, db *sql.DB, nk 
 }
 
 func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
-	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-	if !ok {
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
 		logger.Error("No user ID found in context for get progression")
 		return "", errors.ErrNoUserIdFound
 	}
@@ -275,8 +275,8 @@ func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 
 // equip abilities on items
 func RpcEquipPetAbility(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, payload string) (string, error) {
-	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-	if !ok {
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
 		logger.Error("No user ID found in context for pet ability equip")
 		return "", errors.ErrNoUserIdFound
 	}
@@ -293,8 +293,8 @@ func RpcEquipPetAbility(ctx context.Context, logger runtime.Logger, nk runtime.N
 }
 
 func RpcEquipClassAbility(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, payload string) (string, error) {
-	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-	if !ok {
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
 		logger.Error("No user ID found in context for class ability equip")
 		return "", errors.ErrNoUserIdFound
 	}
@@ -312,8 +312,8 @@ func RpcEquipClassAbility(ctx context.Context, logger runtime.Logger, nk runtime
 
 // equip items
 func RpcEquipPet(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, payload string) (string, error) {
-	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-	if !ok {
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
 		logger.Error("No user ID found in context for pet equip")
 		return "", errors.ErrNoUserIdFound
 	}
@@ -331,8 +331,8 @@ func RpcEquipPet(ctx context.Context, logger runtime.Logger, nk runtime.NakamaMo
 }
 
 func RpcEquipClass(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, payload string) (string, error) {
-	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-	if !ok {
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
 		logger.Error("No user ID found in context for class equip")
 		return "", errors.ErrNoUserIdFound
 	}
@@ -350,8 +350,8 @@ func RpcEquipClass(ctx context.Context, logger runtime.Logger, nk runtime.Nakama
 }
 
 func RpcEquipBackground(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, payload string) (string, error) {
-	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-	if !ok {
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
 		logger.Error("No user ID found in context for background equip")
 		return "", errors.ErrNoUserIdFound
 	}
@@ -369,8 +369,8 @@ func RpcEquipBackground(ctx context.Context, logger runtime.Logger, nk runtime.N
 }
 
 func RpcEquipPieceStyle(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, payload string) (string, error) {
-	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-	if !ok {
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
 		logger.Error("No user ID found in context for piece style equip")
 		return "", errors.ErrNoUserIdFound
 	}
@@ -389,8 +389,8 @@ func RpcEquipPieceStyle(ctx context.Context, logger runtime.Logger, nk runtime.N
 
 // use pet treat to grant xp to a pet
 func RpcUsePetTreat(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
-	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-	if !ok {
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
 		logger.Error("No user ID found in context for pet treat usage")
 		return "", errors.ErrNoUserIdFound
 	}
