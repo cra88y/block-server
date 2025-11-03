@@ -58,7 +58,7 @@ const (
 	storageKeyBackground       = "backgrounds"  // [0,1,2,3]
 	storageKeyPieceStyle       = "piece_styles" //[0]
 
-	storageCollectionEquipment = "equipment"
+	storageCollectionEquipment   = "equipment"
 	storageCollectionProgression = "progression"
 )
 

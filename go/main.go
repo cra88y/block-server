@@ -52,6 +52,30 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
+	if err := initializer.RegisterRpc("equip_class", items.RpcEquipClass); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
+	if err := initializer.RegisterRpc("equip_pet", items.RpcEquipPet); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
+	if err := initializer.RegisterRpc("equip_class_ability", items.RpcEquipClassAbility); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
+	if err := initializer.RegisterRpc("equip_pet_ability", items.RpcEquipPetAbility); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
+	if err := initializer.RegisterRpc("equip_background", items.RpcEquipBackground); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
+	if err := initializer.RegisterRpc("equip_piece_style", items.RpcEquipPieceStyle); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
 	if err := session.RegisterSessionEvents(db, nk, initializer); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
