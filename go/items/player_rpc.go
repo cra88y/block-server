@@ -163,7 +163,7 @@ func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 	}
 
 	// List all progression storage objects first
-	objects, _, err := nk.StorageList(ctx, userID, storageCollectionProgression, "", 100, "")
+	objects, _, err := nk.StorageList(ctx, "", userID, storageCollectionProgression, 100, "")
 	if err != nil {
 		logger.WithFields(map[string]interface{}{
 			"user":  userID,
