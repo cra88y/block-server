@@ -439,6 +439,8 @@ func RpcUsePetTreat(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 	walletUpdates := map[string]int64{
 		"pet_treat": -1,
 	}
+
+	// todo: update to use MultiUpdate / rollback on fail
 	if _, _, err := nk.WalletUpdate(ctx, userID, walletUpdates, map[string]interface{}{"action": "use_pet_treat"}, true); err != nil {
 		logger.WithFields(map[string]interface{}{
 			"user":   userID,

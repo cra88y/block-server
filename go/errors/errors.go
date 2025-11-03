@@ -4,9 +4,9 @@ import "github.com/heroiclabs/nakama-common/runtime"
 
 // Error codes
 const (
-	CodeInternal   = 13  // Internal server error
-	CodeInvalidArg = 3   // Invalid argument
-	CodeForbidden  = 403 // Forbidden
+	CodeInternal   = 13 // Internal server error
+	CodeInvalidArg = 3  // Invalid argument
+	CodeForbidden  = 7  // Forbidden
 )
 
 // Unified error definitions
