@@ -9,6 +9,7 @@
 
 # editors 
 .vscode/
+.vs/
 .idea/
 
 # misc
