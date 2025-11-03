@@ -150,7 +150,6 @@ func RpcGetInventory(ctx context.Context, logger runtime.Logger, db *sql.DB, nk 
 	return string(resp), nil
 }
 
-// get all progression for all levelable items (pets/classes)
 func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 	if !ok {
@@ -158,9 +157,42 @@ func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 		return "", errors.ErrNoUserIdFound
 	}
 
-	// Batch fetch progression keys
-	reads := []*runtime.StorageRead{
-		{Collection: storageCollectionProgression, UserID: userID},
+	progression := ProgressionResponse{
+		Pets:    make(map[uint32]ItemProgression),
+		Classes: make(map[uint32]ItemProgression),
+	}
+
+	// List all progression storage objects first
+	objects, _, err := nk.StorageList(ctx, userID, storageCollectionProgression, "", 100, "")
+	if err != nil {
+		logger.WithFields(map[string]interface{}{
+			"user":  userID,
+			"error": err.Error(),
+		}).Error("Progression storage list failure")
+		return "", errors.ErrProgressionUnavailable
+	}
+
+	// Build StorageRead operations for each found object
+	if len(objects) == 0 {
+		// No progression data found, return empty response
+		resp, err := json.Marshal(progression)
+		if err != nil {
+			logger.WithFields(map[string]interface{}{
+				"user":  userID,
+				"error": err.Error(),
+			}).Error("Failed to marshal empty progression response")
+			return "", errors.ErrMarshal
+		}
+		return string(resp), nil
+	}
+
+	reads := make([]*runtime.StorageRead, 0, len(objects))
+	for _, obj := range objects {
+		reads = append(reads, &runtime.StorageRead{
+			Collection: storageCollectionProgression,
+			Key:        obj.Key,
+			UserID:     userID,
+		})
 	}
 
 	objs, err := nk.StorageRead(ctx, reads)
@@ -170,11 +202,6 @@ func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 			"error": err.Error(),
 		}).Error("Progression storage read failure")
 		return "", errors.ErrProgressionUnavailable
-	}
-
-	progression := ProgressionResponse{
-		Pets:    make(map[uint32]ItemProgression),
-		Classes: make(map[uint32]ItemProgression),
 	}
 
 	for _, obj := range objs {
