@@ -157,7 +157,6 @@ func EquipAbility(ctx context.Context, logger runtime.Logger, nk runtime.NakamaM
 }
 
 func IsAbilityAvailable(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, userID string, itemID uint32, abilityID uint32, itemType string) error {
-	// Validate item exists first
 	if !ValidateItemExists(itemType, itemID) {
 		return errors.ErrInvalidItemID
 	}
@@ -228,7 +227,6 @@ func IsAbilityAvailable(ctx context.Context, logger runtime.Logger, nk runtime.N
 		return runtime.NewError("ability not unlocked", 3)
 	}
 
-	// Ability availability check passed - no need to log this as it's a normal flow
 	return nil
 }
 
@@ -279,6 +277,9 @@ func EquipItem(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModu
 	})
 	return err
 }
+
+
+
 func AddPetExp(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, petID uint32, exp uint32) error {
 	return addExperience(ctx, nk, logger, userID, storageKeyPet, petID, exp)
 }
@@ -288,7 +289,6 @@ func AddClassExp(ctx context.Context, nk runtime.NakamaModule, logger runtime.Lo
 }
 
 func addExperience(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, itemType string, itemID uint32, exp uint32) error {
-	// Validate input
 	if exp == 0 {
 		LogInfo(ctx, logger, "Zero experience provided, skipping update")
 		return nil
@@ -298,7 +298,6 @@ func addExperience(ctx context.Context, nk runtime.NakamaModule, logger runtime.
 		return errors.ErrInvalidExperience
 	}
 
-	// Get level tree name for this item
 	treeName, err := GetLevelTreeName(itemType, itemID)
 	if err != nil {
 		LogError(ctx, logger, "Invalid item configuration", err)
@@ -316,19 +315,17 @@ func addExperience(ctx context.Context, nk runtime.NakamaModule, logger runtime.
 	}
 
 	return UpdateProgressionAtomic(ctx, nk, logger, userID, progressionKey, itemID, func(prog *ItemProgression) error {
-		// Add XP with overflow protection
 		newExp := prog.Exp + int(exp)
-		if newExp < prog.Exp { // Overflow detected
+		if newExp < prog.Exp { // Integer overflow protection
 			newExp = math.MaxInt32
 		}
 
-		// Get level tree to check max level and cap experience
 		tree, exists := GetLevelTree(treeName)
 		if !exists {
 			return errors.ErrInvalidLevelTree
 		}
 
-		// Cap experience at max level threshold if needed
+		// Cap experience at max level to prevent invalid progression and ensure data integrity
 		maxExp := tree.LevelThresholds[tree.MaxLevel]
 		if newExp > maxExp {
 			newExp = maxExp
@@ -341,18 +338,17 @@ func addExperience(ctx context.Context, nk runtime.NakamaModule, logger runtime.
 			return err
 		}
 
-		// Cap level at max level
+		// Ensure level doesn't exceed maximum allowed
 		if newLevel > tree.MaxLevel {
 			newLevel = tree.MaxLevel
 			prog.Exp = maxExp
 		}
 
-		// Check for level up
+		// Process level-ups and grant rewards
 		if newLevel > prog.Level {
 			oldLevel := prog.Level
 			prog.Level = newLevel
 
-			// Grant rewards for each level achieved
 			for l := oldLevel + 1; l <= newLevel; l++ {
 				if err := GrantLevelRewards(ctx, nk, logger, userID, treeName, l, itemType, itemID); err != nil {
 					return err
@@ -363,6 +359,8 @@ func addExperience(ctx context.Context, nk runtime.NakamaModule, logger runtime.
 		return nil
 	})
 }
+
+
 
 func IsItemOwned(ctx context.Context, nk runtime.NakamaModule, userID string, itemID uint32, itemStorageKey string) (bool, error) {
 	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{
@@ -375,9 +373,9 @@ func IsItemOwned(ctx context.Context, nk runtime.NakamaModule, userID string, it
 		return false, nil
 	}
 
-	var data InventoryData
-	if err := json.Unmarshal([]byte(objects[0].Value), &data); err != nil {
-		return false, err
+	data, err := UnmarshalJSON[InventoryData](objects[0].Value)
+	if err != nil {
+		return false, fmt.Errorf("inventory check: %w", err)
 	}
 
 	for _, id := range data.Items {
@@ -386,4 +384,106 @@ func IsItemOwned(ctx context.Context, nk runtime.NakamaModule, userID string, it
 		}
 	}
 	return false, nil
+}
+
+
+
+func GivePet(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, petID uint32) error {
+	if !ValidateItemExists(storageKeyPet, petID) {
+		return errors.ErrInvalidItem
+	}
+
+	if err := addToInventory(ctx, nk, logger, userID, storageKeyPet, petID); err != nil {
+		return err
+	}
+
+	if _, err := InitializeProgression(ctx, nk, logger, userID, ProgressionKeyPet, petID); err != nil {
+		return err
+	}
+	return nil
+}
+
+func GiveClass(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, classID uint32) error {
+	if !ValidateItemExists(storageKeyClass, classID) {
+		return errors.ErrInvalidItem
+	}
+
+	if err := addToInventory(ctx, nk, logger, userID, storageKeyClass, classID); err != nil {
+		return err
+	}
+
+	if _, err := InitializeProgression(ctx, nk, logger, userID, ProgressionKeyClass, classID); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func GiveBackground(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, backgroundID uint32) error {
+	if !ValidateItemExists(storageKeyBackground, backgroundID) {
+		return errors.ErrInvalidItem
+	}
+
+	return addToInventory(ctx, nk, logger, userID, storageKeyBackground, backgroundID)
+}
+
+func GivePieceStyle(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, styleID uint32) error {
+	if !ValidateItemExists(storageKeyPieceStyle, styleID) {
+		return errors.ErrInvalidItem
+	}
+	return addToInventory(ctx, nk, logger, userID, storageKeyPieceStyle, styleID)
+}
+
+func addToInventory(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, itemType string, itemID uint32) error {
+	objs, err := nk.StorageRead(ctx, []*runtime.StorageRead{
+		{Collection: storageCollectionInventory, Key: itemType, UserID: userID},
+	})
+	if err != nil {
+		LogError(ctx, logger, "Failed to read inventory for item addition", err)
+		return fmt.Errorf("inventory read failed: %w", err)
+	}
+
+	var current InventoryData
+	var version string
+	if len(objs) > 0 {
+		inventoryData, err := UnmarshalJSON[InventoryData](objs[0].Value)
+		if err != nil {
+			LogError(ctx, logger, "Failed to unmarshal inventory data", err)
+			return fmt.Errorf("inventory data: %w", err)
+		}
+		version = objs[0].Version
+		current = *inventoryData
+	}
+
+	for _, id := range current.Items {
+		if id == itemID {
+			return nil
+		}
+	}
+
+	newItems := append(current.Items, itemID)
+	data := InventoryData{Items: newItems}
+	value, err := json.Marshal(data)
+	if err != nil {
+		LogError(ctx, logger, "Inventory marshal failed", err)
+		return fmt.Errorf("inventory marshal error: %w", err)
+	}
+
+	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{
+		{
+			Collection:      storageCollectionInventory,
+			Key:             itemType,
+			UserID:          userID,
+			Value:           string(value),
+			PermissionRead:  2,
+			PermissionWrite: 0,
+			Version:         version,
+		},
+	})
+	if err != nil {
+		LogError(ctx, logger, "Failed to write inventory update", err)
+		return fmt.Errorf("inventory write failed: %w", err)
+	}
+
+	return nil
 }

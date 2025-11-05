@@ -57,7 +57,6 @@ WHERE
 	}
 }
 
-// Limit the number of concurrent realtime sessions active for a user to just one.
 func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtime.Logger, *api.Event) {
 	return func(ctx context.Context, logger runtime.Logger, evt *api.Event) {
 		items.TryClaimDailyDrops(ctx, logger, nk)
@@ -66,6 +65,13 @@ func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtim
 		if !ok {
 			logger.Error("context did not contain user ID.")
 			return
+		}
+
+		report, err := items.VerifyAndFixUserProgression(ctx, nk, logger, userID)
+		if err != nil {
+			logger.WithField("err", err).Error("progression verification failed")
+		} else if report.TotalFixed > 0 {
+			logger.WithField("report", report).Info("progression verification completed with repairs")
 		}
 
 		sessionID, ok := ctx.Value(runtime.RUNTIME_CTX_SESSION_ID).(string)
@@ -89,7 +95,7 @@ func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtim
 				},
 				Persistent: false,
 				Sender:     userID,
-				Subject:    "Another device is active!",
+				Subject:    "Another device is already in use.",
 				UserID:     userID,
 			},
 		}

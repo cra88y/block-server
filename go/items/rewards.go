@@ -92,7 +92,6 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runti
 	writes := make([]*runtime.StorageWrite, 0)
 	walletUpdates := make(map[string]int64)
 
-	// Validate item exists before processing rewards
 	if !ValidateItemExists(itemType, itemID) {
 		LogWarn(ctx, logger, "Invalid item ID for grant_reward_items")
 		return errors.ErrInvalidItemID
@@ -128,7 +127,6 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runti
 				continue
 			}
 
-			// Use atomic progression update for ability/sprite unlocks
 			var progressionKey string
 			switch itemType {
 			case "pet":
@@ -152,7 +150,6 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runti
 						return nil
 					}
 
-					// Calculate new unlocks count
 					newUnlocked := currentUnlocked + int(amount)
 					if newUnlocked > maxAvailable {
 						amount = uint32(maxAvailable - currentUnlocked)
@@ -161,7 +158,6 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runti
 						return nil
 					}
 
-					// Update progression
 					switch rewardType {
 					case "abilities":
 						prog.AbilitiesUnlocked += int(amount)
@@ -202,7 +198,6 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runti
 				version = objects[0].Version
 			}
 
-			// Get actual reward items
 			rewardIDs := GetRewardItemIDs(itemType, itemID, rewardType, amount)
 			newItems := make([]uint32, 0)
 
@@ -220,7 +215,6 @@ func GrantRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runti
 			}
 
 			if len(newItems) > 0 {
-				// Add new items to inventory
 				updatedItems := append(ownedItems.Items, newItems...)
 				data := InventoryData{Items: updatedItems}
 				value, err := json.Marshal(data)

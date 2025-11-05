@@ -60,7 +60,7 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		return fmt.Errorf("wallet setup error: %w", err)
 	}
 
-	// Grant default items
+	
 	if err := GivePet(ctx, nk, logger, userID, DefaultPetID); err != nil {
 		return err
 	}
@@ -77,6 +77,6 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		return err
 	}
 
-	// Equip defaults
+	
 	return EquipDefaults(ctx, nk, userID)
 }

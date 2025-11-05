@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+
+	"block-server/errors"
 )
 
 //go:embed gamedata/items.json
@@ -16,6 +18,7 @@ var (
 	GameDataOnce sync.Once
 )
 
+// LoadGameData loads and parses game data from embedded JSON
 func LoadGameData() error {
 	var initErr error
 	var parseErrors []error
@@ -41,7 +44,6 @@ func LoadGameData() error {
 			LevelTrees:  make(map[string]LevelTree, len(raw.LevelTrees)),
 		}
 
-		// Level trees
 		for name, tree := range raw.LevelTrees {
 			t := tree
 			t.LevelThresholds = make([]int, t.MaxLevel+1)
@@ -53,7 +55,6 @@ func LoadGameData() error {
 			GameData.LevelTrees[name] = t
 		}
 
-		// Pets
 		for k, v := range raw.Pets {
 			id, err := strconv.ParseUint(k, 10, 32)
 			if err != nil {
@@ -71,7 +72,6 @@ func LoadGameData() error {
 			}
 		}
 
-		// Classes
 		for k, v := range raw.Classes {
 			id, err := strconv.ParseUint(k, 10, 32)
 			if err != nil {
@@ -89,7 +89,6 @@ func LoadGameData() error {
 			}
 		}
 
-		// Backgrounds
 		for k, v := range raw.Backgrounds {
 			id, err := strconv.ParseUint(k, 10, 32)
 			if err != nil {
@@ -99,7 +98,6 @@ func LoadGameData() error {
 			GameData.Backgrounds[uint32(id)] = v
 		}
 
-		// Piece Styles
 		for k, v := range raw.PieceStyles {
 			id, err := strconv.ParseUint(k, 10, 32)
 			if err != nil {
@@ -115,6 +113,107 @@ func LoadGameData() error {
 	}
 	return initErr
 }
+
+// Game Data Access Functions
+
+func GetPet(id uint32) (*Pet, bool) {
+	pet, exists := GameData.Pets[id]
+	return pet, exists
+}
+
+func GetClass(id uint32) (*Class, bool) {
+	class, exists := GameData.Classes[id]
+	return class, exists
+}
+
+func GetLevelTree(name string) (LevelTree, bool) {
+	tree, exists := GameData.LevelTrees[name]
+	return tree, exists
+}
+
+func GetPetLevelTree(petID uint32) (LevelTree, bool) {
+	if pet, exists := GetPet(petID); exists {
+		return GetLevelTree(pet.LevelTreeName)
+	}
+	return LevelTree{}, false
+}
+
+func GetClassLevelTree(classID uint32) (LevelTree, bool) {
+	if class, exists := GetClass(classID); exists {
+		return GetLevelTree(class.LevelTreeName)
+	}
+	return LevelTree{}, false
+}
+
+func GetLevelTreeName(category string, id uint32) (string, error) {
+	switch category {
+	case storageKeyPet:
+		if pet, exists := GameData.Pets[id]; exists {
+			return pet.LevelTreeName, nil
+		}
+	case storageKeyClass:
+		if class, exists := GameData.Classes[id]; exists {
+			return class.LevelTreeName, nil
+		}
+	default:
+		return "", errors.ErrNoCategory
+	}
+	return "", errors.ErrInvalidItem
+}
+
+func ValidateItemExists(category string, id uint32) bool {
+	switch category {
+	case storageKeyPet:
+		_, exists := GameData.Pets[id]
+		return exists
+	case storageKeyClass:
+		_, exists := GameData.Classes[id]
+		return exists
+	case storageKeyBackground:
+		_, exists := GameData.Backgrounds[id]
+		return exists
+	case storageKeyPieceStyle:
+		_, exists := GameData.PieceStyles[id]
+		return exists
+	default:
+		return false
+	}
+}
+
+// Level System Functions
+
+func CalculateLevel(treeName string, exp int) (int, error) {
+	tree, exists := GetLevelTree(treeName)
+	if !exists {
+		return 0, errors.ErrInvalidLevelTree
+	}
+
+	if exp < 0 {
+		return 1, nil
+	}
+
+	if exp >= tree.LevelThresholds[tree.MaxLevel] {
+		return tree.MaxLevel, nil
+	}
+
+	thresholds := tree.LevelThresholds
+	low, high := 1, tree.MaxLevel
+	if len(thresholds) < high {
+		return 0, errors.ErrInvalidLevelThresholds
+	}
+	for low <= high {
+		mid := (low + high) / 2
+		if exp >= thresholds[mid] {
+			low = mid + 1
+		} else {
+			high = mid - 1
+		}
+	}
+
+	return high, nil
+}
+
+// Helper Functions
 
 func createAbilitySet(ids []uint32) map[uint32]struct{} {
 	set := make(map[uint32]struct{})

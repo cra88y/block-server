@@ -108,12 +108,12 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 		logger.Error("Marshal error: %v", err)
 		return errors.ErrMarshal
 	}
-	// OCC/optimistic locking to prevent concurrent writes
+	// Version-based optimistic locking prevents race conditions during concurrent updates
 	version := ""
 	if dropsStorageObj != nil {
 		version = dropsStorageObj.GetVersion()
 	}
-	// Update daily drops storage object for user.
+	
 	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{{
 		Collection:      storageCollectionDrops,
 		Key:             storageKeyDaily,
