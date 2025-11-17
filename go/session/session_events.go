@@ -62,7 +62,8 @@ func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtim
 
 		userID, err := items.GetUserIDFromContext(ctx, logger)
 		if err != nil {
-			return err
+		logger.WithField("err", err).Error("Error getting UserID")
+			return
 		}
 		items.TryClaimDailyDrops(ctx, logger, nk)
 
