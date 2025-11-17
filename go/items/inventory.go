@@ -459,7 +459,6 @@ func addToInventory(ctx context.Context, nk runtime.NakamaModule, logger runtime
 		if id == itemID {
 			return nil
 		}
-	}
 
 	newItems := append(current.Items, itemID)
 	data := InventoryData{Items: newItems}
@@ -486,4 +485,95 @@ func addToInventory(ctx context.Context, nk runtime.NakamaModule, logger runtime
 	}
 
 	return nil
+}
+
+func RemoveItemFromInventory(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, itemType string, itemID uint32) error {
+	objs, err := nk.StorageRead(ctx, []*runtime.StorageRead{
+		{Collection: storageCollectionInventory, Key: itemType, UserID: userID},
+	})
+	if err != nil {
+		LogError(ctx, logger, "Failed to read inventory for item removal", err)
+		return fmt.Errorf("inventory read failed: %w", err)
+	}
+
+	if len(objs) == 0 {
+		// Nothing to remove, treat as success
+		return nil
+	}
+
+	inventoryData, err := UnmarshalJSON[InventoryData](objs[0].Value)
+	if err != nil {
+		LogError(ctx, logger, "Failed to unmarshal inventory data for removal", err)
+		return fmt.Errorf("inventory data unmarshal: %w", err)
+	}
+	version := objs[0].Version
+	current := *inventoryData
+
+	// Find and remove the itemID
+	found := false
+	newItems := make([]uint32, 0, len(current.Items))
+	for _, id := range current.Items {
+		if id == itemID {
+			found = true
+			continue // Skip the item to remove it
+		}
+		newItems = append(newItems, id)
+	}
+
+	if !found {
+		// Item not in inventory, nothing to do
+		return nil
+	}
+
+	data := InventoryData{Items: newItems}
+	value, err := json.Marshal(data)
+	if err != nil {
+		LogError(ctx, logger, "Inventory marshal failed for removal", err)
+		return fmt.Errorf("inventory marshal error: %w", err)
+	}
+
+	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{
+		{
+			Collection:      storageCollectionInventory,
+			Key:             itemType,
+			UserID:          userID,
+			Value:           string(value),
+			PermissionRead:  2,
+			PermissionWrite: 0,
+			Version:         version,
+		},
+	})
+	if err != nil {
+		LogError(ctx, logger, "Failed to write inventory update for removal", err)
+		return fmt.Errorf("inventory write failed: %w", err)
+	}
+
+	return nil
+}
+
+data := InventoryData{Items: newItems}
+value, err := json.Marshal(data)
+if err != nil {
+	LogError(ctx, logger, "Inventory marshal failed for removal", err)
+	return fmt.Errorf("inventory marshal error: %w", err)
+}
+
+_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{
+	{
+		Collection:      storageCollectionInventory,
+		Key:             itemType,
+		UserID:          userID,
+		Value:           string(value),
+		PermissionRead:  2,
+		PermissionWrite: 0,
+		Version:         version,
+	},
+})
+if err != nil {
+	LogError(ctx, logger, "Failed to write inventory update for removal", err)
+	return fmt.Errorf("inventory write failed: %w", err)
+}
+
+return nil
+}
 }

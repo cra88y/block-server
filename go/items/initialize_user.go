@@ -87,31 +87,47 @@ func GiveStarterItemsToUser(ctx context.Context, nk runtime.NakamaModule, logger
 }
 // GiveAllItemsToUser grants the user all existing items in the game data.
 func GiveAllItemsToUser(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) error {
-	// Give all Pets
+	// Give all Pets (continue on individual errors)
 	for id := range GameData.Pets {
 		if err := GivePet(ctx, nk, logger, userID, id); err != nil {
-			return err
+			logger.WithFields(map[string]interface{}{
+				"user": userID,
+				"pet":  id,
+				"err":  err.Error(),
+			}).Error("Failed to grant pet")
 		}
 	}
 
-	// Give all Classes
+	// Give all Classes (continue on individual errors)
 	for id := range GameData.Classes {
 		if err := GiveClass(ctx, nk, logger, userID, id); err != nil {
-			return err
+			logger.WithFields(map[string]interface{}{
+				"user":  userID,
+				"class": id,
+				"err":   err.Error(),
+			}).Error("Failed to grant class")
 		}
 	}
 
-	// Give all Backgrounds
+	// Give all Backgrounds (continue on individual errors)
 	for id := range GameData.Backgrounds {
 		if err := GiveBackground(ctx, nk, logger, userID, id); err != nil {
-			return err
+			logger.WithFields(map[string]interface{}{
+				"user":      userID,
+				"background": id,
+				"err":       err.Error(),
+			}).Error("Failed to grant background")
 		}
 	}
 
-	// Give all PieceStyles
+	// Give all PieceStyles (continue on individual errors)
 	for id := range GameData.PieceStyles {
 		if err := GivePieceStyle(ctx, nk, logger, userID, id); err != nil {
-			return err
+			logger.WithFields(map[string]interface{}{
+				"user":       userID,
+				"pieceStyle": id,
+				"err":        err.Error(),
+			}).Error("Failed to grant piece style")
 		}
 	}
 

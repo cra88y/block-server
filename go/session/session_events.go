@@ -67,7 +67,6 @@ func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtim
 		}
 		items.TryClaimDailyDrops(ctx, logger, nk)
 
-		// TODO release: replace with GiveDefaultItemsToUser
 		if err := items.GiveAllItemsToUser(ctx, nk, logger, userID); err != nil {
 			logger.WithField("err", err).Error("failed to give all items to user on session start")
 		}

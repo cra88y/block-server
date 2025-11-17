@@ -269,10 +269,18 @@ func verifyAndFixItemProgression(ctx context.Context, nk runtime.NakamaModule, l
 	for _, itemID := range inventoryItems {
 		if _, exists := existingProgression[itemID]; !exists {
 			if !ValidateItemExists(itemType, itemID) {
-				logVerificationIssue(ctx, logger, "warn", 
-					fmt.Sprintf("Invalid %s ID %d found in inventory during verification", itemType, itemID),
-					itemType, itemID, userID, "validate_item", nil)
-				repairs[itemID] = "skipped_invalid_item"
+				// Remove invalid item from inventory
+				if err := RemoveItemFromInventory(ctx, nk, logger, userID, itemType, itemID); err != nil {
+					logVerificationIssue(ctx, logger, "error",
+						fmt.Sprintf("Failed to remove invalid %s ID %d", itemType, itemID),
+						itemType, itemID, userID, "remove_invalid_item", err)
+					repairs[itemID] = "failed_to_remove"
+				} else {
+					logVerificationIssue(ctx, logger, "warn",
+						fmt.Sprintf("Removed invalid %s ID %d from inventory", itemType, itemID),
+						itemType, itemID, userID, "removed_invalid_item", nil)
+					repairs[itemID] = "removed_invalid_item"
+				}
 				continue
 			}
 
