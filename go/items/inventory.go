@@ -278,8 +278,6 @@ func EquipItem(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModu
 	return err
 }
 
-
-
 func AddPetExp(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, petID uint32, exp uint32) error {
 	return addExperience(ctx, nk, logger, userID, storageKeyPet, petID, exp)
 }
@@ -360,8 +358,6 @@ func addExperience(ctx context.Context, nk runtime.NakamaModule, logger runtime.
 	})
 }
 
-
-
 func IsItemOwned(ctx context.Context, nk runtime.NakamaModule, userID string, itemID uint32, itemStorageKey string) (bool, error) {
 	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{
 		{Collection: storageCollectionInventory, Key: itemStorageKey, UserID: userID},
@@ -385,8 +381,6 @@ func IsItemOwned(ctx context.Context, nk runtime.NakamaModule, userID string, it
 	}
 	return false, nil
 }
-
-
 
 func GivePet(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, petID uint32) error {
 	if !ValidateItemExists(storageKeyPet, petID) {
@@ -459,6 +453,7 @@ func addToInventory(ctx context.Context, nk runtime.NakamaModule, logger runtime
 		if id == itemID {
 			return nil
 		}
+	}
 
 	newItems := append(current.Items, itemID)
 	data := InventoryData{Items: newItems}
@@ -549,31 +544,4 @@ func RemoveItemFromInventory(ctx context.Context, nk runtime.NakamaModule, logge
 	}
 
 	return nil
-}
-
-data := InventoryData{Items: newItems}
-value, err := json.Marshal(data)
-if err != nil {
-	LogError(ctx, logger, "Inventory marshal failed for removal", err)
-	return fmt.Errorf("inventory marshal error: %w", err)
-}
-
-_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{
-	{
-		Collection:      storageCollectionInventory,
-		Key:             itemType,
-		UserID:          userID,
-		Value:           string(value),
-		PermissionRead:  2,
-		PermissionWrite: 0,
-		Version:         version,
-	},
-})
-if err != nil {
-	LogError(ctx, logger, "Failed to write inventory update for removal", err)
-	return fmt.Errorf("inventory write failed: %w", err)
-}
-
-return nil
-}
 }
