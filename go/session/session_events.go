@@ -59,12 +59,16 @@ WHERE
 
 func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtime.Logger, *api.Event) {
 	return func(ctx context.Context, logger runtime.Logger, evt *api.Event) {
+
+		userID, err := items.GetUserIDFromContext(ctx, logger)
+		if err != nil {
+			return err
+		}
 		items.TryClaimDailyDrops(ctx, logger, nk)
 
-		userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-		if !ok {
-			logger.Error("context did not contain user ID.")
-			return
+		// TODO release: replace with GiveDefaultItemsToUser
+		if err := items.GiveAllItemsToUser(ctx, nk, logger, userID); err != nil {
+			logger.WithField("err", err).Error("failed to give all items to user on session start")
 		}
 
 		report, err := items.VerifyAndFixUserProgression(ctx, nk, logger, userID)

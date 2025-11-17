@@ -61,22 +61,59 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 	}
 
 	
-	if err := GivePet(ctx, nk, logger, userID, DefaultPetID); err != nil {
-		return err
-	}
-	if err := GiveClass(ctx, nk, logger, userID, DefaultClassID); err != nil {
-		return err
-	}
-	if err := GiveBackground(ctx, nk, logger, userID, DefaultBackgroundID); err != nil {
-		return err
-	}
-	if err := GivePieceStyle(ctx, nk, logger, userID, DefaultPieceStyleID); err != nil {
-		return err
-	}
-	if err := GivePieceStyle(ctx, nk, logger, userID, WhiteoutPieceStyleID); err != nil {
+	if err := GiveAllItemsToUser(ctx, nk, logger, userID); err != nil {
 		return err
 	}
 
-	
 	return EquipDefaults(ctx, nk, userID)
+}
+
+
+
+func GiveStarterItemsToUser(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) error {
+	if err := GivePet(ctx, nk, logger, userID, DefaultPetID); err != nil {
+    		return err
+    	}
+    	if err := GiveClass(ctx, nk, logger, userID, DefaultClassID); err != nil {
+    		return err
+    	}
+    	if err := GiveBackground(ctx, nk, logger, userID, DefaultBackgroundID); err != nil {
+    		return err
+    	}
+    	if err := GivePieceStyle(ctx, nk, logger, userID, DefaultPieceStyleID); err != nil {
+    		return err
+    	}
+	return nil
+}
+// GiveAllItemsToUser grants the user all existing items in the game data.
+func GiveAllItemsToUser(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) error {
+	// Give all Pets
+	for id := range GameData.Pets {
+		if err := GivePet(ctx, nk, logger, userID, id); err != nil {
+			return err
+		}
+	}
+
+	// Give all Classes
+	for id := range GameData.Classes {
+		if err := GiveClass(ctx, nk, logger, userID, id); err != nil {
+			return err
+		}
+	}
+
+	// Give all Backgrounds
+	for id := range GameData.Backgrounds {
+		if err := GiveBackground(ctx, nk, logger, userID, id); err != nil {
+			return err
+		}
+	}
+
+	// Give all PieceStyles
+	for id := range GameData.PieceStyles {
+		if err := GivePieceStyle(ctx, nk, logger, userID, id); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
