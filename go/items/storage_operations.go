@@ -28,18 +28,18 @@ func GetUserInventory(ctx context.Context, nk runtime.NakamaModule, logger runti
 		return nil, err
 	}
 
-	for i, obj := range objs {
+	for _, obj := range objs {
 		if obj == nil {
 			continue
 		}
 
 		data, err := UnmarshalJSON[InventoryData](obj.Value)
 		if err != nil {
-			logger.WithField("error", err.Error()).WithField("obj_key", reads[i].Key).Warn("Failed to unmarshal inventory data")
+			logger.WithField("error", err.Error()).WithField("obj_key", obj.Key).Warn("Failed to unmarshal inventory data")
 			continue
 		}
 
-		switch reads[i].Key {
+		switch obj.Key {
 		case storageKeyPet:
 			inventory.Pets = data.Items
 		case storageKeyClass:
@@ -48,6 +48,8 @@ func GetUserInventory(ctx context.Context, nk runtime.NakamaModule, logger runti
 			inventory.Backgrounds = data.Items
 		case storageKeyPieceStyle:
 			inventory.PieceStyles = data.Items
+		default:
+			logger.WithField("obj_key", obj.Key).Warn("Unexpected inventory storage key")
 		}
 	}
 
