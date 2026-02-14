@@ -15,3 +15,5 @@
 # misc
 .DS_Store
 Thumbs.db
+
+.agent/
