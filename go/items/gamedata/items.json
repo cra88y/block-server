@@ -195,6 +195,60 @@
           "sprites": "1"
         }
       }
+    },
+    "player_level": {
+      "max_level": 100,
+      "base_xp": 500,
+      "rewarded_levels": [
+        5,
+        10,
+        15,
+        20,
+        25,
+        30,
+        40,
+        50,
+        75,
+        100
+      ],
+      "rewards": {
+        "5": {
+          "gems": "10"
+        },
+        "10": {
+          "gems": "15",
+          "backgrounds": "1"
+        },
+        "15": {
+          "gems": "20"
+        },
+        "20": {
+          "gems": "25",
+          "piece_styles": "1"
+        },
+        "25": {
+          "gems": "50"
+        },
+        "30": {
+          "gems": "50",
+          "backgrounds": "1"
+        },
+        "40": {
+          "gems": "75"
+        },
+        "50": {
+          "gems": "100",
+          "piece_styles": "1"
+        },
+        "75": {
+          "gems": "150"
+        },
+        "100": {
+          "gems": "500",
+          "backgrounds": "1",
+          "piece_styles": "1"
+        }
+      }
     }
   }
 }

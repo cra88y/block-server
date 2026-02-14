@@ -63,8 +63,9 @@ const (
 )
 
 const (
-	ProgressionKeyPet   = "pet_"
-	ProgressionKeyClass = "class_"
+	ProgressionKeyPet    = "pet_"
+	ProgressionKeyClass  = "class_"
+	ProgressionKeyPlayer = "player_"
 )
 
 type ItemProgression struct {
@@ -87,14 +88,8 @@ type AbilityEquipRequest struct {
 	AbilityID uint32 `json:"ability_id"`
 }
 
-type LevelReward struct {
-	Gold        uint32   `json:"gold,omitempty"`
-	Gems        uint32   `json:"gems,omitempty"`
-	Abilities   []uint32 `json:"abilities,omitempty"`
-	Backgrounds []uint32 `json:"backgrounds,omitempty"`
-	PieceStyles []uint32 `json:"piece_styles,omitempty"`
-	Sprites     []uint32 `json:"sprites,omitempty"`
-}
+
+
 
 type EquipmentResponse struct {
 	Pet        uint32 `json:"pet"`
@@ -125,4 +120,15 @@ type EquipmentData struct {
 
 type PetTreatRequest struct {
 	PetID uint32 `json:"pet_id"`
+}
+
+// Match Result Types
+type MatchResultRequest struct {
+	MatchID          string `json:"match_id"`
+	Won              bool   `json:"won"`
+	FinalScore       int    `json:"final_score"`
+	OpponentScore    int    `json:"opponent_score"`
+	MatchDurationSec int    `json:"match_duration_sec"`
+	EquippedPetID    uint32 `json:"equipped_pet_id"`
+	EquippedClassID  uint32 `json:"equipped_class_id"`
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"block-server/errors"
+	"block-server/notify"
 
 	"github.com/heroiclabs/nakama-common/runtime"
 )
@@ -119,7 +120,7 @@ func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 		Classes: make(map[uint32]ItemProgression),
 	}
 
-	objects, _, err := nk.StorageList(ctx, "", userID, storageCollectionProgression, 100, "")
+	objects, err := listAllStorage(ctx, nk, logger, userID, storageCollectionProgression)
 	if err != nil {
 		logger.WithFields(map[string]interface{}{
 			"user":  userID,
@@ -140,25 +141,7 @@ func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 		return string(resp), nil
 	}
 
-	reads := make([]*runtime.StorageRead, 0, len(objects))
 	for _, obj := range objects {
-		reads = append(reads, &runtime.StorageRead{
-			Collection: storageCollectionProgression,
-			Key:        obj.Key,
-			UserID:     userID,
-		})
-	}
-
-	objs, err := nk.StorageRead(ctx, reads)
-	if err != nil {
-		logger.WithFields(map[string]interface{}{
-			"user":  userID,
-			"error": err.Error(),
-		}).Error("Progression storage read failure")
-		return "", errors.ErrProgressionUnavailable
-	}
-
-	for _, obj := range objs {
 		if obj == nil {
 			continue
 		}
@@ -355,17 +338,15 @@ func RpcUsePetTreat(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		return "", errors.ErrUnmarshal
 	}
 
-	
 	if !ValidateItemExists(storageKeyPet, req.PetID) {
 		logger.WithFields(map[string]interface{}{
 			"user":   userID,
 			"petID":  req.PetID,
 			"action": "use_pet_treat",
 		}).Error("Invalid pet ID")
-		return "", runtime.NewError("invalid pet ID", 3)
+		return "", errors.ErrInvalidPetID
 	}
 
-	
 	owned, err := IsItemOwned(ctx, nk, userID, req.PetID, storageKeyPet)
 	if err != nil {
 		logger.WithFields(map[string]interface{}{
@@ -374,7 +355,7 @@ func RpcUsePetTreat(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 			"error":  err.Error(),
 			"action": "use_pet_treat",
 		}).Error("Failed to check pet ownership")
-		return "", runtime.NewError("failed to check pet ownership", 13)
+		return "", errors.ErrFailedCheckOwnership
 	}
 	if !owned {
 		logger.WithFields(map[string]interface{}{
@@ -382,43 +363,179 @@ func RpcUsePetTreat(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 			"petID":  req.PetID,
 			"action": "use_pet_treat",
 		}).Warn("Attempted to use treat on unowned pet")
-		return "", runtime.NewError("pet not owned", 403)
+		return "", errors.ErrPetNotOwned
 	}
 
-	
-	walletUpdates := map[string]int64{
-		"pet_treat": -1,
-	}
-
-	// todo: update to use MultiUpdate / rollback on fail
-	if _, _, err := nk.WalletUpdate(ctx, userID, walletUpdates, map[string]interface{}{"action": "use_pet_treat"}, true); err != nil {
-		logger.WithFields(map[string]interface{}{
-			"user":   userID,
-			"error":  err.Error(),
-			"action": "use_pet_treat",
-		}).Warn("Failed to deduct pet treat - likely insufficient balance")
-		return "", runtime.NewError("insufficient pet treats", 3)
-	}
-
-	
+	// Prepare all writes atomically
 	xpAmount := uint32(1000) // Fixed XP amount per treat
-	if err := AddPetExp(ctx, nk, logger, userID, req.PetID, xpAmount); err != nil {
+	newLevel, pending, err := PrepareExperience(ctx, nk, logger, userID, storageKeyPet, req.PetID, xpAmount)
+	if err != nil {
 		logger.WithFields(map[string]interface{}{
 			"user":   userID,
 			"petID":  req.PetID,
 			"xp":     xpAmount,
 			"error":  err.Error(),
 			"action": "use_pet_treat",
-		}).Error("Failed to grant pet XP")
-		return "", runtime.NewError("failed to grant pet XP", 13)
+		}).Error("Failed to prepare pet XP")
+		return "", errors.ErrPrepareFailed
+	}
+
+	// Add treat deduction to pending writes
+	pending.AddWalletDeduction(userID, "treats", 1)
+
+	// Commit all writes atomically via MultiUpdate
+	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
+		logger.WithFields(map[string]interface{}{
+			"user":   userID,
+			"petID":  req.PetID,
+			"error":  err.Error(),
+			"action": "use_pet_treat",
+		}).Error("Failed to commit pet treat transaction")
+		return "", errors.ErrTransactionFailed
+	}
+
+	// Build response payload
+	result := pending.Payload
+	if result == nil {
+		result = notify.NewRewardPayload("pet_treat")
+	}
+	result.Source = "pet_treat"
+	result.ReasonKey = "reward.pet_treat.used"
+
+	if newLevel > 0 && result.Progression != nil {
+		result.Progression.NewPetLevel = notify.IntPtr(newLevel)
 	}
 
 	logger.WithFields(map[string]interface{}{
-		"user":   userID,
-		"petID":  req.PetID,
-		"xp":     xpAmount,
-		"action": "use_pet_treat",
+		"user":     userID,
+		"petID":    req.PetID,
+		"xp":       xpAmount,
+		"newLevel": newLevel,
+		"action":   "use_pet_treat",
 	}).Info("Pet treat used successfully")
 
-	return `{"success": true, "xp_granted": 1000}`, nil
+	respBytes, err := json.Marshal(result)
+	if err != nil {
+		return "", errors.ErrMarshal
+	}
+
+	return string(respBytes), nil
+}
+
+// ClassXPRequest is the request payload for using gold to grant class XP
+type ClassXPRequest struct {
+	ClassID uint32 `json:"class_id"`
+	Amount  int    `json:"amount"` // Amount of gold to spend (optional, defaults to 100)
+}
+
+// RpcUseGoldForClassXP spends gold to grant XP to a class
+func RpcUseGoldForClassXP(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
+		logger.Error("No user ID found in context for class XP purchase")
+		return "", errors.ErrNoUserIdFound
+	}
+
+	var req ClassXPRequest
+	if err := json.Unmarshal([]byte(payload), &req); err != nil {
+		logger.WithFields(map[string]interface{}{
+			"user":   userID,
+			"error":  err.Error(),
+			"action": "use_gold_for_class_xp",
+		}).Error("Failed to unmarshal class XP request")
+		return "", errors.ErrUnmarshal
+	}
+
+	if !ValidateItemExists(storageKeyClass, req.ClassID) {
+		logger.WithFields(map[string]interface{}{
+			"user":    userID,
+			"classID": req.ClassID,
+			"action":  "use_gold_for_class_xp",
+		}).Error("Invalid class ID")
+		return "", errors.ErrInvalidItemID
+	}
+
+	owned, err := IsItemOwned(ctx, nk, userID, req.ClassID, storageKeyClass)
+	if err != nil {
+		logger.WithFields(map[string]interface{}{
+			"user":    userID,
+			"classID": req.ClassID,
+			"error":   err.Error(),
+			"action":  "use_gold_for_class_xp",
+		}).Error("Failed to check class ownership")
+		return "", errors.ErrFailedCheckOwnership
+	}
+	if !owned {
+		logger.WithFields(map[string]interface{}{
+			"user":    userID,
+			"classID": req.ClassID,
+			"action":  "use_gold_for_class_xp",
+		}).Warn("Attempted to grant XP to unowned class")
+		return "", errors.ErrClassNotOwned
+	}
+
+	// Default gold cost, can be made configurable
+	goldCost := int64(100)
+	if req.Amount > 0 {
+		goldCost = int64(req.Amount)
+	}
+
+	// XP granted per gold spent (10 XP per 1 gold)
+	xpAmount := uint32(goldCost * 10)
+
+	// Prepare all writes atomically
+	newLevel, pending, err := PrepareExperience(ctx, nk, logger, userID, storageKeyClass, req.ClassID, xpAmount)
+	if err != nil {
+		logger.WithFields(map[string]interface{}{
+			"user":    userID,
+			"classID": req.ClassID,
+			"xp":      xpAmount,
+			"error":   err.Error(),
+			"action":  "use_gold_for_class_xp",
+		}).Error("Failed to prepare class XP")
+		return "", errors.ErrPrepareFailed
+	}
+
+	// Add gold deduction to pending writes
+	pending.AddWalletDeduction(userID, "gold", goldCost)
+
+	// Commit all writes atomically via MultiUpdate
+	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
+		logger.WithFields(map[string]interface{}{
+			"user":    userID,
+			"classID": req.ClassID,
+			"gold":    goldCost,
+			"error":   err.Error(),
+			"action":  "use_gold_for_class_xp",
+		}).Error("Failed to commit class XP transaction")
+		return "", errors.ErrTransactionFailed
+	}
+
+	// Build response payload
+	result := pending.Payload
+	if result == nil {
+		result = notify.NewRewardPayload("class_training")
+	}
+	result.Source = "class_training"
+	result.ReasonKey = "reward.class_training.complete"
+
+	if newLevel > 0 && result.Progression != nil {
+		result.Progression.NewClassLevel = notify.IntPtr(newLevel)
+	}
+
+	logger.WithFields(map[string]interface{}{
+		"user":     userID,
+		"classID":  req.ClassID,
+		"gold":     goldCost,
+		"xp":       xpAmount,
+		"newLevel": newLevel,
+		"action":   "use_gold_for_class_xp",
+	}).Info("Gold used for class XP successfully")
+
+	respBytes, err := json.Marshal(result)
+	if err != nil {
+		return "", errors.ErrMarshal
+	}
+
+	return string(respBytes), nil
 }

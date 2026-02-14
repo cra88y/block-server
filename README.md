@@ -1,6 +1,6 @@
 # Backend for my Godot iOS Game
 
-This is the actual backend server for my upcoming iOS game, **[Drop Block!]**, which I built on the latest Godot 4.
+This is the actual backend server for my upcoming iOS game, **[Drop Block!]**, my Godot 4 game client.
 
 This is a production ready setup, not just a dev example. It's all automated with Docker and includes Nakama, a properly configured CockroachDB cluster, and Prometheus for monitoring.
 

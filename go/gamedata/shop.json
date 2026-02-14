@@ -1,0 +1,128 @@
+{
+    "exchange_rates": {
+        "gold_per_gem": 100,
+        "treats_per_gem": 5
+    },
+    "lootbox_tiers": {
+        "standard": {
+            "price_gems": 0,
+            "drop_table": {
+                "gold": {
+                    "min": 50,
+                    "max": 150
+                },
+                "gems": {
+                    "min": 0,
+                    "max": 5
+                },
+                "treats": {
+                    "min": 1,
+                    "max": 2
+                },
+                "item_chance": 0.15,
+                "item_pools": [
+                    "backgrounds",
+                    "piece_styles"
+                ]
+            }
+        },
+        "premium": {
+            "price_gems": 200,
+            "drop_table": {
+                "gold": {
+                    "min": 150,
+                    "max": 400
+                },
+                "gems": {
+                    "min": 10,
+                    "max": 30
+                },
+                "treats": {
+                    "min": 2,
+                    "max": 4
+                },
+                "item_chance": 0.50,
+                "item_pools": [
+                    "backgrounds",
+                    "piece_styles",
+                    "pets",
+                    "classes"
+                ]
+            }
+        }
+    },
+    "shop_items": [
+        {
+            "id": "bg_neon_city",
+            "type": "background",
+            "item_id": 2,
+            "price": {
+                "gems": 75
+            },
+            "rotation_slot": 1
+        },
+        {
+            "id": "bg_sunset",
+            "type": "background",
+            "item_id": 3,
+            "price": {
+                "gems": 100
+            },
+            "rotation_slot": 2
+        },
+        {
+            "id": "style_chrome",
+            "type": "piece_style",
+            "item_id": 2,
+            "price": {
+                "gems": 125
+            },
+            "rotation_slot": 3
+        },
+        {
+            "id": "style_pixel",
+            "type": "piece_style",
+            "item_id": 3,
+            "price": {
+                "gems": 100
+            },
+            "rotation_slot": 4
+        },
+        {
+            "id": "lootbox_premium",
+            "type": "lootbox",
+            "tier": "premium",
+            "price": {
+                "gems": 200
+            },
+            "rotation_slot": null
+        }
+    ],
+    "rotation_config": {
+        "slots": 4,
+        "refresh_interval_hours": 24,
+        "epoch_start": "2026-01-01T00:00:00Z"
+    },
+    "iap_products": [
+        {
+            "product_id": "com.blockjitsu.gems.100",
+            "gems": 100,
+            "usd_cents": 99
+        },
+        {
+            "product_id": "com.blockjitsu.gems.500",
+            "gems": 550,
+            "usd_cents": 499
+        },
+        {
+            "product_id": "com.blockjitsu.gems.1200",
+            "gems": 1400,
+            "usd_cents": 999
+        },
+        {
+            "product_id": "com.blockjitsu.gems.3000",
+            "gems": 3500,
+            "usd_cents": 1999
+        }
+    ]
+}

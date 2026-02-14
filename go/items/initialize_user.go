@@ -3,7 +3,6 @@ package items
 import (
 	"context"
 	"database/sql"
-	"fmt"
 
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
@@ -19,7 +18,6 @@ const (
 )
 
 func AfterAuthorizeUserGC(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, out *api.Session, in *api.AuthenticateGameCenterRequest) error {
-
 	if err := InitializeUser(ctx, logger, db, nk, out); err != nil {
 		logger.Error("User initialization failed: %v", err)
 		return err
@@ -28,7 +26,6 @@ func AfterAuthorizeUserGC(ctx context.Context, logger runtime.Logger, db *sql.DB
 }
 
 func AfterAuthorizeUserDevice(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, out *api.Session, in *api.AuthenticateDeviceRequest) error {
-
 	if err := InitializeUser(ctx, logger, db, nk, out); err != nil {
 		logger.Error("User initialization failed: %v", err)
 		return err
@@ -36,7 +33,7 @@ func AfterAuthorizeUserDevice(ctx context.Context, logger runtime.Logger, db *sq
 	return nil
 }
 
-// Initialize user wallet / items
+// InitializeUser sets up a new user's wallet, inventory, and equipment atomically.
 func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, out *api.Session) error {
 	if !out.Created {
 		return nil
@@ -44,92 +41,149 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 
 	userID, _ := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 
-	// wallet
-	changeset := map[string]int64{
+	// Collect all initialization writes
+	pending := NewPendingWrites()
+
+	// Add wallet initialization
+	walletChangeset := map[string]int64{
 		"gold":      500,
 		"gems":      100,
 		"treats":    1,
 		"dropsLeft": 0,
 	}
-	if _, _, err := nk.WalletUpdate(ctx, userID, changeset, map[string]interface{}{}, true); err != nil {
-		logger.WithFields(map[string]interface{}{
-			"user":   userID,
-			"wallet": changeset,
-			"error":  err.Error(),
-		}).Error("Wallet initialization failed")
-		return fmt.Errorf("wallet setup error: %w", err)
-	}
+	pending.AddWalletUpdate(userID, walletChangeset)
 
-	
-	if err := GiveAllItemsToUser(ctx, nk, logger, userID); err != nil {
+	// Add all items to inventory
+	if err := prepareAllItemGrants(ctx, nk, logger, userID, pending); err != nil {
+		logger.WithFields(map[string]interface{}{
+			"user":  userID,
+			"error": err.Error(),
+		}).Error("Failed to prepare item grants for initialization")
 		return err
 	}
 
-	return EquipDefaults(ctx, nk, userID)
-}
+	// Add default equipment writes
+	equipWrites, err := PrepareEquipDefaults(ctx, nk, userID)
+	if err != nil {
+		logger.WithFields(map[string]interface{}{
+			"user":  userID,
+			"error": err.Error(),
+		}).Error("Failed to prepare equipment defaults")
+		return err
+	}
+	for _, w := range equipWrites {
+		pending.AddStorageWrite(w)
+	}
 
+	// Commit everything atomically
+	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
+		logger.WithFields(map[string]interface{}{
+			"user":  userID,
+			"error": err.Error(),
+		}).Error("User initialization commit failed")
+		return err
+	}
 
+	logger.WithFields(map[string]interface{}{
+		"user": userID,
+	}).Info("User initialized successfully")
 
-func GiveStarterItemsToUser(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) error {
-	if err := GivePet(ctx, nk, logger, userID, DefaultPetID); err != nil {
-    		return err
-    	}
-    	if err := GiveClass(ctx, nk, logger, userID, DefaultClassID); err != nil {
-    		return err
-    	}
-    	if err := GiveBackground(ctx, nk, logger, userID, DefaultBackgroundID); err != nil {
-    		return err
-    	}
-    	if err := GivePieceStyle(ctx, nk, logger, userID, DefaultPieceStyleID); err != nil {
-    		return err
-    	}
 	return nil
 }
-// GiveAllItemsToUser grants the user all existing items in the game data.
-func GiveAllItemsToUser(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) error {
-	// Give all Pets (continue on individual errors)
+
+// prepareAllItemGrants collects all item grant writes into pending.
+func prepareAllItemGrants(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, pending *PendingWrites) error {
+	// Pets
 	for id := range GameData.Pets {
-		if err := GivePet(ctx, nk, logger, userID, id); err != nil {
+		itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, storageKeyPet, id)
+		if err != nil {
 			logger.WithFields(map[string]interface{}{
 				"user": userID,
 				"pet":  id,
 				"err":  err.Error(),
-			}).Error("Failed to grant pet")
+			}).Warn("Failed to prepare pet grant")
+			continue
 		}
+		pending.Merge(itemPending)
 	}
 
-	// Give all Classes (continue on individual errors)
+	// Classes
 	for id := range GameData.Classes {
-		if err := GiveClass(ctx, nk, logger, userID, id); err != nil {
+		itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, storageKeyClass, id)
+		if err != nil {
 			logger.WithFields(map[string]interface{}{
 				"user":  userID,
 				"class": id,
 				"err":   err.Error(),
-			}).Error("Failed to grant class")
+			}).Warn("Failed to prepare class grant")
+			continue
 		}
+		pending.Merge(itemPending)
 	}
 
-	// Give all Backgrounds (continue on individual errors)
+	// Backgrounds
 	for id := range GameData.Backgrounds {
-		if err := GiveBackground(ctx, nk, logger, userID, id); err != nil {
+		itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, storageKeyBackground, id)
+		if err != nil {
 			logger.WithFields(map[string]interface{}{
-				"user":      userID,
+				"user":       userID,
 				"background": id,
-				"err":       err.Error(),
-			}).Error("Failed to grant background")
+				"err":        err.Error(),
+			}).Warn("Failed to prepare background grant")
+			continue
 		}
+		pending.Merge(itemPending)
 	}
 
-	// Give all PieceStyles (continue on individual errors)
+	// PieceStyles
 	for id := range GameData.PieceStyles {
-		if err := GivePieceStyle(ctx, nk, logger, userID, id); err != nil {
+		itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, storageKeyPieceStyle, id)
+		if err != nil {
 			logger.WithFields(map[string]interface{}{
 				"user":       userID,
 				"pieceStyle": id,
 				"err":        err.Error(),
-			}).Error("Failed to grant piece style")
+			}).Warn("Failed to prepare piece style grant")
+			continue
 		}
+		pending.Merge(itemPending)
 	}
 
 	return nil
+}
+
+// GiveStarterItemsToUser grants only starter items atomically.
+func GiveStarterItemsToUser(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) error {
+	pending := NewPendingWrites()
+
+	items := []struct {
+		itemType string
+		itemID   uint32
+	}{
+		{storageKeyPet, DefaultPetID},
+		{storageKeyClass, DefaultClassID},
+		{storageKeyBackground, DefaultBackgroundID},
+		{storageKeyPieceStyle, DefaultPieceStyleID},
+	}
+
+	for _, item := range items {
+		itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, item.itemType, item.itemID)
+		if err != nil {
+			return err
+		}
+		pending.Merge(itemPending)
+	}
+
+	return CommitPendingWrites(ctx, nk, logger, pending)
+}
+
+// GiveAllItemsToUser grants all existing items in game data atomically.
+func GiveAllItemsToUser(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) error {
+	pending := NewPendingWrites()
+
+	if err := prepareAllItemGrants(ctx, nk, logger, userID, pending); err != nil {
+		return err
+	}
+
+	return CommitPendingWrites(ctx, nk, logger, pending)
 }

@@ -6,14 +6,13 @@ import (
 	"time"
 
 	"block-server/items"
+	"block-server/notify"
 
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
 const (
-	notificationCodeSingleDevice = 101
-
 	streamModeNotification = 0
 )
 
@@ -38,7 +37,8 @@ func eventSessionEndFunc(db *sql.DB) func(context.Context, runtime.Logger, *api.
 		}
 
 		// Restrict the time allowed with the DB operation so we can fail fast in a stampeding herd scenario.
-		ctx2, _ := context.WithTimeout(ctx, 1*time.Second)
+		ctx2, cancel := context.WithTimeout(ctx, 1*time.Second)
+		defer cancel()
 		query := `
 UPDATE
     users AS u
@@ -62,10 +62,12 @@ func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtim
 
 		userID, err := items.GetUserIDFromContext(ctx, logger)
 		if err != nil {
-		logger.WithField("err", err).Error("Error getting UserID")
+			logger.WithField("err", err).Error("Error getting UserID")
 			return
 		}
-		items.TryClaimDailyDrops(ctx, logger, nk)
+		if err := items.TryClaimDailyDrops(ctx, logger, nk); err != nil {
+			logger.WithField("err", err).Warn("daily drops claim failed")
+		}
 
 		if err := items.GiveAllItemsToUser(ctx, nk, logger, userID); err != nil {
 			logger.WithField("err", err).Error("failed to give all items to user on session start")
@@ -93,7 +95,7 @@ func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtim
 
 		notifications := []*runtime.NotificationSend{
 			{
-				Code: notificationCodeSingleDevice,
+				Code: notify.CodeDevice,
 				Content: map[string]interface{}{
 					"kicked_by": sessionID,
 				},
@@ -109,17 +111,21 @@ func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtim
 				continue
 			}
 
-			ctx2, _ := context.WithTimeout(context.Background(), 3*time.Second)
-			if err := nk.NotificationsSend(ctx2, notifications); err != nil {
-				logger.WithField("err", err).Error("nk.NotificationsSend error.")
-				continue
-			}
+			// Use closure to ensure cancel is always called
+			func() {
+				ctx2, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
 
-			// Force disconnect the socket for the user's other game client.
-			if err := nk.SessionDisconnect(ctx2, presence.GetSessionId()); err != nil {
-				logger.WithField("err", err).Error("nk.SessionDisconnect error.")
-				continue
-			}
+				if err := nk.NotificationsSend(ctx2, notifications); err != nil {
+					logger.WithField("err", err).Error("nk.NotificationsSend error.")
+					return
+				}
+
+				// Force disconnect the socket for the user's other game client.
+				if err := nk.SessionDisconnect(ctx2, presence.GetSessionId()); err != nil {
+					logger.WithField("err", err).Error("nk.SessionDisconnect error.")
+				}
+			}()
 		}
 	}
 }

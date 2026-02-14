@@ -64,17 +64,21 @@ func SaveItemProgression(ctx context.Context, nk runtime.NakamaModule, logger ru
 	return err
 }
 
-func UpdateProgressionAtomic(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger,
-	userID string, progressionKey string, itemID uint32, updateFunc func(*ItemProgression) error) error {
+
+
+// PrepareProgressionUpdate reads progression, applies update function, and returns the write without committing.
+// Returns (updated progression, storage write, error). Caller should collect writes and commit via MultiUpdate.
+func PrepareProgressionUpdate(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger,
+	userID string, progressionKey string, itemID uint32, updateFunc func(*ItemProgression) error) (*ItemProgression, *runtime.StorageWrite, error) {
 
 	prog, err := GetItemProgression(ctx, nk, logger, userID, progressionKey, itemID)
 	if err != nil {
-		LogWithUser(ctx, logger, "error", "Failed to read progression for update", map[string]interface{}{
+		LogWithUser(ctx, logger, "error", "Failed to read progression for prepare", map[string]interface{}{
 			"error":          err,
 			"progressionKey": progressionKey,
 			"itemID":         itemID,
 		})
-		return err
+		return nil, nil, err
 	}
 
 	if err := updateFunc(prog); err != nil {
@@ -83,20 +87,26 @@ func UpdateProgressionAtomic(ctx context.Context, nk runtime.NakamaModule, logge
 			"progressionKey": progressionKey,
 			"itemID":         itemID,
 		})
-		return err
+		return nil, nil, err
 	}
 
-	err = SaveItemProgression(ctx, nk, logger, userID, progressionKey, itemID, prog)
+	key := progressionKey + strconv.Itoa(int(itemID))
+	value, err := json.Marshal(prog)
 	if err != nil {
-		LogWithUser(ctx, logger, "error", "Failed to save progression", map[string]interface{}{
-			"error":          err,
-			"progressionKey": progressionKey,
-			"itemID":         itemID,
-		})
-		return fmt.Errorf("failed to save progression: %w", err)
+		return nil, nil, fmt.Errorf("failed to marshal progression: %w", err)
 	}
 
-	return nil
+	write := &runtime.StorageWrite{
+		Collection:      storageCollectionProgression,
+		Key:             key,
+		UserID:          userID,
+		Value:           string(value),
+		Version:         prog.Version, // OCC version for atomic update
+		PermissionRead:  2,
+		PermissionWrite: 0,
+	}
+
+	return prog, write, nil
 }
 
 // Progression Initialization
@@ -118,31 +128,14 @@ func InitializeProgression(ctx context.Context, nk runtime.NakamaModule, logger 
 	return prog, nil
 }
 
-// BatchProgressionInitialization initializes multiple progression records in a single operation
-// This optimized version batches database writes for better performance during verification
+// BatchInitializeProgression initializes multiple progression records in a single operation.
+// Precondition: caller has validated all item IDs exist via ValidateItemExists
 func BatchInitializeProgression(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, progressionRecords []struct {
 	ProgressionKey string
 	ItemID         uint32
 }) error {
 	if len(progressionRecords) == 0 {
 		return nil
-	}
-
-	// Validate all records before attempting batch operation to prevent partial failures
-	for _, record := range progressionRecords {
-		var itemType string
-		switch record.ProgressionKey {
-		case ProgressionKeyPet:
-			itemType = storageKeyPet
-		case ProgressionKeyClass:
-			itemType = storageKeyClass
-		default:
-			return fmt.Errorf("unsupported progression key: %s", record.ProgressionKey)
-		}
-		
-		if !ValidateItemExists(itemType, record.ItemID) {
-			return fmt.Errorf("invalid item ID %d for item type %s", record.ItemID, itemType)
-		}
 	}
 
 	writes := make([]*runtime.StorageWrite, 0, len(progressionRecords))

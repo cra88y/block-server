@@ -4,8 +4,34 @@ import (
 	"context"
 	"strings"
 
+	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
 )
+
+const listAllStorageMaxPages = 10
+
+// listAllStorage fetches all records from a storage collection using cursor pagination
+func listAllStorage(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger,
+	userID string, collection string) ([]*api.StorageObject, error) {
+	var all []*api.StorageObject
+	cursor := ""
+	for i := 0; i < listAllStorageMaxPages; i++ {
+		objects, nextCursor, err := nk.StorageList(ctx, "", userID, collection, 100, cursor)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, objects...)
+		if nextCursor == "" {
+			break
+		}
+		cursor = nextCursor
+		if i == listAllStorageMaxPages-1 {
+			logger.Warn("listAllStorage hit page cap for collection %s, user %s (%d items so far)",
+				collection, userID, len(all))
+		}
+	}
+	return all, nil
+}
 
 func GetUserInventory(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) (*InventoryResponse, error) {
 	inventory := &InventoryResponse{
@@ -62,7 +88,7 @@ func GetUserProgression(ctx context.Context, nk runtime.NakamaModule, logger run
 		Classes: make(map[uint32]ItemProgression),
 	}
 
-	objects, _, err := nk.StorageList(ctx, "", userID, storageCollectionProgression, 100, "")
+	objects, err := listAllStorage(ctx, nk, logger, userID, storageCollectionProgression)
 	if err != nil {
 		logger.WithField("error", err.Error()).Error("Failed to list progression storage objects")
 		return progression, nil
@@ -72,21 +98,7 @@ func GetUserProgression(ctx context.Context, nk runtime.NakamaModule, logger run
 		return progression, nil
 	}
 
-	reads := make([]*runtime.StorageRead, 0, len(objects))
 	for _, obj := range objects {
-		reads = append(reads, &runtime.StorageRead{
-			Collection: storageCollectionProgression,
-			Key:        obj.Key,
-			UserID:     userID,
-		})
-	}
-
-	storageObjs, err := nk.StorageRead(ctx, reads)
-	if err != nil {
-		return progression, nil
-	}
-
-	for _, obj := range storageObjs {
 		if obj == nil {
 			continue
 		}
