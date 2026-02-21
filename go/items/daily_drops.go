@@ -17,8 +17,10 @@ const (
 	storageCollectionDrops = "drops"
 	storageKeyDaily        = "daily"
 	walletKeyDropsLeft     = "dropsLeft"
-	maxDrops               = 5
-	dailyDropGrantCount    = 3
+	// walletKeyRoundTokens stores half-token units: 2 units = 1.0 token, 6 units = exchange threshold (3.0 tokens).
+	walletKeyRoundTokens = "roundTokens"
+	maxDrops             = 5
+	dailyDropGrantCount  = 3
 )
 
 type dailyDrops struct {

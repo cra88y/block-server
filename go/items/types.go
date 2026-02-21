@@ -56,7 +56,8 @@ const (
 	storageKeyPet              = "pets"         // [0,1,2]
 	storageKeyClass            = "classes"      // [0,1,2]
 	storageKeyBackground       = "backgrounds"  // [0,1,2,3]
-	storageKeyPieceStyle       = "piece_styles" //[0]
+	storageKeyPieceStyle       = "piece_styles" // [0]
+	storageKeyPlayer           = "player"       // Singleton — ID 0 is always the local player
 
 	storageCollectionEquipment   = "equipment"
 	storageCollectionProgression = "progression"
@@ -122,13 +123,24 @@ type PetTreatRequest struct {
 	PetID uint32 `json:"pet_id"`
 }
 
+// RoundResult is one player's report of a single round outcome.
+// The Rounds array is the source of truth the server validates against RoundsWon/RoundsLost.
+type RoundResult struct {
+	RoundNumber int  `json:"round"`
+	PlayerWon   bool `json:"player_won"`
+	DurationSec int  `json:"duration_sec"`
+}
+
 // Match Result Types
 type MatchResultRequest struct {
-	MatchID          string `json:"match_id"`
-	Won              bool   `json:"won"`
-	FinalScore       int    `json:"final_score"`
-	OpponentScore    int    `json:"opponent_score"`
-	MatchDurationSec int    `json:"match_duration_sec"`
-	EquippedPetID    uint32 `json:"equipped_pet_id"`
-	EquippedClassID  uint32 `json:"equipped_class_id"`
+	MatchID          string        `json:"match_id"`
+	Won              bool          `json:"won"`
+	FinalScore       int           `json:"final_score"`
+	OpponentScore    int           `json:"opponent_score"`
+	MatchDurationSec int           `json:"match_duration_sec"`
+	EquippedPetID    uint32        `json:"equipped_pet_id"`
+	EquippedClassID  uint32        `json:"equipped_class_id"`
+	RoundsWon        int           `json:"rounds_won"`
+	RoundsLost       int           `json:"rounds_lost"`
+	Rounds           []RoundResult `json:"rounds"` // Per-round history; server validates plausibility
 }

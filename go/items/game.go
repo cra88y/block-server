@@ -175,6 +175,8 @@ func ValidateItemExists(category string, id uint32) bool {
 	case storageKeyPieceStyle:
 		_, exists := GameData.PieceStyles[id]
 		return exists
+	case storageKeyPlayer:
+		return id == 0 // Player is always ID 0 (singleton); no game data map needed
 	default:
 		return false
 	}

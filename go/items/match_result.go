@@ -37,6 +37,7 @@ type MatchResultRecord struct {
 	ClaimedWin  bool   `json:"claimed_win"`
 	Score       int    `json:"score"`
 	SubmittedAt int64  `json:"submitted_at"`
+	Resolved    bool   `json:"resolved"` // True when this player was the second submitter and resolved consensus
 }
 
 type NotifyMatchStartRequest struct {
@@ -128,6 +129,9 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		return "", errors.ErrUnmarshal
 	}
 
+	// Validate round history (logging + self-healing only; not a hard rejection gate).
+	validateRounds(&req, logger)
+
 	// Validate against Active Match (Security)
 	activeMatch, err := validateActiveMatch(ctx, nk, logger, userID, req.MatchID)
 	if err != nil {
@@ -135,18 +139,49 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		return "", err
 	}
 
-	// R1: Consensus Check - verify both players agree on outcome
-	consensusResult, err := checkMatchConsensus(ctx, nk, logger, userID, activeMatch.OpponentID, req.MatchID, req.Won, req.FinalScore)
+	// Consensus check (unified path: solo short-circuits in resolveMatchConsensus)
+	consensusResult, err := resolveMatchConsensus(ctx, nk, logger, userID, activeMatch.OpponentID, req.MatchID, req.Won, req.FinalScore)
 	if err != nil {
 		logger.Warn("Consensus check failed for user %s: %v", userID, err)
 		return "", err
 	}
 
-	// If consensus invalidated our win claim (opponent also claimed win), downgrade to loss
+	// Resolve per-role rewards:
+	//   pending  — first submitter, opponent not yet in. Participation-only (no win bonus).
+	//   ok       — second submitter, resolved. Full rewards + deferred bonus to first submitter.
+	//   resolved — late arrival, already resolved by opponent. Participation-only (bonus already pushed).
+	//   conflict — both claimed win. Both downgraded, opponent retroactively penalised.
+	isSolo := activeMatch.OpponentID == ""
 	actualWon := req.Won
-	if consensusResult == "conflict" {
+	var opponentIDForDeferred string
+	var opponentWonForDeferred bool
+
+	switch consensusResult {
+	case "pending":
+		// First submitter: withhold win bonus until opponent confirms
+		actualWon = false
+		logger.Info("Match %s: user %s is first submitter, granting participation rewards", req.MatchID, userID)
+
+	case "resolved":
+		// Opponent already resolved and pushed our deferred win bonus via notification
+		actualWon = false
+		logger.Info("Match %s: user %s arrived late, rewards already resolved by opponent", req.MatchID, userID)
+
+	case "conflict":
 		logger.Warn("Match %s: Both players claimed victory. Voiding win for user %s", req.MatchID, userID)
-		actualWon = false // Neither gets winner rewards
+		actualWon = false
+		// No retroactive penalty under the token economy: tokens are computed per-player at
+		// submission time from their own round history. There is no shared ledger to unwind.
+		// NOTE: req.Won is set to false below via req.Won = actualWon, but req.RoundsWon is NOT
+		// zeroed — the player still earns tokens from their round history in a conflict.
+
+	case "ok":
+		// Second submitter: grant ourselves full rewards, then push deferred gold to first submitter
+		if activeMatch.OpponentID != "" {
+			opponentIDForDeferred = activeMatch.OpponentID
+			// Opponent won if they claimed win AND we didn't (only one can win)
+			opponentWonForDeferred = !req.Won
+		}
 	}
 
 	// Validate equipped items exist
@@ -163,10 +198,23 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	req.Won = actualWon
 
 	// Process rewards atomically, then clean up active match
-	result, err := processMatchRewards(ctx, nk, logger, userID, &req)
+	result, err := processMatchRewards(ctx, nk, logger, userID, &req, isSolo)
 	if err != nil {
 		logger.Error("Failed to process match rewards: %v", err)
 		return "", err
+	}
+
+	// Second submitter: push deferred gold win bonus to first submitter
+	if opponentIDForDeferred != "" {
+		deferredReward, err := processDeferredWinBonus(ctx, nk, logger, opponentIDForDeferred, opponentWonForDeferred)
+		if err != nil {
+			logger.Error("Failed to grant deferred rewards to opponent %s in match %s: %v", opponentIDForDeferred, req.MatchID, err)
+			// Non-fatal: our own rewards succeeded. Opponent will have lost their win bonus — acceptable.
+		} else if deferredReward != nil {
+			if err := notify.SendReward(ctx, nk, opponentIDForDeferred, deferredReward); err != nil {
+				logger.Error("Failed to notify deferred reward to opponent %s: %v", opponentIDForDeferred, err)
+			}
+		}
 	}
 
 	respBytes, err := json.Marshal(result)
@@ -186,9 +234,9 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 }
 
 const (
-	minMatchDurationMs         = 10000   // 10 seconds
-	minRateLimitMs             = 30000   // 30 seconds
-	maxMatchDurationMs         = 3600000 // 1 hour — no match lasts this long
+	minMatchDurationMs         = 10000  // 10 seconds
+	minRateLimitMs             = 15000  // 15 seconds (reduced from 30s for legitimate rapid rematches)
+	maxMatchDurationMs         = 600000 // 10 minutes (reduced from 1 hour - no match lasts this long)
 	storageCollectionResults   = "match_results"
 )
 
@@ -228,34 +276,30 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 	return &activeMatch, nil
 }
 
-// checkMatchConsensus reads opponent first, then writes ours.
-// Ordering matters: read→write prevents first-submitter-wins exploit.
-func checkMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, opponentID string, matchID string, claimedWin bool, score int) (string, error) {
-	// Check opponent's claim before writing ours
-	var opponentClaimedWin bool
-	var opponentFound bool
-
-	if opponentID != "" {
-		opponentResults, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
-			Collection: storageCollectionResults,
-			Key:        matchID + "_" + opponentID,
-			UserID:     opponentID,
-		}})
-		if err == nil && len(opponentResults) > 0 {
-			var opponentRecord MatchResultRecord
-			if err := json.Unmarshal([]byte(opponentResults[0].Value), &opponentRecord); err == nil {
-				opponentFound = true
-				opponentClaimedWin = opponentRecord.ClaimedWin
-			}
-		}
+// resolveMatchConsensus implements write-first single-resolution consensus.
+//
+// Write-first ordering: we commit our claim before reading opponent's.
+// After our StorageWrite returns, opponent's subsequent StorageRead will see our record.
+// This collapses the TOCTOU window vs. the prior read→write ordering.
+//
+// Resolution roles:
+//
+//	pending  — first submitter (opponent not yet written). Caller grants participation-only.
+//	ok       — second submitter. Caller grants full rewards + deferred bonus to first submitter.
+//	resolved — late arrival (opponent already set Resolved=true on their record). Participation-only.
+//	conflict — both claimed win. Both downgraded.
+func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, opponentID string, matchID string, claimedWin bool, score int) (string, error) {
+	if opponentID == "" {
+		return "ok", nil // Solo — no consensus needed, caller handles isSolo reward reduction
 	}
 
-	// Always write our result for audit
+	// Step 1: Write our claim FIRST (unconditional)
 	myRecord := MatchResultRecord{
 		UserID:      userID,
 		ClaimedWin:  claimedWin,
 		Score:       score,
 		SubmittedAt: time.Now().UnixMilli(),
+		Resolved:    false,
 	}
 	myRecordBytes, _ := json.Marshal(myRecord)
 
@@ -271,17 +315,47 @@ func checkMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger ru
 		return "", err
 	}
 
-	// Resolve
-	if opponentID == "" {
-		return "ok", nil // No opponent to check (solo or unknown)
+	// Step 2: Read opponent's claim AFTER writing ours
+	opponentResults, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
+		Collection: storageCollectionResults,
+		Key:        matchID + "_" + opponentID,
+		UserID:     opponentID,
+	}})
+	if err != nil || len(opponentResults) == 0 {
+		// First submitter: opponent hasn't written yet
+		return "pending", nil
 	}
-	if !opponentFound {
-		return "pending", nil // Opponent hasn't submitted yet
+
+	var opponentRecord MatchResultRecord
+	if err := json.Unmarshal([]byte(opponentResults[0].Value), &opponentRecord); err != nil {
+		return "pending", nil
 	}
-	if claimedWin && opponentClaimedWin {
+
+	// If opponent's record has Resolved=true, they were the second submitter and already resolved.
+	// Our deferred win bonus (if applicable) was already pushed via notify.SendReward.
+	if opponentRecord.Resolved {
+		return "resolved", nil
+	}
+
+	// Conflict: both claimed win simultaneously
+	if claimedWin && opponentRecord.ClaimedWin {
 		logger.Warn("CONFLICT: Match %s - both %s and %s claimed victory", matchID, userID, opponentID)
 		return "conflict", nil
 	}
+
+	// We're the second submitter. Mark OUR OWN record Resolved=true.
+	// Late-arriving opponent reads our record and sees Resolved=true → "resolved".
+	// Do NOT mutate opponent's record — only our own userID key is authoritative for us.
+	myRecord.Resolved = true
+	myRecordBytes, _ = json.Marshal(myRecord)
+	nk.StorageWrite(ctx, []*runtime.StorageWrite{{
+		Collection:      storageCollectionResults,
+		Key:             matchID + "_" + userID,
+		UserID:          userID,
+		Value:           string(myRecordBytes),
+		PermissionRead:  0,
+		PermissionWrite: 0,
+	}})
 
 	return "ok", nil
 }
@@ -335,24 +409,45 @@ func updateMatchHistory(ctx context.Context, nk runtime.NakamaModule, userID str
 }
 
 // processMatchRewards handles reward generation with two-phase commit.
-// Phase 1 (failable): wallet deduction for drop ticket — may fail on insufficient balance.
-// Phase 2 (idempotent): XP, match history, and lootbox (only if Phase 1 succeeded).
-func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest) (*notify.RewardPayload, error) {
+//
+// Phase 1 (failable OCC): wallet deduction for the per-match drop ticket.
+// Phase 2 (atomic): XP + round tokens + optional token-exchange lootbox + match history.
+//
+// Pre-read pattern: one AccountGetId at the top replaces checkDropTicketAvailable (separate
+// AccountGetId) and the post-commit wallet read for metadata — net 3 reads → 1.
+// isSolo: halves XP to prevent solo-match farming.
+func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool) (*notify.RewardPayload, error) {
+	cfg := GetMatchConfig()
 	pending := NewPendingWrites()
 
 	result := notify.NewRewardPayload("match")
 	result.ReasonKey = "reward.match.complete"
 	result.Progression = &notify.ProgressionDelta{}
 
-	// Determine XP based on win/loss
-	xpAmount := GetMatchConfig().LossXP
+	// --- Pre-read wallet: one AccountGetId covers drop check, token read, and metadata ---
+	var preTokens, preDrops int64
+	if account, err := nk.AccountGetId(ctx, userID); err == nil {
+		var wallet map[string]int64
+		if json.Unmarshal([]byte(account.Wallet), &wallet) == nil {
+			preTokens = wallet[walletKeyRoundTokens]
+			preDrops = wallet[walletKeyDropsLeft]
+		}
+	}
+
+	// --- XP ---
+	xpAmount := cfg.LossXP
 	if req.Won {
-		xpAmount = GetMatchConfig().WinXP
+		xpAmount = cfg.WinXP
+	}
+	if isSolo {
+		xpAmount = xpAmount / 2
+		if xpAmount < 1 {
+			xpAmount = 1
+		}
 	}
 	result.Progression.XpGranted = notify.IntPtr(xpAmount)
 
-	// Player XP
-	playerLevelUp, xpPending, err := preparePlayerXP(ctx, nk, logger, userID, xpAmount)
+	playerLevelUp, xpPending, matchesToday, err := preparePlayerXP(ctx, nk, logger, userID, xpAmount)
 	if err != nil {
 		logger.Warn("Failed to prepare player XP: %v", err)
 	} else {
@@ -362,32 +457,31 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		}
 	}
 
-	// Phase 1: Wallet deduction (may fail on insufficient balance from concurrent request)
-	hasDropTicket, err := checkDropTicketAvailable(ctx, nk, logger, userID)
-	if err != nil {
-		logger.Warn("Failed to check drop ticket: %v", err)
-	}
-
+	// --- Phase 1: Drop ticket deduction (failable OCC; may lose to a concurrent request) ---
+	hasDropTicket := preDrops > 0
 	if hasDropTicket {
 		walletPending := NewPendingWrites()
 		walletPending.AddWalletUpdate(userID, map[string]int64{walletKeyDropsLeft: -1})
 		if err := CommitPendingWrites(ctx, nk, logger, walletPending); err != nil {
-			// Race or insufficient balance — degrade gracefully, no lootbox
 			logger.Warn("Drop ticket unavailable (race or insufficient balance): %v", err)
 			hasDropTicket = false
 		}
 	}
+	// postPhase1Drops tracks what's available for the token-exchange eligibility check.
+	postPhase1Drops := preDrops
+	if hasDropTicket {
+		postPhase1Drops--
+	}
 
-	// Lootbox (only if Phase 1 wallet deduction succeeded)
+	// --- Per-match lootbox (only if Phase 1 drop ticket succeeded) ---
 	if hasDropTicket {
 		tier := GetLootboxConfig().MatchLossTier
 		if req.Won {
 			tier = GetLootboxConfig().MatchWinTier
 		}
-
-		lootbox, lootboxWrite, err := PrepareCreateLootbox(userID, tier)
-		if err != nil {
-			logger.Error("Failed to prepare lootbox: %v", err)
+		lootbox, lootboxWrite, lboxErr := PrepareCreateLootbox(userID, tier)
+		if lboxErr != nil {
+			logger.Error("Failed to prepare lootbox: %v", lboxErr)
 		} else {
 			pending.AddStorageWrite(lootboxWrite)
 			result.Lootboxes = []notify.LootboxGrant{{
@@ -400,7 +494,37 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		}
 	}
 
-	// Match history for rate limiting
+	// --- Round token grant + optional exchange ---
+	// All token logic goes into Phase 2 pending so it's committed atomically with XP.
+	tokensEarned := computeTokensEarned(req, isSolo, cfg)
+	postTokens := preTokens + int64(tokensEarned)
+	// Exchange fires when: (a) token balance reaches threshold AND (b) a drop ticket remains after Phase 1.
+	// No dropsLeft → bank tokens silently; they persist for the next match.
+	willExchange := postTokens >= int64(cfg.TokenExchangeThresh) && postPhase1Drops >= 1
+
+	if willExchange {
+		// Deduct threshold from new balance; also consume one more drop ticket for the exchange lootbox.
+		pending.AddWalletUpdate(userID, map[string]int64{
+			walletKeyRoundTokens: int64(tokensEarned) - int64(cfg.TokenExchangeThresh),
+			walletKeyDropsLeft:   -1,
+		})
+		tier := GetLootboxConfig().MatchLossTier
+		if req.Won {
+			tier = GetLootboxConfig().MatchWinTier
+		}
+		if lootbox, lootboxWrite, lboxErr := PrepareCreateLootbox(userID, tier); lboxErr == nil {
+			pending.AddStorageWrite(lootboxWrite)
+			result.Lootboxes = append(result.Lootboxes, notify.LootboxGrant{
+				ID:     lootbox.ID,
+				Tier:   lootbox.Tier,
+				Source: "token_exchange",
+			})
+		}
+	} else {
+		pending.AddWalletUpdate(userID, map[string]int64{walletKeyRoundTokens: int64(tokensEarned)})
+	}
+
+	// --- Match history for rate limiting ---
 	historyValue, _ := json.Marshal(MatchHistory{LastMatchTime: time.Now().UnixMilli()})
 	pending.AddStorageWrite(&runtime.StorageWrite{
 		Collection:      storageCollectionMatchHistory,
@@ -411,21 +535,44 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		PermissionWrite: 0,
 	})
 
-	// Phase 2: Idempotent writes (XP, history, lootbox if ticket succeeded)
+	// --- Phase 2: Atomic commit (XP + tokens + exchange + lootbox + history) ---
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
 		logger.Error("Match result commit failed: %v", err)
 		return nil, fmt.Errorf("match reward commit failed: %w", err)
 	}
 
-	// StorageDelete can't go in MultiUpdate, so this runs after commit
+	// StorageDelete cannot go in MultiUpdate; runs after commit.
 	clearActiveMatch(ctx, nk, logger, userID)
+
+	// --- Metadata: derived from pre-read + deltas — no second AccountGetId ---
+	finalTokens := postTokens
+	finalDrops := postPhase1Drops
+	if willExchange {
+		finalTokens -= int64(cfg.TokenExchangeThresh)
+		finalDrops--
+	}
+	result.Meta = &notify.RewardMeta{
+		DailyMatches:   notify.IntPtr(matchesToday),
+		DropsRemaining: notify.IntPtr(int(finalDrops)),
+		RoundTokens:    notify.IntPtr(int(finalTokens)),
+	}
 
 	return result, nil
 }
 
+// processDeferredWinBonus is a no-op under the round-token economy.
+//
+// Gold win bonus is removed. Round tokens are computed symmetrically: each player earns
+// tokens from their own round history at submission time — there is no deferred per-player
+// top-up. The caller still invokes this function on the "ok" consensus path; returning
+// nil, nil causes the notification send to be skipped cleanly.
+func processDeferredWinBonus(_ context.Context, _ runtime.NakamaModule, _ runtime.Logger, _ string, _ bool) (*notify.RewardPayload, error) {
+	return nil, nil
+}
+
 // preparePlayerXP applies diminishing returns and returns deferred progression writes.
 // Can't use PrepareExperience here because that only handles pets/classes.
-func preparePlayerXP(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, xpAmount int) (int, *PendingWrites, error) {
+func preparePlayerXP(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, xpAmount int) (int, *PendingWrites, int, error) {
 	const treeName = "player_level"
 	const playerItemID = uint32(0)
 
@@ -495,7 +642,7 @@ func preparePlayerXP(ctx context.Context, nk runtime.NakamaModule, logger runtim
 	})
 
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, matchesToday, err
 	}
 
 	if progWrite != nil {
@@ -514,7 +661,7 @@ func preparePlayerXP(ctx context.Context, nk runtime.NakamaModule, logger runtim
 		}
 	}
 
-	return resultLevel, pending, nil
+	return resultLevel, pending, matchesToday, nil
 }
 
 // checkDropTicketAvailable checks wallet for available drops without modifying any state
@@ -538,27 +685,89 @@ func checkDropTicketAvailable(ctx context.Context, nk runtime.NakamaModule, logg
 	return true, nil
 }
 
-// MatchConfig holds match reward configuration
+// MatchConfig holds match reward configuration.
+// Gold fields are removed — token economy replaces per-match gold payouts.
 type MatchConfig struct {
-	WinXP             int `json:"win_xp"`
-	LossXP            int `json:"loss_xp"`
-	ParticipationGold int `json:"participation_gold"`
-	WinBonusGold      int `json:"win_bonus_gold"`
+	WinXP               int `json:"win_xp"`
+	LossXP              int `json:"loss_xp"`
+	TokensPerRoundWin   int `json:"tokens_per_round_win"`  // Half-units; default 2 = 1.0 token
+	TokensPerRoundLoss  int `json:"tokens_per_round_loss"` // Half-units; default 1 = 0.5 token
+	TokensPerSoloRound  int `json:"tokens_per_solo_round"` // Half-units; default 1 = 0.5 token
+	TokenExchangeThresh int `json:"token_exchange_thresh"` // Default 6 = 3.0 tokens trigger
 }
 
 var matchConfig *MatchConfig
 
 func GetMatchConfig() *MatchConfig {
 	if matchConfig == nil {
-		// Default values if not loaded from game data
 		matchConfig = &MatchConfig{
-			WinXP:             100,
-			LossXP:            25,
-			ParticipationGold: 10,
-			WinBonusGold:      15,
+			WinXP:               100,
+			LossXP:              25,
+			TokensPerRoundWin:   2, // 1.0 token
+			TokensPerRoundLoss:  1, // 0.5 token
+			TokensPerSoloRound:  1, // 0.5 token per round regardless of outcome
+			TokenExchangeThresh: 6, // 3.0 tokens
 		}
 	}
 	return matchConfig
+}
+
+// maxRoundsPerMatch is a hard server-side ceiling on round counts.
+// No legitimate match format has more rounds than this; guards against inflated
+// token claims when the Rounds array is absent (legacy client or empty payload).
+const maxRoundsPerMatch = 10
+
+// computeTokensEarned returns half-token units earned for this match.
+// Pure function: no I/O. 1 full token = 2 units, 0.5 token = 1 unit.
+// Two caps are applied in order:
+//  1. Relative cap: earned can't exceed a clean sweep (all-wins at TokensPerRoundWin rate).
+//  2. Absolute cap: earned can't exceed maxRoundsPerMatch * TokensPerRoundWin regardless
+//     of the Rounds array's presence — closes the empty-array inflation attack.
+func computeTokensEarned(req *MatchResultRequest, isSolo bool, cfg *MatchConfig) int {
+	var earned int
+	if isSolo {
+		earned = (req.RoundsWon + req.RoundsLost) * cfg.TokensPerSoloRound
+	} else {
+		earned = req.RoundsWon*cfg.TokensPerRoundWin + req.RoundsLost*cfg.TokensPerRoundLoss
+	}
+	// Relative cap: can't exceed a clean sweep of the reported rounds.
+	if total := req.RoundsWon + req.RoundsLost; total > 0 {
+		if cap := total * cfg.TokensPerRoundWin; earned > cap {
+			earned = cap
+		}
+	}
+	// Absolute cap: independent of request data — closes empty-Rounds inflation.
+	if absMax := maxRoundsPerMatch * cfg.TokensPerRoundWin; earned > absMax {
+		earned = absMax
+	}
+	return earned
+}
+
+// validateRounds checks round history plausibility and self-heals count mismatches.
+// Not a hard security gate — the client is trusted for round detail.
+// Purpose: catch integration bugs and flag suspiciously fast rounds for log analysis.
+func validateRounds(req *MatchResultRequest, logger runtime.Logger) {
+	if len(req.Rounds) == 0 {
+		return // Legacy client or solo fallback — skip silently
+	}
+	derivedWon, derivedLost := 0, 0
+	for _, r := range req.Rounds {
+		if r.PlayerWon {
+			derivedWon++
+		} else {
+			derivedLost++
+		}
+		if r.DurationSec < 5 {
+			logger.Warn("[match_result] Suspiciously short round %d: %ds (match %s)",
+				r.RoundNumber, r.DurationSec, req.MatchID)
+		}
+	}
+	if derivedWon != req.RoundsWon || derivedLost != req.RoundsLost {
+		logger.Warn("[match_result] Round count mismatch: claimed %d/%d, derived %d/%d (match %s) — correcting from Rounds array",
+			req.RoundsWon, req.RoundsLost, derivedWon, derivedLost, req.MatchID)
+		req.RoundsWon = derivedWon
+		req.RoundsLost = derivedLost
+	}
 }
 
 // LootboxConfig holds lootbox tier configuration

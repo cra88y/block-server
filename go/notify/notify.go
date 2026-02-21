@@ -99,9 +99,12 @@ type LootboxGrant struct {
 
 // RewardMeta contains non-reward feedback.
 type RewardMeta struct {
-	DropsRemaining  *int  `json:"drops_remaining,omitempty"`
+	DropsRemaining  *int   `json:"drops_remaining,omitempty"`
 	NextDropRefresh *int64 `json:"next_drop_refresh,omitempty"`
-	DailyMatches    *int  `json:"daily_matches,omitempty"`
+	DailyMatches    *int   `json:"daily_matches,omitempty"`
+	// RoundTokens is the player's current half-unit token balance after this match.
+	// Display in UI as value / 2.0. Exchange threshold is 6 (= 3.0 tokens).
+	RoundTokens *int `json:"round_tokens,omitempty"`
 }
 
 // NewRewardPayload creates a new RewardPayload with generated ID and timestamp.
