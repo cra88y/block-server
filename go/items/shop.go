@@ -3,15 +3,18 @@ package items
 import (
 	"context"
 	"database/sql"
+	_ "embed"
 	"encoding/json"
 	"fmt"
-	"os"
 	"time"
 
 	"block-server/errors"
 
 	"github.com/heroiclabs/nakama-common/runtime"
 )
+
+//go:embed gamedata/shop.json
+var shopdata []byte
 
 // Shop configuration loaded from gamedata/shop.json
 type ShopConfig struct {
@@ -74,16 +77,10 @@ type IAPProduct struct {
 var shopConfig *ShopConfig
 
 func LoadShopData() error {
-	data, err := os.ReadFile("gamedata/shop.json")
-	if err != nil {
-		return fmt.Errorf("failed to read shop.json: %w", err)
-	}
-
 	shopConfig = &ShopConfig{}
-	if err := json.Unmarshal(data, shopConfig); err != nil {
+	if err := json.Unmarshal(shopdata, shopConfig); err != nil {
 		return fmt.Errorf("failed to parse shop.json: %w", err)
 	}
-
 	return nil
 }
 
