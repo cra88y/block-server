@@ -268,7 +268,7 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 	}
 
 	if time.Now().UnixMilli()-activeMatch.StartTime > maxMatchDurationMs {
-		// Stale match — auto-clear and reject. Player can start fresh.
+		// Clear stale match state.
 		clearActiveMatch(ctx, nk, logger, userID)
 		return nil, fmt.Errorf("stale active match expired")
 	}
@@ -343,9 +343,9 @@ func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger 
 		return "conflict", nil
 	}
 
-	// We're the second submitter. Mark OUR OWN record Resolved=true.
-	// Late-arriving opponent reads our record and sees Resolved=true → "resolved".
-	// Do NOT mutate opponent's record — only our own userID key is authoritative for us.
+	// Mark local user record as resolved.
+	// Opponents will read this record to confirm consensus.
+	// Maintains authority boundaries by not mutating opponent records directly.
 	myRecord.Resolved = true
 	myRecordBytes, _ = json.Marshal(myRecord)
 	nk.StorageWrite(ctx, []*runtime.StorageWrite{{
@@ -457,16 +457,20 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		}
 	}
 
-	// --- Round tokens + optional exchange (atomic with XP in Phase 2) ---
 	// dropsLeft = daily pool of lootbox slots. Round tokens are the key.
 	// Exchange fires when tokens cross the threshold AND a slot is available.
-	// If no slots remain, tokens bank silently and carry into the next match.
 	tokensEarned := computeTokensEarned(req, isSolo, cfg)
 	postTokens := preTokens + int64(tokensEarned)
+
 	willExchange := postTokens >= int64(cfg.TokenExchangeThresh) && preDrops >= 1
 
+	// If no slots remain, clamp at threshold (no infinite banking).
+	if !willExchange && preDrops <= 0 && postTokens > int64(cfg.TokenExchangeThresh) {
+		postTokens = int64(cfg.TokenExchangeThresh)
+	}
+
 	if willExchange {
-		// Consume one drop slot and reset token balance past the threshold.
+		// Consume one drop slot and perform exchange. Carry over excess tokens.
 		pending.AddWalletUpdate(userID, map[string]int64{
 			walletKeyRoundTokens: int64(tokensEarned) - int64(cfg.TokenExchangeThresh),
 			walletKeyDropsLeft:   -1,
@@ -485,7 +489,10 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		}
 	} else {
 		// Bank tokens — no exchange yet.
-		pending.AddWalletUpdate(userID, map[string]int64{walletKeyRoundTokens: int64(tokensEarned)})
+		delta := postTokens - preTokens
+		if delta > 0 {
+			pending.AddWalletUpdate(userID, map[string]int64{walletKeyRoundTokens: delta})
+		}
 	}
 
 	// --- Match history for rate limiting ---
@@ -512,7 +519,7 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	finalTokens := postTokens
 	finalDrops := preDrops
 	if willExchange {
-		finalTokens -= int64(cfg.TokenExchangeThresh)
+		// Freeze finalTokens at threshold so UI sequence displays visual completion.
 		finalDrops--
 	}
 	result.Meta = &notify.RewardMeta{
@@ -535,7 +542,7 @@ func processDeferredWinBonus(_ context.Context, _ runtime.NakamaModule, _ runtim
 }
 
 // preparePlayerXP applies diminishing returns and returns deferred progression writes.
-// Can't use PrepareExperience here because that only handles pets/classes.
+// Note: PrepareExperience operates on pets and classes, whereas this handles player level directly.
 func preparePlayerXP(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, xpAmount int) (int, *PendingWrites, int, error) {
 	const treeName = "player_level"
 	const playerItemID = uint32(0)
@@ -578,7 +585,7 @@ func preparePlayerXP(ctx context.Context, nk runtime.NakamaModule, logger runtim
 		oldLevel = prog.Level
 		prog.Exp += adjustedXP
 
-		// Level tree might not exist yet. Just bank the XP if so.
+		// Skip leveling if tree is unconfigured.
 		tree, exists := GetLevelTree(treeName)
 		if !exists {
 			return nil
