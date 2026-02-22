@@ -408,13 +408,13 @@ func updateMatchHistory(ctx context.Context, nk runtime.NakamaModule, userID str
 	}})
 }
 
-// processMatchRewards handles reward generation with two-phase commit.
+// processMatchRewards handles reward generation atomically.
 //
-// Phase 1 (failable OCC): wallet deduction for the per-match drop ticket.
-// Phase 2 (atomic): XP + round tokens + optional token-exchange lootbox + match history.
+// Lootbox economy: dropsLeft is a daily pool of lootbox slots (3/day, max 5).
+// Round tokens are the key — 3 full tokens (6 half-units) exchange one slot for a lootbox.
+// No lootbox is granted per-match directly; tokens must accumulate across matches.
 //
-// Pre-read pattern: one AccountGetId at the top replaces checkDropTicketAvailable (separate
-// AccountGetId) and the post-commit wallet read for metadata — net 3 reads → 1.
+// Pre-read pattern: one AccountGetId at the top covers token read and drop availability.
 // isSolo: halves XP to prevent solo-match farming.
 func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool) (*notify.RewardPayload, error) {
 	cfg := GetMatchConfig()
@@ -457,53 +457,16 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		}
 	}
 
-	// --- Phase 1: Drop ticket deduction (failable OCC; may lose to a concurrent request) ---
-	hasDropTicket := preDrops > 0
-	if hasDropTicket {
-		walletPending := NewPendingWrites()
-		walletPending.AddWalletUpdate(userID, map[string]int64{walletKeyDropsLeft: -1})
-		if err := CommitPendingWrites(ctx, nk, logger, walletPending); err != nil {
-			logger.Warn("Drop ticket unavailable (race or insufficient balance): %v", err)
-			hasDropTicket = false
-		}
-	}
-	// postPhase1Drops tracks what's available for the token-exchange eligibility check.
-	postPhase1Drops := preDrops
-	if hasDropTicket {
-		postPhase1Drops--
-	}
-
-	// --- Per-match lootbox (only if Phase 1 drop ticket succeeded) ---
-	if hasDropTicket {
-		tier := GetLootboxConfig().MatchLossTier
-		if req.Won {
-			tier = GetLootboxConfig().MatchWinTier
-		}
-		lootbox, lootboxWrite, lboxErr := PrepareCreateLootbox(userID, tier)
-		if lboxErr != nil {
-			logger.Error("Failed to prepare lootbox: %v", lboxErr)
-		} else {
-			pending.AddStorageWrite(lootboxWrite)
-			result.Lootboxes = []notify.LootboxGrant{{
-				ID:     lootbox.ID,
-				Tier:   lootbox.Tier,
-				Source: "match_drop",
-			}}
-			result.Action = "open_lootbox"
-			result.ActionPayload = lootbox.ID
-		}
-	}
-
-	// --- Round token grant + optional exchange ---
-	// All token logic goes into Phase 2 pending so it's committed atomically with XP.
+	// --- Round tokens + optional exchange (atomic with XP in Phase 2) ---
+	// dropsLeft = daily pool of lootbox slots. Round tokens are the key.
+	// Exchange fires when tokens cross the threshold AND a slot is available.
+	// If no slots remain, tokens bank silently and carry into the next match.
 	tokensEarned := computeTokensEarned(req, isSolo, cfg)
 	postTokens := preTokens + int64(tokensEarned)
-	// Exchange fires when: (a) token balance reaches threshold AND (b) a drop ticket remains after Phase 1.
-	// No dropsLeft → bank tokens silently; they persist for the next match.
-	willExchange := postTokens >= int64(cfg.TokenExchangeThresh) && postPhase1Drops >= 1
+	willExchange := postTokens >= int64(cfg.TokenExchangeThresh) && preDrops >= 1
 
 	if willExchange {
-		// Deduct threshold from new balance; also consume one more drop ticket for the exchange lootbox.
+		// Consume one drop slot and reset token balance past the threshold.
 		pending.AddWalletUpdate(userID, map[string]int64{
 			walletKeyRoundTokens: int64(tokensEarned) - int64(cfg.TokenExchangeThresh),
 			walletKeyDropsLeft:   -1,
@@ -514,13 +477,14 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		}
 		if lootbox, lootboxWrite, lboxErr := PrepareCreateLootbox(userID, tier); lboxErr == nil {
 			pending.AddStorageWrite(lootboxWrite)
-			result.Lootboxes = append(result.Lootboxes, notify.LootboxGrant{
+			result.Lootboxes = []notify.LootboxGrant{{
 				ID:     lootbox.ID,
 				Tier:   lootbox.Tier,
 				Source: "token_exchange",
-			})
+			}}
 		}
 	} else {
+		// Bank tokens — no exchange yet.
 		pending.AddWalletUpdate(userID, map[string]int64{walletKeyRoundTokens: int64(tokensEarned)})
 	}
 
@@ -546,7 +510,7 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 
 	// --- Metadata: derived from pre-read + deltas — no second AccountGetId ---
 	finalTokens := postTokens
-	finalDrops := postPhase1Drops
+	finalDrops := preDrops
 	if willExchange {
 		finalTokens -= int64(cfg.TokenExchangeThresh)
 		finalDrops--
@@ -694,6 +658,7 @@ type MatchConfig struct {
 	TokensPerRoundLoss  int `json:"tokens_per_round_loss"` // Half-units; default 1 = 0.5 token
 	TokensPerSoloRound  int `json:"tokens_per_solo_round"` // Half-units; default 1 = 0.5 token
 	TokenExchangeThresh int `json:"token_exchange_thresh"` // Default 6 = 3.0 tokens trigger
+	TokenRoundCap       int `json:"token_round_cap"`       // Only rounds 1..N earn tokens; default 3
 }
 
 var matchConfig *MatchConfig
@@ -707,6 +672,7 @@ func GetMatchConfig() *MatchConfig {
 			TokensPerRoundLoss:  1, // 0.5 token
 			TokensPerSoloRound:  1, // 0.5 token per round regardless of outcome
 			TokenExchangeThresh: 6, // 3.0 tokens
+			TokenRoundCap:       3, // rounds 4+ earn nothing
 		}
 	}
 	return matchConfig
@@ -719,22 +685,60 @@ const maxRoundsPerMatch = 10
 
 // computeTokensEarned returns half-token units earned for this match.
 // Pure function: no I/O. 1 full token = 2 units, 0.5 token = 1 unit.
-// Two caps are applied in order:
+//
+// Token schedule: only rounds 1..TokenRoundCap earn tokens (e.g. first 3 rounds).
+// When req.Rounds is present (normal path), each round's RoundNumber gates eligibility.
+// When req.Rounds is absent (legacy/solo fallback), counts are used with the cap as a ceiling.
+//
+// Two security caps are always applied:
 //  1. Relative cap: earned can't exceed a clean sweep (all-wins at TokensPerRoundWin rate).
 //  2. Absolute cap: earned can't exceed maxRoundsPerMatch * TokensPerRoundWin regardless
-//     of the Rounds array's presence — closes the empty-array inflation attack.
+//     of the Rounds array — closes the empty-array inflation attack.
 func computeTokensEarned(req *MatchResultRequest, isSolo bool, cfg *MatchConfig) int {
 	var earned int
-	if isSolo {
-		earned = (req.RoundsWon + req.RoundsLost) * cfg.TokensPerSoloRound
-	} else {
-		earned = req.RoundsWon*cfg.TokensPerRoundWin + req.RoundsLost*cfg.TokensPerRoundLoss
-	}
-	// Relative cap: can't exceed a clean sweep of the reported rounds.
-	if total := req.RoundsWon + req.RoundsLost; total > 0 {
-		if cap := total * cfg.TokensPerRoundWin; earned > cap {
-			earned = cap
+
+	if len(req.Rounds) > 0 {
+		// Preferred path: iterate round history, honour cap by RoundNumber.
+		for _, r := range req.Rounds {
+			if r.RoundNumber < 1 || r.RoundNumber > cfg.TokenRoundCap {
+				continue // rounds outside the earning window contribute nothing
+			}
+			if isSolo {
+				earned += cfg.TokensPerSoloRound
+			} else if r.PlayerWon {
+				earned += cfg.TokensPerRoundWin
+			} else {
+				earned += cfg.TokensPerRoundLoss
+			}
 		}
+	} else {
+		// Fallback: no round detail — cap eligible rounds at TokenRoundCap.
+		won := req.RoundsWon
+		lost := req.RoundsLost
+		if won+lost > cfg.TokenRoundCap {
+			// Trim excess rounds proportionally (won-first to be conservative).
+			excess := (won + lost) - cfg.TokenRoundCap
+			if lost >= excess {
+				lost -= excess
+			} else {
+				excess -= lost
+				lost = 0
+				won -= excess
+				if won < 0 {
+					won = 0
+				}
+			}
+		}
+		if isSolo {
+			earned = (won + lost) * cfg.TokensPerSoloRound
+		} else {
+			earned = won*cfg.TokensPerRoundWin + lost*cfg.TokensPerRoundLoss
+		}
+	}
+
+	// Relative cap: can't exceed a clean sweep of TokenRoundCap rounds at win rate.
+	if sweepMax := cfg.TokenRoundCap * cfg.TokensPerRoundWin; earned > sweepMax {
+		earned = sweepMax
 	}
 	// Absolute cap: independent of request data — closes empty-Rounds inflation.
 	if absMax := maxRoundsPerMatch * cfg.TokensPerRoundWin; earned > absMax {

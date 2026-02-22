@@ -9,7 +9,7 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-// PendingWrites collects all writes to be committed atomically via MultiUpdate
+// PendingWrites batches storage + wallet writes for a single atomic MultiUpdate commit.
 type PendingWrites struct {
 	StorageWrites []*runtime.StorageWrite
 	WalletUpdates []*runtime.WalletUpdate
@@ -60,7 +60,7 @@ func (pw *PendingWrites) Merge(other *PendingWrites) {
 	}
 }
 
-// MergePayload merges another RewardPayload into this one
+// MergePayload additively combines other into pw.Payload. Wallet is summed, items appended; levels/XP are not touched.
 func (pw *PendingWrites) MergePayload(other *notify.RewardPayload) {
 	if other == nil {
 		return
@@ -68,8 +68,7 @@ func (pw *PendingWrites) MergePayload(other *notify.RewardPayload) {
 	if pw.Payload == nil {
 		pw.Payload = notify.NewRewardPayload("")
 	}
-	
-	// Merge wallet
+
 	if other.Wallet != nil {
 		if pw.Payload.Wallet == nil {
 			pw.Payload.Wallet = &notify.WalletDelta{}
@@ -78,16 +77,14 @@ func (pw *PendingWrites) MergePayload(other *notify.RewardPayload) {
 		pw.Payload.Wallet.Gems += other.Wallet.Gems
 		pw.Payload.Wallet.Treats += other.Wallet.Treats
 	}
-	
-	// Merge inventory
+
 	if other.Inventory != nil {
 		if pw.Payload.Inventory == nil {
 			pw.Payload.Inventory = &notify.InventoryDelta{Items: []notify.ItemGrant{}}
 		}
 		pw.Payload.Inventory.Items = append(pw.Payload.Inventory.Items, other.Inventory.Items...)
 	}
-	
-	// Merge progression unlocks
+
 	if other.Progression != nil && len(other.Progression.Unlocks) > 0 {
 		if pw.Payload.Progression == nil {
 			pw.Payload.Progression = &notify.ProgressionDelta{}

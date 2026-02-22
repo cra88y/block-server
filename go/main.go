@@ -1,3 +1,4 @@
+// Package main is the Nakama plugin entry point. Registers RPCs, hooks, and loads game data.
 package main
 
 import (
@@ -11,8 +12,7 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-
-
+// InitModule is the Nakama plugin entry point. Errors here abort server start.
 func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, initializer runtime.Initializer) error {
 	initStart := time.Now()
 	if err := items.LoadGameData(); err != nil {
@@ -25,7 +25,8 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		len(items.GameData.Backgrounds),
 		len(items.GameData.PieceStyles),
 		len(items.GameData.LevelTrees))
-	// after first time player init
+
+	// First-authenticate hooks — player init (wallet, inventory, progression).
 	if err := initializer.RegisterAfterAuthenticateDevice(items.AfterAuthorizeUserDevice); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err

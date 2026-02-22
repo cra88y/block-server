@@ -1,3 +1,4 @@
+// Daily drop-slot replenishment and round-token wallet key. Slots refill once per UTC day; token exchanges draw from this pool.
 package items
 
 import (
@@ -27,6 +28,7 @@ type dailyDrops struct {
 	LastClaimUnix int64 `json:"last_claim_unix"` // The last time the user claimed the daily drops in UNIX time.
 }
 
+// RpcCanClaimDailyDrops returns eligibility for the daily drop-slot refresh.
 func RpcCanClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	var resp struct {
 		CanClaimDailyDrops bool `json:"canClaimDailyDrops"`
@@ -49,23 +51,18 @@ func RpcCanClaimDailyDrops(ctx context.Context, logger runtime.Logger, db *sql.D
 	return string(respBytes), nil
 }
 
+// TryClaimDailyDrops tops up drop slots to maxDrops if unclaimed today. Wallet + timestamp commit is atomic.
 func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule) error {
-
-	// get UserID from context
 	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-
-	// reject if not from valid client
 	if !ok {
 		return errors.ErrNoUserIdFound
 	}
 
-	// get current dailyDrops state
 	dailyDropsState, dropsStorageObj, err := getDailyDropsState(ctx, logger, nk)
 	if err != nil {
 		return err
 	}
 
-	// check if user has already claimed
 	if !canUserClaimDailyDrops(dailyDropsState) {
 		return errors.ErrDropsAlreadyClaimed
 	}
@@ -120,7 +117,7 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 	return nil
 }
 
-// get last daily drop object
+// getDailyDropsState reads drop state from storage; returns zero value for new users.
 func getDailyDropsState(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule) (dailyDrops, *api.StorageObject, error) {
 	var data dailyDrops
 	data.LastClaimUnix = 0 // Default for new users
@@ -189,7 +186,7 @@ func prepareCappedDrops(ctx context.Context, nk runtime.NakamaModule, logger run
 	return changeset, newTotal, nil
 }
 
-// check the last claimed time was before midnight
+// canUserClaimDailyDrops returns true if the last claim was before today's UTC midnight.
 func canUserClaimDailyDrops(d dailyDrops) bool {
 	nowUTC := time.Now().UTC()
 	midnightUTC := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC)
@@ -197,6 +194,7 @@ func canUserClaimDailyDrops(d dailyDrops) bool {
 	return lastClaimTime.Before(midnightUTC)
 }
 
+// consumeDropTicket deducts one slot. Unused — token-exchange pulls slots inside processMatchRewards. Remove in next cleanup.
 func consumeDropTicket(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) (bool, error) {
 	account, err := nk.AccountGetId(ctx, userID)
 	if err != nil {

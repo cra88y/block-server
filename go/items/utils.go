@@ -1,4 +1,7 @@
+// Package items — game economy, progression, and item RPCs.
 package items
+
+// logging helpers auto-tag lines with the calling user's ID.
 
 import (
 	"context"
@@ -38,6 +41,7 @@ func ParseUint32Safely(value string, logger runtime.Logger) (uint32, error) {
 
 // Logging helpers
 
+// LogWithUser logs with user_id from ctx injected — keeps every request line queryable by user.
 func LogWithUser(ctx context.Context, logger runtime.Logger, level, message string, fields map[string]interface{}) {
 	userID := ""
 	if uid, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string); ok {
@@ -108,7 +112,7 @@ func LogSuccess(ctx context.Context, logger runtime.Logger, operation string) {
 
 // JSON Unmarshal Helpers
 
-// UnmarshalJSON provides type-safe JSON decoding with standardized error handling
+// UnmarshalJSON decodes json into T with a typed error on failure.
 func UnmarshalJSON[T any](value string) (*T, error) {
 	var data T
 	if err := json.Unmarshal([]byte(value), &data); err != nil {

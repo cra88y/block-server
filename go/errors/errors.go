@@ -1,12 +1,13 @@
+// Package errors defines sentinel errors for all RPCs. Return these unwrapped — wrapping changes the gRPC code on the wire.
 package errors
 
 import "github.com/heroiclabs/nakama-common/runtime"
 
-// Error codes
+// gRPC status codes.
 const (
-	CodeInternal   = 13 // Internal server error
-	CodeInvalidArg = 3  // Invalid argument
-	CodeForbidden  = 7  // Forbidden
+	CodeInternal   = 13 // codes.Internal
+	CodeInvalidArg = 3  // codes.InvalidArgument
+	CodeForbidden  = 7  // codes.PermissionDenied
 )
 
 // Unified error definitions
@@ -63,7 +64,7 @@ var (
 	ErrPetNotOwned           = runtime.NewError("pet not owned", CodeForbidden)
 	ErrClassNotOwned         = runtime.NewError("class not owned", CodeForbidden)
 
-	// Transaction / prepare errors (code 13)
+	// Transaction / commit errors (code 13)
 	ErrTransactionFailed = runtime.NewError("transaction failed", CodeInternal)
 	ErrPrepareFailed     = runtime.NewError("prepare failed", CodeInternal)
 )

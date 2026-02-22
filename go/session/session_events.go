@@ -1,3 +1,4 @@
+// Package session handles session-start grants and single-device enforcement.
 package session
 
 import (
@@ -16,6 +17,7 @@ const (
 	streamModeNotification = 0
 )
 
+// RegisterSessionEvents wires session lifecycle hooks. Call once from InitModule.
 func RegisterSessionEvents(db *sql.DB, nk runtime.NakamaModule, initializer runtime.Initializer) error {
 	if err := initializer.RegisterEventSessionStart(eventSessionStartFunc(nk)); err != nil {
 		return err
@@ -27,7 +29,7 @@ func RegisterSessionEvents(db *sql.DB, nk runtime.NakamaModule, initializer runt
 	return nil
 }
 
-// Update a user's last online timestamp when they disconnect.
+// eventSessionEndFunc stamps last_online_time_unix on disconnect. 1s deadline guards against reconnect storms.
 func eventSessionEndFunc(db *sql.DB) func(context.Context, runtime.Logger, *api.Event) {
 	return func(ctx context.Context, logger runtime.Logger, evt *api.Event) {
 		userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
@@ -57,6 +59,7 @@ WHERE
 	}
 }
 
+// eventSessionStartFunc claims daily drops, verifies progression, and kicks duplicate sessions.
 func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtime.Logger, *api.Event) {
 	return func(ctx context.Context, logger runtime.Logger, evt *api.Event) {
 
