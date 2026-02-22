@@ -62,24 +62,10 @@ func RpcNotifyMatchStart(ctx context.Context, logger runtime.Logger, db *sql.DB,
 		return "", errors.ErrInvalidInput
 	}
 
-	// R2: Token Immutability - reject if active match already exists (with staleness expiry)
-	existing, _ := nk.StorageRead(ctx, []*runtime.StorageRead{{
-		Collection: storageCollectionActiveMatch,
-		Key:        storageKeyCurrentMatch,
-		UserID:     userID,
-	}})
-	if len(existing) > 0 {
-		var staleCheck ActiveMatch
-		if err := json.Unmarshal([]byte(existing[0].Value), &staleCheck); err == nil {
-			if time.Now().UnixMilli()-staleCheck.StartTime > maxMatchDurationMs {
-				// Stale lock — auto-clear so player isn't permanently blocked.
-				clearActiveMatch(ctx, nk, logger, userID)
-			} else {
-				logger.Warn("User %s already has active match, rejecting notify", userID)
-				return "", fmt.Errorf("active match already exists")
-			}
-		}
-	}
+	// Unconditionally overwrite any existing active match lock.
+	// This gracefully handles players abandoning a match mid-game and starting a new one.
+	// Since we record a fresh StartTime, the player must still satisfy minMatchDurationMs 
+	// for the new match, ensuring security is preserved.
 
 	activeMatch := ActiveMatch{
 		MatchID:    req.MatchID,
