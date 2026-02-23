@@ -14,7 +14,7 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-// GetUserIDFromContext extracts user ID from context
+
 func GetUserIDFromContext(ctx context.Context, logger runtime.Logger) (string, error) {
 	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 	if !ok {
@@ -29,7 +29,7 @@ func GetUserIDFromContext(ctx context.Context, logger runtime.Logger) (string, e
 	return userID, nil
 }
 
-// ParseUint32Safely parses a string to uint32
+
 func ParseUint32Safely(value string, logger runtime.Logger) (uint32, error) {
 	result, err := strconv.ParseUint(value, 10, 32)
 	if err != nil {
@@ -39,7 +39,6 @@ func ParseUint32Safely(value string, logger runtime.Logger) (uint32, error) {
 	return uint32(result), nil
 }
 
-// Logging helpers
 
 // LogWithUser logs with user_id from ctx injected — keeps every request line queryable by user.
 func LogWithUser(ctx context.Context, logger runtime.Logger, level, message string, fields map[string]interface{}) {
@@ -110,9 +109,9 @@ func LogSuccess(ctx context.Context, logger runtime.Logger, operation string) {
 	LogWithUser(ctx, logger, "info", operation+" completed", nil)
 }
 
-// JSON Unmarshal Helpers
 
-// UnmarshalJSON decodes json into T with a typed error on failure.
+
+// Typed JSON decoding wrapper so we get clean errors.
 func UnmarshalJSON[T any](value string) (*T, error) {
 	var data T
 	if err := json.Unmarshal([]byte(value), &data); err != nil {

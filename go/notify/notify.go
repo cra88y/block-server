@@ -54,7 +54,7 @@ type RewardPayload struct {
 	Meta *RewardMeta `json:"meta,omitempty"`
 }
 
-// InventoryDelta contains items granted to inventory.
+// Client-side inventory state must be add-only. No removals.
 type InventoryDelta struct {
 	Items []ItemGrant `json:"items"`
 }
@@ -65,14 +65,15 @@ type ItemGrant struct {
 	Type string `json:"type"` // pet, class, background, piece_style
 }
 
-// WalletDelta contains currency changes.
+// Discrete currency changes rather than absolute totals.
+// Allows multiple parallel matches to claim rewards without race conditions.
 type WalletDelta struct {
 	Gold   int `json:"gold,omitempty"`
 	Gems   int `json:"gems,omitempty"`
 	Treats int `json:"treats,omitempty"`
 }
 
-// ProgressionDelta contains XP, levels, and unlocks.
+// XP and level-ups. Driven strictly by the server.
 type ProgressionDelta struct {
 	XpGranted      *int               `json:"xp_granted,omitempty"`
 	XpBase         *int               `json:"xp_base,omitempty"` // Before diminishing
@@ -90,7 +91,7 @@ type ProgressionUnlock struct {
 	Count  int    `json:"count"`
 }
 
-// LootboxGrant represents a lootbox earned (unopened reference).
+// Grants a sealed lootbox. Contents remain a mystery until the player opens it.
 type LootboxGrant struct {
 	ID     string `json:"id"`
 	Tier   string `json:"tier"`             // standard, premium, legendary
@@ -104,7 +105,8 @@ type RewardMeta struct {
 	DailyMatches    *int   `json:"daily_matches,omitempty"`
 	// RoundTokens is the player's current half-unit token balance after this match.
 	// Display in UI as value / 2.0. Exchange threshold is 6 (= 3.0 tokens).
-	RoundTokens *int `json:"round_tokens,omitempty"`
+	RoundTokens  *int `json:"round_tokens,omitempty"`
+	TokensEarned *int `json:"tokens_earned,omitempty"`
 }
 
 // NewRewardPayload creates a new RewardPayload with generated ID and timestamp.
@@ -133,7 +135,7 @@ func Int64Ptr(v int64) *int64 {
 	return &v
 }
 
-// SendReward sends a reward notification to a user.
+// Helper to marshal and ship a RewardPayload down to the client.
 func SendReward(ctx context.Context, nk runtime.NakamaModule, userID string, payload *RewardPayload) error {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {

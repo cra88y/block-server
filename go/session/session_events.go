@@ -17,7 +17,6 @@ const (
 	streamModeNotification = 0
 )
 
-// RegisterSessionEvents wires session lifecycle hooks. Call once from InitModule.
 func RegisterSessionEvents(db *sql.DB, nk runtime.NakamaModule, initializer runtime.Initializer) error {
 	if err := initializer.RegisterEventSessionStart(eventSessionStartFunc(nk)); err != nil {
 		return err
@@ -89,7 +88,7 @@ func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtim
 			return
 		}
 
-		// Fetch all live presences for this user on their private notification stream.
+		// Stream user's private notification channel so we can kick duplicate logins.
 		presences, err := nk.StreamUserList(streamModeNotification, userID, "", "", true, true)
 		if err != nil {
 			logger.WithField("err", err).Error("nk.StreamUserList error.")
@@ -110,11 +109,11 @@ func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtim
 		}
 		for _, presence := range presences {
 			if presence.GetUserId() == userID && presence.GetSessionId() == sessionID {
-				// Ignore our current socket connection.
+				// Skip our own connection.
 				continue
 			}
 
-			// Use closure to ensure cancel is always called
+			// Wrap in a closure so the context cancel doesn't leak across the loop.
 			func() {
 				ctx2, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel()
@@ -124,7 +123,7 @@ func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtim
 					return
 				}
 
-				// Force disconnect the socket for the user's other game client.
+				// Boot their older active session.
 				if err := nk.SessionDisconnect(ctx2, presence.GetSessionId()); err != nil {
 					logger.WithField("err", err).Error("nk.SessionDisconnect error.")
 				}

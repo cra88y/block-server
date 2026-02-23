@@ -15,15 +15,9 @@ import (
 )
 
 const (
-	storageCollectionMatchHistory = "match_history"
-	storageKeyLastMatch           = "last_match"
-	storageCollectionActiveMatch  = "active_match"
-	storageKeyCurrentMatch        = "current"
+	storageCollectionActiveMatch = "active_match"
+	storageKeyCurrentMatch       = "current"
 )
-
-type MatchHistory struct {
-	LastMatchTime int64 `json:"last_match_time"`
-}
 
 type ActiveMatch struct {
 	MatchID       string `json:"match_id"`
@@ -103,17 +97,23 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		return "", errors.ErrNoUserIdFound
 	}
 
-    // Rate Limit Check
-	if err := checkMatchRateLimit(ctx, nk, userID); err != nil {
-		logger.Warn("Rate limit exceeded for user %s: %v", userID, err)
-		return "", err
-	}
-
 	var req MatchResultRequest
 	if err := json.Unmarshal([]byte(payload), &req); err != nil {
 		logger.Error("Failed to unmarshal match result: %v", err)
 		return "", errors.ErrUnmarshal
 	}
+
+	// Bypass rate limits for duplicate submissions
+	cacheObj, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
+		Collection: "match_results_cache",
+		Key:        req.MatchID + "_" + userID,
+		UserID:     userID,
+	}})
+	if err == nil && len(cacheObj) > 0 {
+		logger.Info("Returning cached reward payload for match %s user %s", req.MatchID, userID)
+		return cacheObj[0].Value, nil
+	}
+
 
 	// Validate round history (logging + self-healing only; not a hard rejection gate).
 	validateRounds(&req, logger)
@@ -209,6 +209,19 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		return "", errors.ErrMarshal
 	}
 
+	// Cache the exact response so future identical requests don't double-process rewards
+	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{{
+		Collection:      "match_results_cache",
+		Key:             req.MatchID + "_" + userID,
+		UserID:          userID,
+		Value:           string(respBytes),
+		PermissionRead:  0,
+		PermissionWrite: 0,
+	}})
+	if err != nil {
+		logger.Warn("Failed to cache match result for user %s match %s: %v", userID, req.MatchID, err)
+	}
+
 	xpAmount := 0
 	if result.Progression != nil && result.Progression.XpGranted != nil {
 		xpAmount = *result.Progression.XpGranted
@@ -220,10 +233,20 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 }
 
 const (
-	minMatchDurationMs         = 10000  // 10 seconds
-	minRateLimitMs             = 15000  // 15 seconds (reduced from 30s for legitimate rapid rematches)
-	maxMatchDurationMs         = 600000 // 10 minutes (reduced from 1 hour - no match lasts this long)
-	storageCollectionResults   = "match_results"
+	// minMatchDurationMs: server-enforced floor. Any match shorter than this is rejected.
+	// This is the primary anti-farming gate — no wall-clock inter-submission cooldown needed.
+	minMatchDurationMs = 10000 // 10 seconds
+
+	// maxMatchDurationMs: stale-session ceiling for 1v1 matches.
+	// No competitive match physically lasts longer than 10 minutes; beyond this the session is abandoned.
+	maxMatchDurationMs = 600000 // 10 minutes
+
+	// maxSoloMatchDurationMs: stale-session ceiling for solo matches.
+	// Solo has no consensus deadline — a player can run long survival sessions.
+	// Use a 1-hour ceiling purely to clean up sessions from crashed/uninstalled clients.
+	maxSoloMatchDurationMs = 60 * 60 * 1000 // 1 hour
+
+	storageCollectionResults = "match_results"
 )
 
 func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, matchID string) (*ActiveMatch, error) {
@@ -253,7 +276,13 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 		return nil, fmt.Errorf("match duration too short")
 	}
 
-	if time.Now().UnixMilli()-activeMatch.StartTime > maxMatchDurationMs {
+	// Apply a mode-specific stale-session ceiling.
+	// Solo: generous cap (marathon sessions are valid). Multiplayer: tight cap (consensus enforces short matches).
+	maxDuration := int64(maxMatchDurationMs)
+	if activeMatch.OpponentID == "" {
+		maxDuration = int64(maxSoloMatchDurationMs)
+	}
+	if time.Now().UnixMilli()-activeMatch.StartTime > maxDuration {
 		// Clear stale match state.
 		clearActiveMatch(ctx, nk, logger, userID)
 		return nil, fmt.Errorf("stale active match expired")
@@ -358,41 +387,11 @@ func clearActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger runti
 	}
 }
 
-func checkMatchRateLimit(ctx context.Context, nk runtime.NakamaModule, userID string) error {
-	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
-		Collection: storageCollectionMatchHistory,
-		Key:        storageKeyLastMatch,
-		UserID:     userID,
-	}})
-	if err != nil {
-		return errors.ErrCouldNotReadStorage
-	}
-
-	if len(objects) > 0 {
-		var history MatchHistory
-		if err := json.Unmarshal([]byte(objects[0].Value), &history); err == nil {
-			if time.Now().UnixMilli()-history.LastMatchTime < minRateLimitMs {
-				return fmt.Errorf("rate limit exceeded")
-			}
-		}
-	}
-	return nil
-}
-
-func updateMatchHistory(ctx context.Context, nk runtime.NakamaModule, userID string) {
-	history := MatchHistory{
-		LastMatchTime: time.Now().UnixMilli(),
-	}
-	value, _ := json.Marshal(history)
-	nk.StorageWrite(ctx, []*runtime.StorageWrite{{
-		Collection:      storageCollectionMatchHistory,
-		Key:             storageKeyLastMatch,
-		UserID:          userID,
-		Value:           string(value),
-		PermissionRead:  0, // Hidden from client
-		PermissionWrite: 0,
-	}})
-}
+// Rate limiting is intentionally NOT implemented via wall-clock inter-submission cooldowns.
+// Anti-farming is owned by two correct primitives:
+//   1. validateActiveMatch: rejects any match shorter than minMatchDurationMs (10s)
+//   2. match_results_cache: idempotency key (matchID_userID) prevents double-reward on retries
+// A time-based cooldown between submissions causes false positives on rapid rematch flows.
 
 // processMatchRewards handles reward generation atomically.
 //
@@ -446,6 +445,12 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	// dropsLeft = daily pool of lootbox slots. Round tokens are the key.
 	// Exchange fires when tokens cross the threshold AND a slot is available.
 	tokensEarned := computeTokensEarned(req, isSolo, cfg)
+	
+	// No drops left means no tokens earned. Don't bank phantom progress.
+	if preDrops <= 0 {
+		tokensEarned = 0
+	}
+
 	postTokens := preTokens + int64(tokensEarned)
 
 	willExchange := postTokens >= int64(cfg.TokenExchangeThresh) && preDrops >= 1
@@ -481,18 +486,7 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		}
 	}
 
-	// --- Match history for rate limiting ---
-	historyValue, _ := json.Marshal(MatchHistory{LastMatchTime: time.Now().UnixMilli()})
-	pending.AddStorageWrite(&runtime.StorageWrite{
-		Collection:      storageCollectionMatchHistory,
-		Key:             storageKeyLastMatch,
-		UserID:          userID,
-		Value:           string(historyValue),
-		PermissionRead:  0,
-		PermissionWrite: 0,
-	})
-
-	// --- Phase 2: Atomic commit (XP + tokens + exchange + lootbox + history) ---
+	// --- Phase 2: Atomic commit (XP + tokens + exchange + lootbox) ---
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
 		logger.Error("Match result commit failed: %v", err)
 		return nil, fmt.Errorf("match reward commit failed: %w", err)
@@ -505,13 +499,15 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	finalTokens := postTokens
 	finalDrops := preDrops
 	if willExchange {
-		// Freeze finalTokens at threshold so UI sequence displays visual completion.
+		// Freeze tokens at the threshold so the client UI animates cleanly to 100%
 		finalDrops--
+		finalTokens = int64(cfg.TokenExchangeThresh)
 	}
 	result.Meta = &notify.RewardMeta{
 		DailyMatches:   notify.IntPtr(matchesToday),
 		DropsRemaining: notify.IntPtr(int(finalDrops)),
 		RoundTokens:    notify.IntPtr(int(finalTokens)),
+		TokensEarned:   notify.IntPtr(int(tokensEarned)),
 	}
 
 	return result, nil

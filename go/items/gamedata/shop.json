@@ -13,7 +13,7 @@
                 },
                 "gems": {
                     "min": 0,
-                    "max": 5
+                    "max": 0
                 },
                 "treats": {
                     "min": 1,
@@ -34,8 +34,8 @@
                     "max": 400
                 },
                 "gems": {
-                    "min": 10,
-                    "max": 30
+                    "min": 0,
+                    "max": 0
                 },
                 "treats": {
                     "min": 2,

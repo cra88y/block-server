@@ -1,0 +1,102 @@
+diff --git a/go/items/match_result.go b/go/items/match_result.go
+index cd5b650..d2d10be 100644
+--- a/go/items/match_result.go
++++ b/go/items/match_result.go
+@@ -103,18 +103,29 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
+ 		return "", errors.ErrNoUserIdFound
+ 	}
+ 
+-    // Rate Limit Check
+-	if err := checkMatchRateLimit(ctx, nk, userID); err != nil {
+-		logger.Warn("Rate limit exceeded for user %s: %v", userID, err)
+-		return "", err
+-	}
+-
+ 	var req MatchResultRequest
+ 	if err := json.Unmarshal([]byte(payload), &req); err != nil {
+ 		logger.Error("Failed to unmarshal match result: %v", err)
+ 		return "", errors.ErrUnmarshal
+ 	}
+ 
++	// Idempotent Ledger: Read-through cache to bypass rate limit for duplicate submissions
++	cacheObj, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
++		Collection: "match_results_cache",
++		Key:        req.MatchID + "_" + userID,
++		UserID:     userID,
++	}})
++	if err == nil && len(cacheObj) > 0 {
++		logger.Info("Returning cached reward payload for match %s user %s", req.MatchID, userID)
++		return cacheObj[0].Value, nil
++	}
++
++	// Rate Limit Check
++	if err := checkMatchRateLimit(ctx, nk, userID); err != nil {
++		logger.Warn("Rate limit exceeded for user %s: %v", userID, err)
++		return "", err
++	}
++
+ 	// Validate round history (logging + self-healing only; not a hard rejection gate).
+ 	validateRounds(&req, logger)
+ 
+@@ -209,6 +220,19 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
+ 		return "", errors.ErrMarshal
+ 	}
+ 
++	// Idempotent Ledger: Write to cache to serve future duplicate requests
++	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{{
++		Collection:      "match_results_cache",
++		Key:             req.MatchID + "_" + userID,
++		UserID:          userID,
++		Value:           string(respBytes),
++		PermissionRead:  0,
++		PermissionWrite: 0,
++	}})
++	if err != nil {
++		logger.Warn("Failed to cache match result for user %s match %s: %v", userID, req.MatchID, err)
++	}
++
+ 	xpAmount := 0
+ 	if result.Progression != nil && result.Progression.XpGranted != nil {
+ 		xpAmount = *result.Progression.XpGranted
+@@ -446,6 +470,13 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
+ 	// dropsLeft = daily pool of lootbox slots. Round tokens are the key.
+ 	// Exchange fires when tokens cross the threshold AND a slot is available.
+ 	tokensEarned := computeTokensEarned(req, isSolo, cfg)
++	
++	// When no drop slots remain today, token accumulation is meaningless —
++	// clamp here rather than banking phantom progress the player can't redeem.
++	if preDrops <= 0 {
++		tokensEarned = 0
++	}
++
+ 	postTokens := preTokens + int64(tokensEarned)
+ 
+ 	willExchange := postTokens >= int64(cfg.TokenExchangeThresh) && preDrops >= 1
+@@ -507,11 +538,13 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
+ 	if willExchange {
+ 		// Freeze finalTokens at threshold so UI sequence displays visual completion.
+ 		finalDrops--
++		finalTokens = int64(cfg.TokenExchangeThresh)
+ 	}
+ 	result.Meta = &notify.RewardMeta{
+ 		DailyMatches:   notify.IntPtr(matchesToday),
+ 		DropsRemaining: notify.IntPtr(int(finalDrops)),
+ 		RoundTokens:    notify.IntPtr(int(finalTokens)),
++		TokensEarned:   notify.IntPtr(int(tokensEarned)),
+ 	}
+ 
+ 	return result, nil
+diff --git a/go/notify/notify.go b/go/notify/notify.go
+index a534d1e..4ca0c86 100644
+--- a/go/notify/notify.go
++++ b/go/notify/notify.go
+@@ -104,7 +104,8 @@ type RewardMeta struct {
+ 	DailyMatches    *int   `json:"daily_matches,omitempty"`
+ 	// RoundTokens is the player's current half-unit token balance after this match.
+ 	// Display in UI as value / 2.0. Exchange threshold is 6 (= 3.0 tokens).
+-	RoundTokens *int `json:"round_tokens,omitempty"`
++	RoundTokens  *int `json:"round_tokens,omitempty"`
++	TokensEarned *int `json:"tokens_earned,omitempty"`
+ }
+ 
+ // NewRewardPayload creates a new RewardPayload with generated ID and timestamp.
