@@ -59,6 +59,13 @@ var (
 	ErrInvalidLevelThresholds  = runtime.NewError("invalid level thresholds", CodeInvalidArg)
 	ErrLootboxAlreadyOpened    = runtime.NewError("lootbox already opened", CodeInvalidArg)
 
+	// Match validation errors (code 3 → HTTP 400 → client does NOT retry)
+	// Using CodeInvalidArg instead of fmt.Errorf so the SDK treats these as non-retryable.
+	ErrMatchTooShort        = runtime.NewError("match duration too short", CodeInvalidArg)
+	ErrNoActiveMatch        = runtime.NewError("no active match found", CodeInvalidArg)
+	ErrMatchIDMismatch      = runtime.NewError("match ID mismatch", CodeInvalidArg)
+	ErrStaleMatchExpired    = runtime.NewError("stale active match expired", CodeInvalidArg)
+
 	// Forbidden errors (code 7)
 	ErrItemNotOwnedForbidden = runtime.NewError("item not owned", CodeForbidden)
 	ErrPetNotOwned           = runtime.NewError("pet not owned", CodeForbidden)

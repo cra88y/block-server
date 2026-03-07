@@ -116,13 +116,20 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 
 
 	// Validate round history (logging + self-healing only; not a hard rejection gate).
-	validateRounds(&req, logger)
+	validateRounds(ctx, nk, &req, userID, logger)
 
 	// Validate against Active Match (Security)
 	activeMatch, err := validateActiveMatch(ctx, nk, logger, userID, req.MatchID)
 	if err != nil {
-		logger.Warn("Match validation failed for user %s: %v", userID, err)
-		return "", err
+		// Semantic override: a completed round proves meaningful play regardless of wall-clock time.
+		// BRIDGE: req.RoundsWon/Lost are client-provided. report_round_result replaces this with server records.
+		roundsPlayed := req.RoundsWon + req.RoundsLost
+		if err == errors.ErrMatchTooShort && roundsPlayed >= 1 && activeMatch != nil {
+			logger.Info("Match %s: duration short but %d round(s) completed — proceeding", req.MatchID, roundsPlayed)
+		} else {
+			logger.Warn("Match validation failed for user %s: %v", userID, err)
+			return "", err
+		}
 	}
 
 	// Consensus check (unified path: solo short-circuits in resolveMatchConsensus)
@@ -260,7 +267,7 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 	}
 
 	if len(objects) == 0 {
-		return nil, fmt.Errorf("no active match found")
+		return nil, errors.ErrNoActiveMatch
 	}
 
 	var activeMatch ActiveMatch
@@ -269,11 +276,13 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 	}
 
 	if activeMatch.MatchID != matchID {
-		return nil, fmt.Errorf("match ID mismatch")
+		return nil, errors.ErrMatchIDMismatch
 	}
 
 	if time.Now().UnixMilli()-activeMatch.StartTime < minMatchDurationMs {
-		return nil, fmt.Errorf("match duration too short")
+		// Return the activeMatch alongside the error so the caller can apply semantic override.
+		// If the caller has round records proving meaningful play, it may proceed despite short duration.
+		return &activeMatch, errors.ErrMatchTooShort
 	}
 
 	// Apply a mode-specific stale-session ceiling.
@@ -285,7 +294,7 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 	if time.Now().UnixMilli()-activeMatch.StartTime > maxDuration {
 		// Clear stale match state.
 		clearActiveMatch(ctx, nk, logger, userID)
-		return nil, fmt.Errorf("stale active match expired")
+		return nil, errors.ErrStaleMatchExpired
 	}
 
 	return &activeMatch, nil
@@ -373,6 +382,10 @@ func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger 
 	}})
 
 	return "ok", nil
+	// TODO(ATOM-D1): After consensus resolves to "ok", compare both players' RoundRecord sets.
+	// For every round N: playerA.round[N].PlayerWon == !playerB.round[N].PlayerWon.
+	// Requires reading opponent storage with userID=opponentID (PermissionRead:0, valid from server context).
+	// OpponentID is available as activeMatch.OpponentID. Do NOT implement until ATOM-D1 is scoped.
 }
 
 func clearActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) {
@@ -387,11 +400,9 @@ func clearActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger runti
 	}
 }
 
-// Rate limiting is intentionally NOT implemented via wall-clock inter-submission cooldowns.
-// Anti-farming is owned by two correct primitives:
-//   1. validateActiveMatch: rejects any match shorter than minMatchDurationMs (10s)
-//   2. match_results_cache: idempotency key (matchID_userID) prevents double-reward on retries
-// A time-based cooldown between submissions causes false positives on rapid rematch flows.
+// Anti-farming: two gates.
+// 1. validateActiveMatch: 10s floor, waived when rounds_played >= 1 (server records take over in Phase 2).
+// 2. match_results_cache: idempotency key prevents double-reward on retries.
 
 // processMatchRewards handles reward generation atomically.
 //
@@ -442,18 +453,30 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		}
 	}
 
-	// dropsLeft = daily pool of lootbox slots. Round tokens are the key.
-	// Exchange fires when tokens cross the threshold AND a slot is available.
-	tokensEarned := computeTokensEarned(req, isSolo, cfg)
-	
-	// No drops left means no tokens earned. Don't bank phantom progress.
-	if preDrops <= 0 {
-		tokensEarned = 0
+	// If report_round_result banked tokens this match, preTokens already reflects them.
+	// Skip computeTokensEarned to avoid double-grant. Fallback runs if no records exist.
+	tokensBanked := ReadRoundRecordsTotal(ctx, nk, logger, userID, req.MatchID, cfg.TokenRoundCap)
+
+	var tokensEarned int
+	var postTokens int64
+	var willExchange bool
+
+	if tokensBanked > 0 {
+		postTokens = preTokens
+		willExchange = preTokens >= int64(cfg.TokenExchangeThresh) && preDrops >= 1
+		logger.Info("Match %s: %d tokens pre-banked, skipping delta (audit_confirmed)", req.MatchID, tokensBanked)
+	} else {
+		// Fallback: no round records — network failure, legacy client, or pre-Phase2 solo.
+		tokensEarned = computeTokensEarned(req, isSolo, cfg)
+		if preDrops <= 0 {
+			tokensEarned = 0
+		}
+		postTokens = preTokens + int64(tokensEarned)
+		willExchange = postTokens >= int64(cfg.TokenExchangeThresh) && preDrops >= 1
+		if tokensEarned > 0 {
+			logger.Info("Match %s: no round records, granting %d tokens (audit_unconfirmed)", req.MatchID, tokensEarned)
+		}
 	}
-
-	postTokens := preTokens + int64(tokensEarned)
-
-	willExchange := postTokens >= int64(cfg.TokenExchangeThresh) && preDrops >= 1
 
 	// If no slots remain, clamp at threshold (no infinite banking).
 	if !willExchange && preDrops <= 0 && postTokens > int64(cfg.TokenExchangeThresh) {
@@ -461,9 +484,9 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	}
 
 	if willExchange {
-		// Consume one drop slot and perform exchange. Carry over excess tokens.
+		exchangeCarry := postTokens - int64(cfg.TokenExchangeThresh)
 		pending.AddWalletUpdate(userID, map[string]int64{
-			walletKeyRoundTokens: int64(tokensEarned) - int64(cfg.TokenExchangeThresh),
+			walletKeyRoundTokens: exchangeCarry - postTokens,
 			walletKeyDropsLeft:   -1,
 		})
 		tier := GetLootboxConfig().MatchLossTier
@@ -478,8 +501,7 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 				Source: "token_exchange",
 			}}
 		}
-	} else {
-		// Bank tokens — no exchange yet.
+	} else if tokensEarned > 0 {
 		delta := postTokens - preTokens
 		if delta > 0 {
 			pending.AddWalletUpdate(userID, map[string]int64{walletKeyRoundTokens: delta})
@@ -737,9 +759,10 @@ func computeTokensEarned(req *MatchResultRequest, isSolo bool, cfg *MatchConfig)
 }
 
 // validateRounds checks round history plausibility and self-heals count mismatches.
-// Not a hard security gate — the client is trusted for round detail.
-// Purpose: catch integration bugs and flag suspiciously fast rounds for log analysis.
-func validateRounds(req *MatchResultRequest, logger runtime.Logger) {
+// Also performs a cross-stream audit: compares the client's self-report against server
+// RoundRecord objects written by report_round_result. Discrepancies are warn-only —
+// no rewards are withheld in this pass.
+func validateRounds(ctx context.Context, nk runtime.NakamaModule, req *MatchResultRequest, userID string, logger runtime.Logger) {
 	if len(req.Rounds) == 0 {
 		return // Legacy client or solo fallback — skip silently
 	}
@@ -750,11 +773,49 @@ func validateRounds(req *MatchResultRequest, logger runtime.Logger) {
 		} else {
 			derivedLost++
 		}
-		if r.DurationSec < 5 {
-			logger.Warn("[match_result] Suspiciously short round %d: %ds (match %s)",
-				r.RoundNumber, r.DurationSec, req.MatchID)
+		if r.DurationMs < 5000 {
+			logger.Warn("[match_result] Suspiciously short round %d: %dms (match %s)",
+				r.RoundNumber, r.DurationMs, req.MatchID)
 		}
 	}
+
+	// Cross-stream audit: compare client self-report against server RoundRecord objects.
+	// Discrepancy = client tampered with their batch report after rounds resolved.
+	cfg := GetMatchConfig()
+	serverRecords, readErr := nk.StorageRead(ctx, buildRoundRecordReads(req.MatchID, userID, cfg.TokenRoundCap))
+	if readErr == nil {
+		recordMap := make(map[int]RoundRecord, len(serverRecords))
+		for _, obj := range serverRecords {
+			var rec RoundRecord
+			if json.Unmarshal([]byte(obj.Value), &rec) == nil {
+				recordMap[rec.RoundNumber] = rec
+			}
+		}
+		for _, r := range req.Rounds {
+			rec, exists := recordMap[r.RoundNumber]
+			if !exists {
+				logger.Warn("[audit] Round %d in client report has no server record (match %s user %s) — possible fabrication",
+					r.RoundNumber, req.MatchID, userID)
+				continue
+			}
+			if rec.PlayerWon != r.PlayerWon {
+				logger.Warn("[audit] STREAM_CONFLICT round %d: server record PlayerWon=%v, client claims PlayerWon=%v (match %s user %s)",
+					r.RoundNumber, rec.PlayerWon, r.PlayerWon, req.MatchID, userID)
+			}
+			const durationDeltaMs = int64(3000) // ±3s tolerance for clock drift
+			if r.DurationMs > 0 && rec.DurationMs > 0 {
+				delta := r.DurationMs - rec.DurationMs
+				if delta < 0 {
+					delta = -delta
+				}
+				if delta > durationDeltaMs {
+					logger.Warn("[audit] Duration delta round %d: server=%dms client=%dms delta=%dms (match %s user %s)",
+						r.RoundNumber, rec.DurationMs, r.DurationMs, delta, req.MatchID, userID)
+				}
+			}
+		}
+	}
+
 	if derivedWon != req.RoundsWon || derivedLost != req.RoundsLost {
 		logger.Warn("[match_result] Round count mismatch: claimed %d/%d, derived %d/%d (match %s) — correcting from Rounds array",
 			req.RoundsWon, req.RoundsLost, derivedWon, derivedLost, req.MatchID)
@@ -763,6 +824,7 @@ func validateRounds(req *MatchResultRequest, logger runtime.Logger) {
 	}
 }
 
+// TODO move lootbox stuff out of here?
 // LootboxConfig holds lootbox tier configuration
 type LootboxConfig struct {
 	MatchWinTier  string `json:"match_win_tier"`

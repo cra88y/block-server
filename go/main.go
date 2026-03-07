@@ -86,6 +86,10 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
+	if err := initializer.RegisterRpc("report_round_result", items.RpcReportRoundResult); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
 	if err := initializer.RegisterRpc("submit_match_result", items.RpcSubmitMatchResult); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err

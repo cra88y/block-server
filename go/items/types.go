@@ -123,12 +123,13 @@ type PetTreatRequest struct {
 	PetID uint32 `json:"pet_id"`
 }
 
-// RoundResult is one player's report of a single round outcome.
-// The Rounds array is the source of truth the server validates against RoundsWon/RoundsLost.
+// RoundResult is one player's self-reported round outcome, embedded in MatchResultRequest.Rounds[].
+// The server cross-validates this against RoundRecord (written by report_round_result) —
+// discrepancies between the two streams are the primary audit signal.
 type RoundResult struct {
-	RoundNumber int  `json:"round"`
-	PlayerWon   bool `json:"player_won"`
-	DurationSec int  `json:"duration_sec"`
+	RoundNumber int   `json:"round"`
+	PlayerWon   bool  `json:"player_won"`
+	DurationMs  int64 `json:"duration_ms"` // milliseconds; matches RoundRecord.DurationMs for direct comparison
 }
 
 // Match Result Types
