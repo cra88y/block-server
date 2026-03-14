@@ -11,6 +11,30 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
+// startTelemetryCleanup starts a goroutine that periodically cleans up old telemetry data
+// HAZARD: Run during off-peak hours to avoid impacting active users
+func startTelemetryCleanup(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule) {
+	go func() {
+		// Run cleanup every 24 hours
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				logger.Info("Starting scheduled telemetry cleanup...")
+				if err := items.CleanupOldTelemetry(ctx, logger, nk); err != nil {
+					logger.Error("Telemetry cleanup failed: %v", err)
+				} else {
+					logger.Info("Telemetry cleanup completed successfully")
+				}
+			}
+		}
+	}()
+}
+
 
 func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, initializer runtime.Initializer) error {
 	initStart := time.Now()
@@ -55,6 +79,10 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		return err
 	}
 	if err := initializer.RegisterRpc("use_gold_for_class_xp", items.RpcUseGoldForClassXP); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
+	if err := initializer.RegisterRpc("claim_progression_reward", items.RpcClaimProgressionReward); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
@@ -126,10 +154,18 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
+	if err := initializer.RegisterRpc("submit_telemetry", items.RpcSubmitTelemetry); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
 	if err := session.RegisterSessionEvents(db, nk, initializer); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
+	
+	// Start telemetry cleanup goroutine
+	startTelemetryCleanup(ctx, logger, nk)
+	
 	logger.Info("Plugin loaded in '%d' msec.", time.Since(initStart).Milliseconds())
 	return nil
 }

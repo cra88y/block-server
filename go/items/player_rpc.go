@@ -366,22 +366,51 @@ func RpcUsePetTreat(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		return "", errors.ErrPetNotOwned
 	}
 
-	// Prepare all writes atomically
-	xpAmount := uint32(1000) // Fixed XP amount per treat
+	// Get item level tree for cost configurations
+	tree, treeExists := GetPetLevelTree(req.PetID)
+	if !treeExists {
+		return "", errors.ErrInvalidPetID
+	}
+
+	xpPerUpgrade := tree.XpPerUpgrade
+	if xpPerUpgrade <= 0 {
+		xpPerUpgrade = 1000
+	}
+	costPerUpgrade := tree.CostPerUpgrade
+	if costPerUpgrade <= 0 {
+		costPerUpgrade = 1
+	}
+	costCurrency := tree.UpgradeCostCurrency
+	if costCurrency == "" {
+		costCurrency = "treats"
+	}
+
+	// Default to min cost if client didn't send count or sent 0 (count represents currency amount here)
+	costAmount := int64(req.Count)
+	if costAmount < 1 {
+		costAmount = int64(costPerUpgrade)
+	}
+
+	// Prepare all writes atomically — bulk XP in one PrepareExperience call
+	xpPerCurrency := float64(xpPerUpgrade) / float64(costPerUpgrade)
+	xpAmount := uint32(float64(costAmount) * xpPerCurrency)
+
 	newLevel, pending, err := PrepareExperience(ctx, nk, logger, userID, storageKeyPet, req.PetID, xpAmount)
 	if err != nil {
 		logger.WithFields(map[string]interface{}{
 			"user":   userID,
 			"petID":  req.PetID,
 			"xp":     xpAmount,
+			"cost":   costAmount,
+			"currency": costCurrency,
 			"error":  err.Error(),
 			"action": "use_pet_treat",
 		}).Error("Failed to prepare pet XP")
 		return "", errors.ErrPrepareFailed
 	}
 
-	// Add treat deduction to pending writes
-	pending.AddWalletDeduction(userID, "treats", 1)
+	// Deduct from dynamic cost currency in one wallet write
+	pending.AddWalletDeduction(userID, costCurrency, costAmount)
 
 	// Commit all writes atomically via MultiUpdate
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
@@ -474,14 +503,34 @@ func RpcUseGoldForClassXP(ctx context.Context, logger runtime.Logger, db *sql.DB
 		return "", errors.ErrClassNotOwned
 	}
 
-	// Default gold cost, can be made configurable
-	goldCost := int64(100)
-	if req.Amount > 0 {
-		goldCost = int64(req.Amount)
+	// Get item level tree for cost configurations
+	tree, treeExists := GetClassLevelTree(req.ClassID)
+	if !treeExists {
+		return "", errors.ErrInvalidItemID
 	}
 
-	// XP granted per gold spent (10 XP per 1 gold)
-	xpAmount := uint32(goldCost * 10)
+	xpPerUpgrade := tree.XpPerUpgrade
+	if xpPerUpgrade <= 0 {
+		xpPerUpgrade = 1000
+	}
+	costPerUpgrade := tree.CostPerUpgrade
+	if costPerUpgrade <= 0 {
+		costPerUpgrade = 100
+	}
+	costCurrency := tree.UpgradeCostCurrency
+	if costCurrency == "" {
+		costCurrency = "gold"
+	}
+
+	// Default cost, can be made configurable
+	costAmount := int64(costPerUpgrade)
+	if req.Amount > 0 {
+		costAmount = int64(req.Amount)
+	}
+
+	// XP granted based on config
+	xpPerCurrency := float64(xpPerUpgrade) / float64(costPerUpgrade)
+	xpAmount := uint32(float64(costAmount) * xpPerCurrency)
 
 	// Prepare all writes atomically
 	newLevel, pending, err := PrepareExperience(ctx, nk, logger, userID, storageKeyClass, req.ClassID, xpAmount)
@@ -496,15 +545,16 @@ func RpcUseGoldForClassXP(ctx context.Context, logger runtime.Logger, db *sql.DB
 		return "", errors.ErrPrepareFailed
 	}
 
-	// Add gold deduction to pending writes
-	pending.AddWalletDeduction(userID, "gold", goldCost)
+	// Add currency deduction to pending writes
+	pending.AddWalletDeduction(userID, costCurrency, costAmount)
 
 	// Commit all writes atomically via MultiUpdate
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
 		logger.WithFields(map[string]interface{}{
 			"user":    userID,
 			"classID": req.ClassID,
-			"gold":    goldCost,
+			"cost":    costAmount,
+			"currency": costCurrency,
 			"error":   err.Error(),
 			"action":  "use_gold_for_class_xp",
 		}).Error("Failed to commit class XP transaction")
@@ -526,11 +576,145 @@ func RpcUseGoldForClassXP(ctx context.Context, logger runtime.Logger, db *sql.DB
 	logger.WithFields(map[string]interface{}{
 		"user":     userID,
 		"classID":  req.ClassID,
-		"gold":     goldCost,
+		"cost":     costAmount,
+		"currency": costCurrency,
 		"xp":       xpAmount,
 		"newLevel": newLevel,
 		"action":   "use_gold_for_class_xp",
 	}).Info("Gold used for class XP successfully")
+
+	respBytes, err := json.Marshal(result)
+	if err != nil {
+		return "", errors.ErrMarshal
+	}
+
+	return string(respBytes), nil
+}
+
+type ClaimRewardRequest struct {
+	ItemType string `json:"item_type"` // "pets" (storageKeyPet) or "classes" (storageKeyClass)
+	ItemID   uint32 `json:"item_id"`
+	Level    int    `json:"level"`
+}
+
+// RpcClaimProgressionReward allows a player to manually claim a reward from the progression tree
+func RpcClaimProgressionReward(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
+		logger.Error("No user ID found in context for reward claim")
+		return "", errors.ErrNoUserIdFound
+	}
+
+	var req ClaimRewardRequest
+	if err := json.Unmarshal([]byte(payload), &req); err != nil {
+		logger.WithFields(map[string]interface{}{
+			"user":   userID,
+			"error":  err.Error(),
+			"action": "claim_progression_reward",
+		}).Error("Failed to unmarshal claim reward request")
+		return "", errors.ErrUnmarshal
+	}
+
+	if !ValidateItemExists(req.ItemType, req.ItemID) {
+		logger.WithFields(map[string]interface{}{
+			"user":   userID,
+			"itemType": req.ItemType,
+			"itemID": req.ItemID,
+			"action": "claim_progression_reward",
+		}).Error("Invalid item ID or type")
+		return "", errors.ErrInvalidItemID
+	}
+
+	owned, err := IsItemOwned(ctx, nk, userID, req.ItemID, req.ItemType)
+	if err != nil {
+		return "", errors.ErrFailedCheckOwnership
+	}
+	if !owned {
+		return "", errors.ErrItemNotOwnedForbidden
+	}
+
+	treeName, err := GetLevelTreeName(req.ItemType, req.ItemID)
+	if err != nil {
+		return "", errors.ErrInvalidConfig
+	}
+
+	var progressionKey string
+	switch req.ItemType {
+	case storageKeyPet:
+		progressionKey = ProgressionKeyPet
+	case storageKeyClass:
+		progressionKey = ProgressionKeyClass
+	default:
+		return "", errors.ErrInvalidItemType
+	}
+
+	pending := NewPendingWrites()
+	rewardFound := false
+
+	// Use PrepareProgressionUpdate to safely modify UnclaimedRewards
+	_, progWrite, err := PrepareProgressionUpdate(ctx, nk, logger, userID, progressionKey, req.ItemID, func(prog *ItemProgression) error {
+		// Verify the level is actually unclaimed
+		indexToRemove := -1
+		for i, lvl := range prog.UnclaimedRewards {
+			if lvl == req.Level {
+				indexToRemove = i
+				rewardFound = true
+				break
+			}
+		}
+
+		if !rewardFound {
+			return errors.ErrRewardAlreadyClaimed
+		}
+
+		// Remove the claimed level from the array
+		prog.UnclaimedRewards = append(prog.UnclaimedRewards[:indexToRemove], prog.UnclaimedRewards[indexToRemove+1:]...)
+		return nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	if !rewardFound {
+		return "", errors.ErrRewardAlreadyClaimed
+	}
+
+	if progWrite != nil {
+		pending.AddStorageWrite(progWrite)
+	}
+
+	// Actually prepare the rewards to be granted
+	levelRewards, err := PrepareLevelRewards(ctx, nk, logger, userID, treeName, req.Level, req.ItemType, req.ItemID)
+	if err != nil {
+		logger.WithFields(map[string]interface{}{
+			"user":   userID,
+			"level":  req.Level,
+			"error":  err.Error(),
+			"action": "claim_progression_reward",
+		}).Error("Failed to prepare level rewards")
+		return "", errors.ErrPrepareFailed
+	}
+	
+	pending.Merge(levelRewards)
+
+	// Commit everything atomically
+	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
+		logger.WithFields(map[string]interface{}{
+			"user":   userID,
+			"error":  err.Error(),
+			"action": "claim_progression_reward",
+		}).Error("Failed to commit claim transaction")
+		return "", errors.ErrTransactionFailed
+	}
+
+	// Return the payload for the UI toasts
+	result := pending.Payload
+	if result == nil {
+		result = notify.NewRewardPayload("claim_reward")
+	}
+	result.Source = "claim_reward"
+	result.ReasonKey = "reward.progression.claimed"
 
 	respBytes, err := json.Marshal(result)
 	if err != nil {

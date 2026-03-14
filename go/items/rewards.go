@@ -345,11 +345,9 @@ func PrepareExperience(ctx context.Context, nk runtime.NakamaModule, logger runt
 	}
 
 	var resultLevel int
-	var oldLevel int
 
 	// Prepare progression update
 	prog, progWrite, err := PrepareProgressionUpdate(ctx, nk, logger, userID, progressionKey, itemID, func(prog *ItemProgression) error {
-		oldLevel = prog.Level
 		newExp := prog.Exp + int(exp)
 
 		// Integer overflow protection
@@ -382,6 +380,14 @@ func PrepareExperience(ctx context.Context, nk runtime.NakamaModule, logger runt
 		}
 
 		if calculatedLevel > prog.Level {
+			// Record any unrewarded levels in the tree so the user can claim them later
+			for lvl := prog.Level + 1; lvl <= calculatedLevel; lvl++ {
+				// Only add to unclaimed if there's an actual reward for this level
+				if _, hasReward := tree.Rewards[strconv.Itoa(lvl)]; hasReward {
+					prog.UnclaimedRewards = append(prog.UnclaimedRewards, lvl)
+				}
+			}
+
 			prog.Level = calculatedLevel
 			resultLevel = calculatedLevel
 		}
@@ -397,17 +403,8 @@ func PrepareExperience(ctx context.Context, nk runtime.NakamaModule, logger runt
 		pending.AddStorageWrite(progWrite)
 	}
 
-	// Prepare level-up rewards for each level gained
-	if resultLevel > oldLevel {
-		for lvl := oldLevel + 1; lvl <= resultLevel; lvl++ {
-			levelRewards, err := PrepareLevelRewards(ctx, nk, logger, userID, treeName, lvl, itemType, itemID)
-			if err != nil {
-				LogWarn(ctx, logger, fmt.Sprintf("Failed to prepare level %d rewards: %v", lvl, err))
-				continue
-			}
-			pending.Merge(levelRewards)
-		}
-	}
+	// Level-up rewards are no longer auto-claimed. They are now stored in prog.UnclaimedRewards 
+	// and must be manually claimed by the client calling RpcClaimProgressionReward.
 
 	// Add final level to payload
 	if resultLevel > 0 {

@@ -58,6 +58,7 @@ var (
 	ErrInvalidPetID            = runtime.NewError("invalid pet ID", CodeInvalidArg)
 	ErrInvalidLevelThresholds  = runtime.NewError("invalid level thresholds", CodeInvalidArg)
 	ErrLootboxAlreadyOpened    = runtime.NewError("lootbox already opened", CodeInvalidArg)
+	ErrRewardAlreadyClaimed    = runtime.NewError("reward already claimed or unavailable", CodeInvalidArg)
 
 	// Match validation errors (code 3 → HTTP 400 → client does NOT retry)
 	// Using CodeInvalidArg instead of fmt.Errorf so the SDK treats these as non-retryable.

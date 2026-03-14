@@ -37,11 +37,14 @@ type PieceStyle struct {
 }
 
 type LevelTree struct {
-	MaxLevel        int   `json:"max_level"`
-	BaseXP          int   `json:"base_xp"`
-	LevelThresholds []int `json:"level_thresholds"`
-	RewardedLevels  []int `json:"rewarded_levels"`
-	Rewards         map[string]struct {
+	MaxLevel            int   `json:"max_level"`
+	BaseXP              int   `json:"base_xp"`
+	LevelThresholds     []int `json:"level_thresholds"`
+	RewardedLevels      []int `json:"rewarded_levels"`
+	UpgradeCostCurrency string `json:"upgrade_cost_currency"`
+	CostPerUpgrade      int    `json:"cost_per_upgrade"`
+	XpPerUpgrade        int    `json:"xp_per_upgrade"`
+	Rewards             map[string]struct {
 		Gold        string `json:"gold,omitempty"`
 		Gems        string `json:"gems,omitempty"`
 		Abilities   string `json:"abilities,omitempty"`
@@ -80,6 +83,8 @@ type ItemProgression struct {
 	SpritesUnlocked     int `json:"su"`
 	BackgroundsUnlocked int `json:"bu"`
 	PieceStylesUnlocked int `json:"pu"`
+
+	UnclaimedRewards []int `json:"ur,omitempty"`
 
 	Version string `json:"-"`
 }
@@ -121,6 +126,7 @@ type EquipmentData struct {
 
 type PetTreatRequest struct {
 	PetID uint32 `json:"pet_id"`
+	Count int    `json:"count"` // number of treats to use in one atomic call; defaults to 1
 }
 
 // RoundResult is one player's self-reported round outcome, embedded in MatchResultRequest.Rounds[].
