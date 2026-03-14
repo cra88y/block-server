@@ -7,8 +7,12 @@
         0,
         1
       ],
-      "backgroundIds": null,
-      "styleIds": null,
+      "backgroundIds": [
+        0
+      ],
+      "styleIds": [
+        0
+      ],
       "levelTreeName": "pet_basic"
     },
     "1": {
@@ -18,8 +22,12 @@
         2,
         3
       ],
-      "backgroundIds": null,
-      "styleIds": null,
+      "backgroundIds": [
+        0
+      ],
+      "styleIds": [
+        0
+      ],
       "levelTreeName": "pet_basic"
     },
     "2": {
@@ -29,8 +37,12 @@
         2,
         3
       ],
-      "backgroundIds": null,
-      "styleIds": null,
+      "backgroundIds": [
+        0
+      ],
+      "styleIds": [
+        0
+      ],
       "levelTreeName": "pet_basic"
     }
   },
@@ -141,6 +153,9 @@
         18,
         25
       ],
+      "upgrade_cost_currency": "treats",
+      "cost_per_upgrade": 1,
+      "xp_per_upgrade": 1000,
       "rewards": {
         "1": {
           "gold": "250"
@@ -175,6 +190,9 @@
         8,
         10
       ],
+      "upgrade_cost_currency": "gold",
+      "cost_per_upgrade": 100,
+      "xp_per_upgrade": 1000,
       "rewards": {
         "1": {
           "gems": "10"
@@ -211,6 +229,9 @@
         75,
         100
       ],
+      "upgrade_cost_currency": null,
+      "cost_per_upgrade": 0,
+      "xp_per_upgrade": 0,
       "rewards": {
         "5": {
           "gems": "10"
