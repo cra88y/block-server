@@ -85,10 +85,10 @@ type ProgressionDelta struct {
 
 // ProgressionUnlock represents an ability/sprite unlock from level-up.
 type ProgressionUnlock struct {
-	System string `json:"system"`  // pet, class
-	ItemID uint32 `json:"item_id"` // Which pet/class
-	Type   string `json:"type"`    // ability, sprite
-	Count  int    `json:"count"`
+	System  string   `json:"system"`   // pet, class
+	ItemID  uint32   `json:"item_id"`  // Which pet/class
+	Type    string   `json:"type"`     // ability, sprite
+	Indices []uint32 `json:"indices"`  // Position-based indices
 }
 
 // Grants a sealed lootbox. Contents remain a mystery until the player opens it.

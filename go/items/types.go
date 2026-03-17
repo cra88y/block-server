@@ -1,5 +1,10 @@
 package items
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 type GameDataStruct struct {
 	Pets        map[uint32]*Pet       `json:"pets"`
 	Classes     map[uint32]*Class     `json:"classes"`
@@ -79,14 +84,58 @@ type ItemProgression struct {
 	EquippedAbility int `json:"ea"`
 	EquippedSprite  int `json:"es"`
 
-	AbilitiesUnlocked   int `json:"au"`
-	SpritesUnlocked     int `json:"su"`
-	BackgroundsUnlocked int `json:"bu"`
-	PieceStylesUnlocked int `json:"pu"`
+	UnlockedAbilityIndices  ClaimedIndices `json:"au"`
+	UnlockedSpriteIndices  []uint32 `json:"su"`
+	BackgroundsUnlocked    int      `json:"bu"`
+	PieceStylesUnlocked    int      `json:"pu"`
 
 	UnclaimedRewards []int `json:"ur,omitempty"`
 
 	Version string `json:"-"`
+}
+
+// ClaimedIndices is []int32 with migration from old int format
+type ClaimedIndices []int32
+
+// UnmarshalJSON handles migration from old AbilitiesUnlocked int format
+func (c *ClaimedIndices) UnmarshalJSON(data []byte) error {
+	// Try array first (new format)
+	var arr []int32
+	if err := json.Unmarshal(data, &arr); err == nil {
+		if arr == nil {
+			arr = []int32{}
+		}
+		*c = ClaimedIndices(arr)
+		return nil
+	}
+	
+	// Try int (old format) — migrate
+	var n int
+	if err := json.Unmarshal(data, &n); err != nil {
+		return fmt.Errorf("ClaimedIndices: expected int or array, got %s", string(data))
+	}
+	
+	if n <= 0 {
+		*c = ClaimedIndices{}
+		return nil
+	}
+	
+	result := make([]int32, n)
+	for i := range result {
+		result[i] = int32(i)
+	}
+	*c = ClaimedIndices(result)
+	return nil
+}
+
+// HasAbility checks if the player has unlocked the ability at the given index
+func (p *ItemProgression) HasAbility(index int) bool {
+	for _, idx := range p.UnlockedAbilityIndices {
+		if int(idx) == index {
+			return true
+		}
+	}
+	return false
 }
 
 type AbilityEquipRequest struct {
@@ -151,3 +200,4 @@ type MatchResultRequest struct {
 	RoundsLost       int           `json:"rounds_lost"`
 	Rounds           []RoundResult `json:"rounds"` // Per-round history; server validates plausibility
 }
+

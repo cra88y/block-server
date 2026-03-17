@@ -18,6 +18,43 @@ const (
 	CategoryClass = "class"
 )
 
+// RewardIndices maps a level to its ability and sprite pool indices.
+type RewardIndices struct {
+	AbilityIndex int
+	SpriteIndex  int
+}
+
+// BuildRewardIndexMap pre-computes which pool index each level's reward maps to.
+// Abilities and sprites are tracked independently. Index 0 is pre-granted,
+// so tree rewards start at index 1.
+func BuildRewardIndexMap(treeName string) map[int]RewardIndices {
+	tree, exists := GetLevelTree(treeName)
+	if !exists {
+		return nil
+	}
+	
+	abilityPos, spritePos := 0, 0
+	result := make(map[int]RewardIndices)
+	
+	for _, level := range tree.RewardedLevels {
+		reward := tree.Rewards[strconv.Itoa(level)]
+		aIdx, sIdx := -1, -1
+		
+		if reward.Abilities != "" {
+			aIdx = abilityPos + 1 // +1 because index 0 is pre-granted
+			abilityPos++
+		}
+		if reward.Sprites != "" {
+			sIdx = spritePos + 1 // +1 because index 0 is pre-granted
+			spritePos++
+		}
+		
+		result[level] = RewardIndices{AbilityIndex: aIdx, SpriteIndex: sIdx}
+	}
+	
+	return result
+}
+
 // PrepareLevelRewards prepares all rewards for a specific level without committing.
 // Returns *PendingWrites with all writes needed for level rewards.
 // Caller should merge into their pending writes and commit via MultiUpdate.
@@ -32,6 +69,26 @@ func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	if !exists {
 		// No rewards for this level
 		return nil, nil
+	}
+
+	// Build reward index map to get position-based indices for this level
+	indexMap := BuildRewardIndexMap(treeName)
+	rewardIndices := indexMap[level]
+
+	// Get pool sizes for bounds checking
+	var maxAbilitiesAvailable int
+	var maxSpritesAvailable int
+	switch itemType {
+	case "pet":
+		if pet, exists := GetPet(itemID); exists {
+			maxAbilitiesAvailable = len(pet.AbilityIDs)
+			maxSpritesAvailable = pet.SpriteCount
+		}
+	case "class":
+		if class, exists := GetClass(itemID); exists {
+			maxAbilitiesAvailable = len(class.AbilityIDs)
+			maxSpritesAvailable = class.SpriteCount
+		}
 	}
 
 	rewards := make(map[string]uint32)
@@ -52,24 +109,12 @@ func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		rewards["gems"] = val
 	}
 
-	// progression rewards
-	if rewardData.Abilities != "" {
-		val, err := ParseUint32Safely(rewardData.Abilities, logger)
-		if err != nil {
-			return nil, errors.ErrParse
-		}
-		if val > 0 {
-			rewards["abilities"] = val
-		}
+	// progression rewards - use position-based indices from the index map
+	if rewardData.Abilities != "" && rewardIndices.AbilityIndex >= 0 {
+		rewards["abilities"] = uint32(rewardIndices.AbilityIndex)
 	}
-	if rewardData.Sprites != "" {
-		val, err := ParseUint32Safely(rewardData.Sprites, logger)
-		if err != nil {
-			return nil, errors.ErrParse
-		}
-		if val > 0 {
-			rewards["sprites"] = val
-		}
+	if rewardData.Sprites != "" && rewardIndices.SpriteIndex >= 0 {
+		rewards["sprites"] = uint32(rewardIndices.SpriteIndex)
 	}
 
 	// item rewards
@@ -102,21 +147,27 @@ func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	if pending != nil && pending.Payload != nil {
 		var unlocks []notify.ProgressionUnlock
 
-		if abilities, ok := rewards["abilities"]; ok && abilities > 0 {
-			unlocks = append(unlocks, notify.ProgressionUnlock{
-				System: itemType,
-				ItemID: itemID,
-				Type:   "ability",
-				Count:  int(abilities),
-			})
+		if abilityIndex, ok := rewards["abilities"]; ok && abilityIndex > 0 {
+			// Only add unlock if within pool bounds
+			if int(abilityIndex) < maxAbilitiesAvailable {
+				unlocks = append(unlocks, notify.ProgressionUnlock{
+					System:  itemType,
+					ItemID:  itemID,
+					Type:    "ability",
+					Indices: []uint32{abilityIndex},
+				})
+			}
 		}
-		if sprites, ok := rewards["sprites"]; ok && sprites > 0 {
-			unlocks = append(unlocks, notify.ProgressionUnlock{
-				System: itemType,
-				ItemID: itemID,
-				Type:   "sprite",
-				Count:  int(sprites),
-			})
+		if spriteIndex, ok := rewards["sprites"]; ok && spriteIndex > 0 {
+			// Only add unlock if within pool bounds
+			if int(spriteIndex) < maxSpritesAvailable {
+				unlocks = append(unlocks, notify.ProgressionUnlock{
+					System:  itemType,
+					ItemID:  itemID,
+					Type:    "sprite",
+					Indices: []uint32{spriteIndex},
+				})
+			}
 		}
 
 		if len(unlocks) > 0 {
@@ -185,31 +236,38 @@ func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger run
 			// Prepare progression update without committing
 			_, progWrite, err := PrepareProgressionUpdate(ctx, nk, logger, userID,
 				progressionKey, itemID, func(prog *ItemProgression) error {
-					currentUnlocked := prog.AbilitiesUnlocked
+					// Get the position-based index from the rewards map
+					rewardIndex := int(amount) // amount is the position-based index
+
+					// Determine max available based on reward type
 					maxAvailable := maxAbilitiesAvailable
 					if rewardType == "sprites" {
-						currentUnlocked = prog.SpritesUnlocked
 						maxAvailable = maxSpritesAvailable
 					}
 
-					if maxAvailable <= 0 {
+					// Bounds check: index must be within pool size
+					if rewardIndex >= maxAvailable {
+						// Silently cap - reward is out of bounds
 						return nil
 					}
 
-					newUnlocked := currentUnlocked + int(amount)
-					if newUnlocked > maxAvailable {
-						amount = uint32(maxAvailable - currentUnlocked)
+					// Check if already unlocked
+					unlockedSet := make(map[int32]bool)
+					for _, idx := range prog.UnlockedAbilityIndices {
+						unlockedSet[idx] = true
 					}
-
-					if amount == 0 {
+					if unlockedSet[int32(rewardIndex)] {
+						// Already unlocked
 						return nil
 					}
 
 					switch rewardType {
 					case "abilities":
-						prog.AbilitiesUnlocked += int(amount)
+						// Append the position-based index
+						prog.UnlockedAbilityIndices = append(prog.UnlockedAbilityIndices, int32(rewardIndex))
 					case "sprites":
-						prog.SpritesUnlocked += int(amount)
+						// Append the position-based index
+						prog.UnlockedSpriteIndices = append(prog.UnlockedSpriteIndices, uint32(rewardIndex))
 					}
 
 					return nil
@@ -485,3 +543,4 @@ func GetRewardItemIDs(itemType string, itemID uint32, rewardType string, amount 
 
 	return ids
 }
+

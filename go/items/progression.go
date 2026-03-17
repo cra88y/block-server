@@ -113,14 +113,14 @@ func PrepareProgressionUpdate(ctx context.Context, nk runtime.NakamaModule, logg
 
 func InitializeProgression(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, progressionKey string, itemID uint32) (*ItemProgression, error) {
 	prog := &ItemProgression{
-		Level:               1,
-		Exp:                 0,
-		EquippedAbility:     0,
-		EquippedSprite:      0,
-		AbilitiesUnlocked:   1, // First ability unlocked
-		SpritesUnlocked:     1, // First sprite unlocked
-		BackgroundsUnlocked: 0,
-		PieceStylesUnlocked: 0,
+		Level:                 1,
+		Exp:                   0,
+		EquippedAbility:       0,
+		EquippedSprite:        0,
+		UnlockedAbilityIndices: []int32{0}, // First ability (index 0) auto-claimed
+		UnlockedSpriteIndices: []uint32{0}, // First sprite unlocked (index 0)
+		BackgroundsUnlocked:   0,
+		PieceStylesUnlocked:   0,
 	}
 	if err := SaveItemProgression(ctx, nk, logger, userID, progressionKey, itemID, prog); err != nil {
 		return nil, err

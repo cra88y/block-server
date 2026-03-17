@@ -165,7 +165,7 @@ func EquipAbility(ctx context.Context, logger runtime.Logger, nk runtime.NakamaM
 	if abilityIndex < 0 {
 		return errors.ErrAbilityNotUnlocked
 	}
-	if abilityIndex >= prog.AbilitiesUnlocked {
+	if !prog.HasAbility(abilityIndex) {
 		return errors.ErrAbilityNotUnlocked
 	}
 
@@ -240,7 +240,7 @@ func IsAbilityAvailable(ctx context.Context, logger runtime.Logger, nk runtime.N
 		return errors.ErrAbilityNotFound
 	}
 
-	if abilityIndex >= prog.AbilitiesUnlocked {
+	if !prog.HasAbility(abilityIndex) {
 		LogWarn(ctx, logger, "Ability not unlocked")
 		return errors.ErrAbilityNotUnlocked
 	}
@@ -535,3 +535,4 @@ func RemoveItemFromInventory(ctx context.Context, nk runtime.NakamaModule, logge
 
 	return nil
 }
+
