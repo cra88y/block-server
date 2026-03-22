@@ -27,7 +27,7 @@ services:
       --advertise-addr=cockroachdb 
       --join=cockroachdb
       --cache=128MiB # Limit the block cache
-      --max-sql-memory=128MiB # Limit SQL execution memory
+      --max-sql-memory=256MiB # Limit SQL execution memory
     depends_on:
       cert-init:
         condition: service_completed_successfully
@@ -43,7 +43,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 1024M
         reservations:
           memory: 256M 
 
