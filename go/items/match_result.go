@@ -413,7 +413,7 @@ func clearActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger runti
 // Pre-read pattern: one AccountGetId at the top covers token read and drop availability.
 // isSolo: halves XP to prevent solo-match farming.
 func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool) (*notify.RewardPayload, error) {
-	cfg := GetMatchConfig()
+	cfg := GetEconomyConfig()
 	pending := NewPendingWrites()
 
 	result := notify.NewRewardPayload("match")
@@ -660,9 +660,8 @@ func checkDropTicketAvailable(ctx context.Context, nk runtime.NakamaModule, logg
 	return true, nil
 }
 
-// MatchConfig holds match reward configuration.
-// Gold fields are removed — token economy replaces per-match gold payouts.
-type MatchConfig struct {
+// EconomyConfig holds match reward and token exchange configuration.
+type EconomyConfig struct {
 	WinXP               int `json:"win_xp"`
 	LossXP              int `json:"loss_xp"`
 	TokensPerRoundWin   int `json:"tokens_per_round_win"`  // Half-units; default 2 = 1.0 token
@@ -672,21 +671,21 @@ type MatchConfig struct {
 	TokenRoundCap       int `json:"token_round_cap"`       // Only rounds 1..N earn tokens; default 3
 }
 
-var matchConfig *MatchConfig
+var economyConfig *EconomyConfig
 
-func GetMatchConfig() *MatchConfig {
-	if matchConfig == nil {
-		matchConfig = &MatchConfig{
+func GetEconomyConfig() *EconomyConfig {
+	if economyConfig == nil {
+		economyConfig = &EconomyConfig{
 			WinXP:               100,
 			LossXP:              25,
 			TokensPerRoundWin:   2, // 1.0 token
 			TokensPerRoundLoss:  1, // 0.5 token
-			TokensPerSoloRound:  1, // 0.5 token per round regardless of outcome
+			TokensPerSoloRound:  1, // 0.5 token per completed round
 			TokenExchangeThresh: 6, // 3.0 tokens
 			TokenRoundCap:       3, // rounds 4+ earn nothing
 		}
 	}
-	return matchConfig
+	return economyConfig
 }
 
 // maxRoundsPerMatch is a hard server-side ceiling on round counts.
@@ -705,7 +704,7 @@ const maxRoundsPerMatch = 10
 //  1. Relative cap: earned can't exceed a clean sweep (all-wins at TokensPerRoundWin rate).
 //  2. Absolute cap: earned can't exceed maxRoundsPerMatch * TokensPerRoundWin regardless
 //     of the Rounds array — closes the empty-array inflation attack.
-func computeTokensEarned(req *MatchResultRequest, isSolo bool, cfg *MatchConfig) int {
+func computeTokensEarned(req *MatchResultRequest, isSolo bool, cfg *EconomyConfig) int {
 	var earned int
 
 	if len(req.Rounds) > 0 {
@@ -741,7 +740,7 @@ func computeTokensEarned(req *MatchResultRequest, isSolo bool, cfg *MatchConfig)
 			}
 		}
 		if isSolo {
-			earned = (won + lost) * cfg.TokensPerSoloRound
+			earned = won * cfg.TokensPerSoloRound
 		} else {
 			earned = won*cfg.TokensPerRoundWin + lost*cfg.TokensPerRoundLoss
 		}
@@ -781,7 +780,7 @@ func validateRounds(ctx context.Context, nk runtime.NakamaModule, req *MatchResu
 
 	// Cross-stream audit: compare client self-report against server RoundRecord objects.
 	// Discrepancy = client tampered with their batch report after rounds resolved.
-	cfg := GetMatchConfig()
+	cfg := GetEconomyConfig()
 	serverRecords, readErr := nk.StorageRead(ctx, buildRoundRecordReads(req.MatchID, userID, cfg.TokenRoundCap))
 	if readErr == nil {
 		recordMap := make(map[int]RoundRecord, len(serverRecords))

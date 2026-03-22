@@ -99,13 +99,17 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	}
 
 
-	cfg := GetMatchConfig()
+	cfg := GetEconomyConfig()
 	isSolo := activeMatch.OpponentID == ""
 
 	tokensGranted := 0
 	if req.RoundNumber <= cfg.TokenRoundCap {
 		if isSolo {
-			tokensGranted = cfg.TokensPerSoloRound
+			if req.PlayerWon {
+				tokensGranted = cfg.TokensPerSoloRound
+			} else {
+				tokensGranted = 0
+			}
 		} else if req.PlayerWon {
 			tokensGranted = cfg.TokensPerRoundWin
 		} else {

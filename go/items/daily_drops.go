@@ -63,13 +63,18 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 		return err
 	}
 
-	if !canUserClaimDailyDrops(dailyDropsState) {
+	canClaim := canUserClaimDailyDrops(dailyDropsState)
+	lastClaim := time.Unix(dailyDropsState.LastClaimUnix, 0).UTC()
+	logger.Info("[DailyDrops] User %s check: lastClaim=%s, midnight=%s, canClaim=%v", 
+		userID, lastClaim.Format(time.RFC3339), time.Now().UTC().Truncate(24*time.Hour).Format(time.RFC3339), canClaim)
+
+	if !canClaim {
 		return errors.ErrDropsAlreadyClaimed
 	}
 
 	// Prepare wallet changeset without committing — prevents free-drops exploit
 	// if the timestamp write were to fail after an immediate WalletUpdate.
-	changeset, _, err := prepareCappedDrops(ctx, nk, logger, userID, dailyDropGrantCount)
+	changeset, newTotal, err := prepareCappedDrops(ctx, nk, logger, userID, dailyDropGrantCount)
 	if err != nil {
 		logger.Error("failed to prepare daily drops: %v", err)
 		return err
@@ -77,6 +82,7 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 
 	// Nothing to grant (already at cap)
 	if changeset == nil {
+		logger.Info("[DailyDrops] User %s already at cap (%d). Skipping refill.", userID, newTotal)
 		return nil
 	}
 
