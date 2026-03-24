@@ -484,9 +484,12 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	}
 
 	if willExchange {
-		exchangeCarry := postTokens - int64(cfg.TokenExchangeThresh)
+		// Calculate the exact delta needed to exchange the threshold tokens. 
+		// If tokensEarned > 0, we must credit them simultaneously.
+		walletDelta := int64(tokensEarned) - int64(cfg.TokenExchangeThresh)
+		
 		pending.AddWalletUpdate(userID, map[string]int64{
-			walletKeyRoundTokens: exchangeCarry - postTokens,
+			walletKeyRoundTokens: walletDelta,
 			walletKeyDropsLeft:   -1,
 		})
 		tier := GetLootboxConfig().MatchLossTier
@@ -714,7 +717,9 @@ func computeTokensEarned(req *MatchResultRequest, isSolo bool, cfg *EconomyConfi
 				continue // rounds outside the earning window contribute nothing
 			}
 			if isSolo {
-				earned += cfg.TokensPerSoloRound
+				if r.PlayerWon {
+					earned += cfg.TokensPerSoloRound
+				}
 			} else if r.PlayerWon {
 				earned += cfg.TokensPerRoundWin
 			} else {
