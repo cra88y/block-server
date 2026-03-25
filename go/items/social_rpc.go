@@ -98,6 +98,36 @@ func RpcSendGameInvite(
 	}
 
 
+	// ── Deduplicate: purge prior challenge notifications from this sender → target ─
+	// Each challenge attempt generates a fresh match_id UUID, so client-side
+	// match_id deduplication misses stale notifications. Delete them server-side
+	// before sending the new one so the target only ever sees one challenge per sender.
+	if existing, _, listErr := nk.NotificationsList(ctx, req.TargetUserID, 20, ""); listErr == nil {
+		var staleIDs []string
+		for _, notif := range existing {
+			if int(notif.Code) != notify.CodeSocial || notif.SenderId != senderID {
+				continue
+			}
+			var nc map[string]interface{}
+			if json.Unmarshal([]byte(notif.Content), &nc) == nil {
+				if _, hasMID := nc["match_id"]; hasMID {
+					staleIDs = append(staleIDs, notif.Id)
+				}
+			}
+		}
+		if len(staleIDs) > 0 {
+			if delErr := nk.NotificationsDeleteId(ctx, req.TargetUserID, staleIDs); delErr != nil {
+				logger.WithFields(map[string]interface{}{
+					"sender": senderID, "target": req.TargetUserID,
+				}).Warn("send_game_invite: failed to clear stale challenge notifications")
+			} else {
+				logger.WithFields(map[string]interface{}{
+					"sender": senderID, "target": req.TargetUserID, "cleared": len(staleIDs),
+				}).Info("send_game_invite: cleared stale challenge notifications")
+			}
+		}
+	}
+
 	// ── Resolve sender display name ───────────────────────────────────────────
 	senderName := senderID
 	senders, err := nk.UsersGetId(ctx, []string{senderID}, nil)
