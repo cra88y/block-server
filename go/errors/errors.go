@@ -60,6 +60,10 @@ var (
 	ErrLootboxAlreadyOpened    = runtime.NewError("lootbox already opened", CodeInvalidArg)
 	ErrRewardAlreadyClaimed    = runtime.NewError("reward already claimed or unavailable", CodeInvalidArg)
 
+	// Social errors (code 3 → HTTP 400 → non-retryable)
+	ErrInvalidInviteTarget = runtime.NewError("invite target user not found", CodeInvalidArg)
+	ErrInviteMissingMatch  = runtime.NewError("match_id required for game invite", CodeInvalidArg)
+
 	// Match validation errors (code 3 → HTTP 400 → client does NOT retry)
 	// Using CodeInvalidArg instead of fmt.Errorf so the SDK treats these as non-retryable.
 	ErrMatchTooShort        = runtime.NewError("match duration too short", CodeInvalidArg)
