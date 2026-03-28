@@ -35,7 +35,6 @@ func startTelemetryCleanup(ctx context.Context, logger runtime.Logger, nk runtim
 	}()
 }
 
-
 func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, initializer runtime.Initializer) error {
 	initStart := time.Now()
 	if err := items.LoadGameData(); err != nil {
@@ -48,7 +47,6 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		len(items.GameData.Backgrounds),
 		len(items.GameData.PieceStyles),
 		len(items.GameData.LevelTrees))
-
 
 	if err := initializer.RegisterAfterAuthenticateDevice(items.AfterAuthorizeUserDevice); err != nil {
 		logger.Error("Unable to register: %v", err)
@@ -164,15 +162,23 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
+	if err := initializer.RegisterRpc("cancel_game_invite", items.RpcCancelGameInvite); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
+	if err := initializer.RegisterRpc("decline_game_invite", items.RpcDeclineGameInvite); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
 
 	if err := session.RegisterSessionEvents(db, nk, initializer); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	
+
 	// Start telemetry cleanup goroutine
 	startTelemetryCleanup(ctx, logger, nk)
-	
+
 	logger.Info("Plugin loaded in '%d' msec.", time.Since(initStart).Milliseconds())
 	return nil
 }
