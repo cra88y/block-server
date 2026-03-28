@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"block-server/errors"
+	"block-server/notify"
 
+	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
@@ -18,11 +20,11 @@ var shopdata []byte
 
 // Shop configuration loaded from gamedata/shop.json
 type ShopConfig struct {
-	ExchangeRates  ExchangeRates              `json:"exchange_rates"`
-	LootboxTiers   map[string]LootboxTierDef  `json:"lootbox_tiers"`
-	ShopItems      []ShopItem                 `json:"shop_items"`
-	RotationConfig RotationConfig             `json:"rotation_config"`
-	IAPProducts    []IAPProduct               `json:"iap_products"`
+	ExchangeRates  ExchangeRates             `json:"exchange_rates"`
+	LootboxTiers   map[string]LootboxTierDef `json:"lootbox_tiers"`
+	ShopItems      []ShopItem                `json:"shop_items"`
+	RotationConfig RotationConfig            `json:"rotation_config"`
+	IAPProducts    []IAPProduct              `json:"iap_products"`
 }
 
 type ExchangeRates struct {
@@ -49,12 +51,12 @@ type DropRange struct {
 }
 
 type ShopItem struct {
-	ID           string  `json:"id"`
-	Type         string  `json:"type"`
-	ItemID       uint32  `json:"item_id,omitempty"`
-	Tier         string  `json:"tier,omitempty"`
-	Price        Price   `json:"price"`
-	RotationSlot *int    `json:"rotation_slot"`
+	ID           string `json:"id"`
+	Type         string `json:"type"`
+	ItemID       uint32 `json:"item_id,omitempty"`
+	Tier         string `json:"tier,omitempty"`
+	Price        Price  `json:"price"`
+	RotationSlot *int   `json:"rotation_slot"`
 }
 
 type Price struct {
@@ -74,6 +76,12 @@ type IAPProduct struct {
 	USDCents  int    `json:"usd_cents"`
 }
 
+// ValidateIAPPayload is the client request for IAP receipt validation.
+type ValidateIAPPayload struct {
+	ProductID         string `json:"product_id"`
+	JwsRepresentation string `json:"jws"`
+}
+
 var shopConfig *ShopConfig
 
 func LoadShopData() error {
@@ -90,11 +98,11 @@ func GetShopConfig() *ShopConfig {
 
 // Response types
 type ShopCatalogResponse struct {
-	RotatingItems   []ShopItemResponse    `json:"rotating_items"`
-	PermanentItems  []ShopItemResponse    `json:"permanent_items"`
-	LootboxTiers    map[string]int        `json:"lootbox_tiers"`
-	NextRotationAt  int64                 `json:"next_rotation_at"`
-	IAPProducts     []IAPProduct          `json:"iap_products"`
+	RotatingItems  []ShopItemResponse `json:"rotating_items"`
+	PermanentItems []ShopItemResponse `json:"permanent_items"`
+	LootboxTiers   map[string]int     `json:"lootbox_tiers"`
+	NextRotationAt int64              `json:"next_rotation_at"`
+	IAPProducts    []IAPProduct       `json:"iap_products"`
 }
 
 type ShopItemResponse struct {
@@ -343,12 +351,99 @@ func RpcPurchaseLootbox(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 	return string(respBytes), nil
 }
 
-// RpcValidateIAPReceipt validates an Apple/Google receipt (uses Nakama's built-in validation)
+// RpcValidateIAPReceipt validates an Apple IAP purchase (JWS) via Nakama's built-in
+// Apple receipt validation. Server is the authority on gem payout — client does not
+// control reward amounts. Uses Nakama's PurchaseValidateApple which calls Apple's
+// App Store Server API under the hood. Idempotent via Nakama's seen_before flag.
 func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
-	// Phase 5: Integrate with nk.PurchaseValidateApple() / nk.PurchaseValidateGoogle()
-	// For now, return not implemented
-	logger.Warn("IAP receipt validation called but not yet implemented")
-	return "", fmt.Errorf("IAP validation not yet implemented - coming in Phase 5")
+	// 1. Extract user ID
+	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
+	if !ok || userID == "" {
+		return "", errors.ErrNoUserIdFound
+	}
+
+	// 2. Parse payload
+	var req ValidateIAPPayload
+	if err := json.Unmarshal([]byte(payload), &req); err != nil {
+		logger.Error("Failed to unmarshal IAP validation payload: %v", err)
+		return "", errors.ErrInvalidInput
+	}
+	if req.ProductID == "" || req.JwsRepresentation == "" {
+		return "", errors.ErrInvalidInput
+	}
+
+	// 3. Validate receipt with Apple via Nakama
+	// persist=true — Nakama stores validated purchases in its DB for idempotency
+	resp, err := nk.PurchaseValidateApple(ctx, userID, req.JwsRepresentation, true)
+	if err != nil {
+		logger.Error("Apple receipt validation failed: %v", err)
+		return "", errors.ErrInternalError
+	}
+
+	if len(resp.ValidatedPurchases) == 0 {
+		logger.Warn("No validated purchases in Apple response for product: %s", req.ProductID)
+		return "", errors.ErrInvalidInput
+	}
+
+	// 4. Find the matching purchase
+	var purchase *api.ValidatedPurchase
+	for _, p := range resp.ValidatedPurchases {
+		if p.ProductId == req.ProductID {
+			purchase = p
+			break
+		}
+	}
+	if purchase == nil {
+		logger.Warn("Product %s not found in validated purchases for user %s", req.ProductID, userID)
+		return "", errors.ErrInvalidInput
+	}
+
+	// 5. Idempotency — if Nakama already saw this transaction, skip grant
+	if purchase.SeenBefore {
+		logger.Info("Duplicate IAP transaction %s for product %s — skipping grant", purchase.TransactionId, req.ProductID)
+		return `{"success":true}`, nil
+	}
+
+	// 6. Check for refunds
+	if purchase.RefundTime != nil && !purchase.RefundTime.AsTime().IsZero() {
+		logger.Warn("Refunded IAP transaction %s for product %s — skipping grant", purchase.TransactionId, req.ProductID)
+		return "", errors.ErrInvalidInput
+	}
+
+	// 7. Look up product in server config to determine payout
+	var gemAmount int
+	productFound := false
+	for _, p := range shopConfig.IAPProducts {
+		if p.ProductID == req.ProductID {
+			gemAmount = p.Gems
+			productFound = true
+			break
+		}
+	}
+	if !productFound || gemAmount <= 0 {
+		logger.Error("Unknown IAP product or zero gems: %s", req.ProductID)
+		return "", errors.ErrInvalidInput
+	}
+
+	// 8. Grant gems via PendingWrites (atomic)
+	pending := NewPendingWrites()
+	pending.AddWalletUpdate(userID, map[string]int64{"gems": int64(gemAmount)})
+
+	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
+		logger.Error("Failed to commit IAP gem grant for user %s: %v", userID, err)
+		return "", errors.ErrInternalError
+	}
+
+	// 9. Send CodeReward notification (server controls the payout)
+	reward := notify.NewRewardPayload("iap")
+	reward.Wallet = &notify.WalletDelta{Gems: gemAmount}
+	if err := notify.SendReward(ctx, nk, userID, reward); err != nil {
+		logger.Error("Failed to send IAP reward notification: %v", err)
+		// Non-fatal — gems already granted, just log
+	}
+
+	logger.Info("IAP validated: user=%s product=%s gems=%d txn=%s", userID, req.ProductID, gemAmount, purchase.TransactionId)
+	return `{"success":true}`, nil
 }
 
 // Helper functions
