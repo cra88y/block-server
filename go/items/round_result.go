@@ -30,20 +30,30 @@ type RoundRecord struct {
 
 // RoundResultRequest is sent by the client after each round completes.
 // IsSolo is derived from activeMatch.OpponentID — not passed by the client.
+//
+// Token matrix:
+//
+//	Solo:  Survived=true → TokensPerSoloRound, Survived=false → 0
+//	1v1:   PlayerWon=true → TokensPerRoundWin
+//	       PlayerWon=false, Survived=true → TokensPerRoundLoss
+//	       PlayerWon=false, Survived=false → 0
+//
+// Survived is the primary gate. PlayerWon only matters in 1v1 (win vs loss rate).
 type RoundResultRequest struct {
 	MatchID     string `json:"match_id"`
 	RoundNumber int    `json:"round_number"` // 1-indexed; rounds outside TokenRoundCap earn 0
-	PlayerWon   bool   `json:"player_won"`   // determines token rate (win > loss)
-	DurationMs  int64  `json:"duration_ms"`  // telemetry only, not used for grant logic
-	Score       int    `json:"score"`        // telemetry only
+	PlayerWon   bool   `json:"player_won"`   // 1v1 only: true if player won the round
+	Survived    bool   `json:"survived"`     // true if player's health > 0 at round end
+	DurationMs  int64  `json:"duration_ms"`  // used for min duration check
+	Score       int    `json:"score"`        // telemetry
 }
 
 // RoundResultResponse is returned to the client to enable display reconciliation.
 type RoundResultResponse struct {
-	TokensGranted  int  `json:"tokens_granted"`   // 0 on idempotent replay or if drops exhausted
-	RunningBalance int  `json:"running_balance"`  // server's authoritative wallet token count
-	DropsRemaining int  `json:"drops_remaining"`  // if 0, client should clamp future grant predictions
-	Acknowledged   bool `json:"acknowledged"`     // true = new record banked; false = idempotent replay
+	TokensGranted  int  `json:"tokens_granted"`  // 0 on idempotent replay or if drops exhausted
+	RunningBalance int  `json:"running_balance"` // server's authoritative wallet token count
+	DropsRemaining int  `json:"drops_remaining"` // if 0, client should clamp future grant predictions
+	Acknowledged   bool `json:"acknowledged"`    // true = new record banked; false = idempotent replay
 }
 
 func roundRecordKey(matchID string, roundNumber int) string {
@@ -66,6 +76,16 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 
 	if req.MatchID == "" || req.RoundNumber < 1 {
 		return "", errors.ErrInvalidInput
+	}
+
+	// Anti-farm: reject rounds that are too short to be legitimate gameplay.
+	// A round under minRoundDurationMs was likely interrupted by a quit.
+	const minRoundDurationMs = 15000 // 15 seconds
+	if req.DurationMs > 0 && req.DurationMs < minRoundDurationMs {
+		logger.Info("[RoundResult] Round %d too short (%dms) for user %s — tokens set to 0",
+			req.RoundNumber, req.DurationMs, userID)
+		// Still record the round for cross-validation, but don't bank tokens
+		req.Survived = false
 	}
 
 	// --- Idempotency check: return existing grant if already recorded ---
@@ -98,21 +118,22 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		return "", errors.ErrNoActiveMatch
 	}
 
-
 	cfg := GetEconomyConfig()
 	isSolo := activeMatch.OpponentID == ""
 
 	tokensGranted := 0
 	if req.RoundNumber <= cfg.TokenRoundCap {
-		if isSolo {
-			if req.PlayerWon {
-				tokensGranted = cfg.TokensPerSoloRound
-			} else {
-				tokensGranted = 0
-			}
+		if !req.Survived {
+			// Died — no tokens regardless of mode
+			tokensGranted = 0
+		} else if isSolo {
+			// Solo survived: 1 half-token
+			tokensGranted = cfg.TokensPerSoloRound
 		} else if req.PlayerWon {
+			// 1v1 won: 2 half-tokens
 			tokensGranted = cfg.TokensPerRoundWin
 		} else {
+			// 1v1 lost but survived: 1 half-token
 			tokensGranted = cfg.TokensPerRoundLoss
 		}
 	}

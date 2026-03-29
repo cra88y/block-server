@@ -115,17 +115,35 @@ type ShopItemResponse struct {
 	Owned     bool   `json:"owned"`
 }
 
+const (
+	storageCollectionShopHistory = "shop_history"
+)
+
 type PurchaseRequest struct {
 	ShopItemID string `json:"shop_item_id"`
+	RequestId  string `json:"request_id,omitempty"` // Client-generated UUID for idempotency
 }
 
 type PurchaseResponse struct {
-	Success bool   `json:"success"`
-	Error   string `json:"error,omitempty"`
+	Success bool           `json:"success"`
+	Error   string         `json:"error,omitempty"`
+	Wallet  map[string]int `json:"wallet,omitempty"` // Post-purchase wallet state for client reconciliation
 }
 
 type PurchaseLootboxRequest struct {
-	Tier string `json:"tier"`
+	Tier      string `json:"tier"`
+	RequestId string `json:"request_id,omitempty"` // Client-generated UUID for idempotency
+}
+
+// PurchaseLogEntry is stored in shop_history collection for audit trail and idempotency.
+type PurchaseLogEntry struct {
+	RequestId   string         `json:"request_id"`
+	ItemId      string         `json:"item_id"`
+	PriceGems   int            `json:"price_gems"`
+	PriceGold   int            `json:"price_gold"`
+	Timestamp   int64          `json:"timestamp"`
+	Success     bool           `json:"success"`
+	WalletAfter map[string]int `json:"wallet_after,omitempty"`
 }
 
 // RpcGetShopCatalog returns the current shop state
@@ -194,7 +212,8 @@ func RpcGetShopCatalog(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 	return string(respBytes), nil
 }
 
-// RpcPurchaseShopItem handles purchasing a shop item atomically
+// RpcPurchaseShopItem handles purchasing a shop item atomically with idempotency.
+// Uses PendingWrites for atomic commit, request_id for dedup, and purchase_log for audit.
 func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 	if !ok {
@@ -204,6 +223,15 @@ func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB,
 	var req PurchaseRequest
 	if err := json.Unmarshal([]byte(payload), &req); err != nil {
 		return "", errors.ErrUnmarshal
+	}
+
+	// ── Idempotency check ────────────────────────────────────────────────
+	if req.RequestId != "" {
+		if cached, err := checkPurchaseLog(ctx, nk, logger, userID, req.RequestId); err == nil && cached != nil {
+			logger.Info("Idempotent hit for request %s — returning cached result", req.RequestId)
+			respBytes, _ := json.Marshal(cached)
+			return string(respBytes), nil
+		}
 	}
 
 	// Find the shop item
@@ -216,24 +244,24 @@ func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB,
 	}
 
 	if item == nil {
-		return "", fmt.Errorf("item not found: %s", req.ShopItemID)
+		return purchaseFail(req.RequestId, userID, nk, logger, "item not found")
 	}
 
 	if item.Type == "lootbox" {
-		return "", fmt.Errorf("use purchase_lootbox RPC for lootboxes")
+		return purchaseFail(req.RequestId, userID, nk, logger, "use purchase_lootbox RPC for lootboxes")
 	}
 
 	// Check ownership
 	ownedItems := getUserOwnedItems(ctx, nk, userID)
 	if isItemOwned(ownedItems, item.Type, item.ItemID) {
-		return "", fmt.Errorf("item already owned")
+		return purchaseFail(req.RequestId, userID, nk, logger, "item already owned")
 	}
 
 	// Check rotation (if applicable)
 	if item.RotationSlot != nil {
 		activeSlots := getActiveRotationSlots()
 		if !isSlotActive(*item.RotationSlot, activeSlots) {
-			return "", fmt.Errorf("item not currently available")
+			return purchaseFail(req.RequestId, userID, nk, logger, "item not currently available")
 		}
 	}
 
@@ -253,17 +281,17 @@ func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB,
 	// Currency deduction
 	if item.Price.Gems > 0 {
 		if wallet["gems"] < int64(item.Price.Gems) {
-			return "", fmt.Errorf("insufficient gems: have %d, need %d", wallet["gems"], item.Price.Gems)
+			return purchaseFail(req.RequestId, userID, nk, logger, "insufficient gems")
 		}
 		pending.AddWalletDeduction(userID, "gems", int64(item.Price.Gems))
 	} else if item.Price.Gold > 0 {
 		if wallet["gold"] < int64(item.Price.Gold) {
-			return "", fmt.Errorf("insufficient gold: have %d, need %d", wallet["gold"], item.Price.Gold)
+			return purchaseFail(req.RequestId, userID, nk, logger, "insufficient gold")
 		}
 		pending.AddWalletDeduction(userID, "gold", int64(item.Price.Gold))
 	}
 
-	// type → storage key. Some types don't pluralize with just "+s" (e.g. class → classs).
+	// type → storage key
 	typeToKey := map[string]string{
 		"background":  storageKeyBackground,
 		"piece_style": storageKeyPieceStyle,
@@ -272,22 +300,39 @@ func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB,
 	}
 	storageKey, ok2 := typeToKey[item.Type]
 	if !ok2 {
-		return "", fmt.Errorf("unknown shop item type: %s", item.Type)
+		return purchaseFail(req.RequestId, userID, nk, logger, "unknown item type")
 	}
 	itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, storageKey, item.ItemID)
 	if err != nil {
-		return "", fmt.Errorf("failed to prepare item grant: %w", err)
+		return purchaseFail(req.RequestId, userID, nk, logger, "failed to grant item")
 	}
 	pending.Merge(itemPending)
 
 	// Commit atomically
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
-		return "", fmt.Errorf("purchase failed: %w", err)
+		logger.Error("Purchase commit failed for user %s item %s: %v", userID, item.ID, err)
+		return "", errors.ErrInternalError
 	}
 
-	logger.Info("User %s purchased shop item %s for %d gems / %d gold", userID, item.ID, item.Price.Gems, item.Price.Gold)
+	// Build post-purchase wallet for client reconciliation
+	updatedWallet := map[string]int{
+		"gold": int(wallet["gold"]),
+		"gems": int(wallet["gems"]),
+	}
+	if item.Price.Gems > 0 {
+		updatedWallet["gems"] -= item.Price.Gems
+	} else if item.Price.Gold > 0 {
+		updatedWallet["gold"] -= item.Price.Gold
+	}
 
-	resp := PurchaseResponse{Success: true}
+	// Audit log
+	if req.RequestId != "" {
+		writePurchaseLog(ctx, nk, userID, req.RequestId, item.ID, item.Price.Gems, item.Price.Gold, true, updatedWallet)
+	}
+
+	logger.Info("User %s purchased shop item %s", userID, item.ID)
+
+	resp := PurchaseResponse{Success: true, Wallet: updatedWallet}
 	respBytes, _ := json.Marshal(resp)
 	return string(respBytes), nil
 }
@@ -551,4 +596,69 @@ func getNextRotationTime() int64 {
 
 	nextRotationHours := (int(hoursSinceEpoch/rotationPeriod) + 1) * int(rotationPeriod)
 	return epoch.Add(time.Duration(nextRotationHours) * time.Hour).UnixMilli()
+}
+
+// ── Purchase audit & idempotency helpers ─────────────────────────────────────
+
+// checkPurchaseLog reads a previously processed purchase from storage.
+// Returns the cached PurchaseResponse if found, nil if not.
+func checkPurchaseLog(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID, requestId string) (*PurchaseResponse, error) {
+	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
+		Collection: storageCollectionShopHistory,
+		Key:        requestId,
+		UserID:     userID,
+	}})
+	if err != nil || len(objects) == 0 {
+		return nil, err
+	}
+
+	var entry PurchaseLogEntry
+	if err := json.Unmarshal([]byte(objects[0].Value), &entry); err != nil {
+		return nil, err
+	}
+
+	if !entry.Success {
+		return nil, fmt.Errorf("cached purchase was a failure")
+	}
+
+	return &PurchaseResponse{
+		Success: true,
+		Wallet:  entry.WalletAfter,
+	}, nil
+}
+
+// writePurchaseLog stores a purchase record for audit trail and idempotency.
+func writePurchaseLog(ctx context.Context, nk runtime.NakamaModule, userID, requestId, itemId string, priceGems, priceGold int, success bool, wallet map[string]int) {
+	entry := PurchaseLogEntry{
+		RequestId:   requestId,
+		ItemId:      itemId,
+		PriceGems:   priceGems,
+		PriceGold:   priceGold,
+		Timestamp:   time.Now().UnixMilli(),
+		Success:     success,
+		WalletAfter: wallet,
+	}
+
+	entryBytes, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+
+	// Non-persistent (permission write = owner only, no read for others)
+	_, _ = nk.StorageWrite(ctx, []*runtime.StorageWrite{{
+		Collection:      storageCollectionShopHistory,
+		Key:             requestId,
+		UserID:          userID,
+		Value:           string(entryBytes),
+		PermissionRead:  0, // Owner only
+		PermissionWrite: 0, // Owner only
+	}})
+}
+
+// purchaseFail returns an error response and writes a failed audit log if requestId is present.
+func purchaseFail(requestId, userID string, nk runtime.NakamaModule, logger runtime.Logger, reason string) (string, error) {
+	if requestId != "" {
+		writePurchaseLog(context.Background(), nk, userID, requestId, "", 0, 0, false, nil)
+	}
+	return "", fmt.Errorf("%s", reason)
 }

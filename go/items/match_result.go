@@ -20,9 +20,9 @@ const (
 )
 
 type ActiveMatch struct {
-	MatchID       string `json:"match_id"`
-	StartTime     int64  `json:"start_time"`
-	OpponentID    string `json:"opponent_id,omitempty"`
+	MatchID    string `json:"match_id"`
+	StartTime  int64  `json:"start_time"`
+	OpponentID string `json:"opponent_id,omitempty"`
 }
 
 // MatchResultRecord stores a player's claimed result for consensus
@@ -58,7 +58,7 @@ func RpcNotifyMatchStart(ctx context.Context, logger runtime.Logger, db *sql.DB,
 
 	// Unconditionally overwrite any existing active match lock.
 	// This gracefully handles players abandoning a match mid-game and starting a new one.
-	// Since we record a fresh StartTime, the player must still satisfy minMatchDurationMs 
+	// Since we record a fresh StartTime, the player must still satisfy minMatchDurationMs
 	// for the new match, ensuring security is preserved.
 
 	activeMatch := ActiveMatch{
@@ -113,7 +113,6 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		logger.Info("Returning cached reward payload for match %s user %s", req.MatchID, userID)
 		return cacheObj[0].Value, nil
 	}
-
 
 	// Validate round history (logging + self-healing only; not a hard rejection gate).
 	validateRounds(ctx, nk, &req, userID, logger)
@@ -484,10 +483,10 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	}
 
 	if willExchange {
-		// Calculate the exact delta needed to exchange the threshold tokens. 
+		// Calculate the exact delta needed to exchange the threshold tokens.
 		// If tokensEarned > 0, we must credit them simultaneously.
 		walletDelta := int64(tokensEarned) - int64(cfg.TokenExchangeThresh)
-		
+
 		pending.AddWalletUpdate(userID, map[string]int64{
 			walletKeyRoundTokens: walletDelta,
 			walletKeyDropsLeft:   -1,
@@ -716,10 +715,11 @@ func computeTokensEarned(req *MatchResultRequest, isSolo bool, cfg *EconomyConfi
 			if r.RoundNumber < 1 || r.RoundNumber > cfg.TokenRoundCap {
 				continue // rounds outside the earning window contribute nothing
 			}
+			if !r.Survived {
+				continue // died — no tokens
+			}
 			if isSolo {
-				if r.PlayerWon {
-					earned += cfg.TokensPerSoloRound
-				}
+				earned += cfg.TokensPerSoloRound
 			} else if r.PlayerWon {
 				earned += cfg.TokensPerRoundWin
 			} else {
@@ -846,6 +846,7 @@ func GetLootboxConfig() *LootboxConfig {
 	}
 	return lootboxConfig
 }
+
 // PrepareCreateLootbox prepares a lootbox creation without committing.
 // Returns the lootbox and the storage write to be committed later.
 func PrepareCreateLootbox(userID string, tier string) (*Lootbox, *runtime.StorageWrite, error) {

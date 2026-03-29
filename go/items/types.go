@@ -42,10 +42,10 @@ type PieceStyle struct {
 }
 
 type LevelTree struct {
-	MaxLevel            int   `json:"max_level"`
-	BaseXP              int   `json:"base_xp"`
-	LevelThresholds     []int `json:"level_thresholds"`
-	RewardedLevels      []int `json:"rewarded_levels"`
+	MaxLevel            int    `json:"max_level"`
+	BaseXP              int    `json:"base_xp"`
+	LevelThresholds     []int  `json:"level_thresholds"`
+	RewardedLevels      []int  `json:"rewarded_levels"`
 	UpgradeCostCurrency string `json:"upgrade_cost_currency"`
 	CostPerUpgrade      int    `json:"cost_per_upgrade"`
 	XpPerUpgrade        int    `json:"xp_per_upgrade"`
@@ -84,10 +84,10 @@ type ItemProgression struct {
 	EquippedAbility int `json:"ea"`
 	EquippedSprite  int `json:"es"`
 
-	UnlockedAbilityIndices  ClaimedIndices `json:"au"`
-	UnlockedSpriteIndices  []uint32 `json:"su"`
-	BackgroundsUnlocked    int      `json:"bu"`
-	PieceStylesUnlocked    int      `json:"pu"`
+	UnlockedAbilityIndices ClaimedIndices `json:"au"`
+	UnlockedSpriteIndices  []uint32       `json:"su"`
+	BackgroundsUnlocked    int            `json:"bu"`
+	PieceStylesUnlocked    int            `json:"pu"`
 
 	UnclaimedRewards []int `json:"ur,omitempty"`
 
@@ -108,18 +108,18 @@ func (c *ClaimedIndices) UnmarshalJSON(data []byte) error {
 		*c = ClaimedIndices(arr)
 		return nil
 	}
-	
+
 	// Try int (old format) — migrate
 	var n int
 	if err := json.Unmarshal(data, &n); err != nil {
 		return fmt.Errorf("ClaimedIndices: expected int or array, got %s", string(data))
 	}
-	
+
 	if n <= 0 {
 		*c = ClaimedIndices{}
 		return nil
 	}
-	
+
 	result := make([]int32, n)
 	for i := range result {
 		result[i] = int32(i)
@@ -142,9 +142,6 @@ type AbilityEquipRequest struct {
 	ItemID    uint32 `json:"id"`
 	AbilityID uint32 `json:"ability_id"`
 }
-
-
-
 
 type EquipmentResponse struct {
 	Pet        uint32 `json:"pet"`
@@ -184,6 +181,7 @@ type PetTreatRequest struct {
 type RoundResult struct {
 	RoundNumber int   `json:"round"`
 	PlayerWon   bool  `json:"player_won"`
+	Survived    bool  `json:"survived"`    // true if player health > 0 at round end
 	DurationMs  int64 `json:"duration_ms"` // milliseconds; matches RoundRecord.DurationMs for direct comparison
 }
 
@@ -200,4 +198,3 @@ type MatchResultRequest struct {
 	RoundsLost       int           `json:"rounds_lost"`
 	Rounds           []RoundResult `json:"rounds"` // Per-round history; server validates plausibility
 }
-
