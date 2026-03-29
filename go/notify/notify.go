@@ -80,6 +80,7 @@ type ProgressionDelta struct {
 	NewPlayerLevel *int               `json:"new_player_level,omitempty"`
 	NewPetLevel    *int               `json:"new_pet_level,omitempty"`
 	NewClassLevel  *int               `json:"new_class_level,omitempty"`
+	NewUnclaimedRewards []int         `json:"new_unclaimed_rewards,omitempty"`
 	Unlocks        []ProgressionUnlock `json:"unlocks,omitempty"`
 }
 

@@ -480,6 +480,10 @@ func PrepareExperience(ctx context.Context, nk runtime.NakamaModule, logger runt
 		case storageKeyClass:
 			pending.Payload.Progression.NewClassLevel = notify.IntPtr(resultLevel)
 		}
+
+		if len(prog.UnclaimedRewards) > 0 {
+			pending.Payload.Progression.NewUnclaimedRewards = prog.UnclaimedRewards
+		}
 	} else if prog != nil {
 		// Even if no level-up, still report XP granted
 		if pending.Payload == nil {

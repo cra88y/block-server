@@ -84,6 +84,10 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
+	if err := initializer.RegisterRpc("claim_all_progression_rewards", items.RpcClaimAllProgressionRewards); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
 	if err := initializer.RegisterRpc("equip_class", items.RpcEquipClass); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err

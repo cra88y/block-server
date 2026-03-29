@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"block-server/errors"
 	"block-server/notify"
@@ -720,6 +721,33 @@ func RpcClaimProgressionReward(ctx context.Context, logger runtime.Logger, db *s
 	if err != nil {
 		return "", errors.ErrMarshal
 	}
+
+	logger.WithFields(map[string]interface{}{
+		"user":     userID,
+		"itemType": req.ItemType,
+		"itemID":   req.ItemID,
+		"level":    req.Level,
+		"action":   "claim_progression_reward",
+	}).Info("Progression reward claimed successfully")
+
+	// Emit directly into the persistent analytics pipeline without network overhead
+	telemetryEvent := TelemetryEvent{
+		EventType: "progression_claimed",
+		Timestamp: float64(time.Now().Unix()),
+		Data: map[string]interface{}{
+			"itemType": req.ItemType,
+			"itemId":   req.ItemID,
+			"level":    req.Level,
+			"reward":   result,
+		},
+	}
+	
+	// Fire and forget telemetry event via background context to unblock UI thread instantly
+	go func() {
+		if telErr := processTelemetryEvent(context.Background(), logger, db, nk, userID, telemetryEvent); telErr != nil {
+			logger.Warn("Failed to record progression telemetry: %v", telErr)
+		}
+	}()
 
 	return string(respBytes), nil
 }
