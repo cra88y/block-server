@@ -156,6 +156,10 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
+	if err := initializer.RegisterRpc("revoke_iap_purchase", items.RpcRevokeIAPPurchase); err != nil {
+		logger.Error("Unable to register revoke_iap_purchase: %v", err)
+		return err
+	}
 	if err := initializer.RegisterRpc("submit_telemetry", items.RpcSubmitTelemetry); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err

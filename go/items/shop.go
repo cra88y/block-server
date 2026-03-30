@@ -78,8 +78,10 @@ type IAPProduct struct {
 
 // ValidateIAPPayload is the client request for IAP receipt validation.
 type ValidateIAPPayload struct {
-	ProductID         string `json:"product_id"`
-	JwsRepresentation string `json:"jws"`
+	ProductID             string `json:"product_id"`
+	JwsRepresentation     string `json:"jws"`
+	TransactionId         string `json:"transaction_id"`
+	OriginalTransactionId string `json:"original_transaction_id"`
 }
 
 var shopConfig *ShopConfig
@@ -116,8 +118,20 @@ type ShopItemResponse struct {
 }
 
 const (
-	storageCollectionShopHistory = "shop_history"
+	storageCollectionShopHistory  = "shop_history"
+	StorageCollectionIAPPurchases = "iap_purchases"
 )
+
+// IAPPurchaseGrant is stored for dedup and revocation tracking.
+type IAPPurchaseGrant struct {
+	OriginalTransactionId string `json:"original_transaction_id"`
+	ProductId             string `json:"product_id"`
+	UserId                string `json:"user_id"`
+	Jws                   string `json:"jws"`
+	Status                string `json:"status"` // "validated" | "revoked"
+	GrantedAt             int64  `json:"granted_at"`
+	RevokedAt             *int64 `json:"revoked_at,omitempty"`
+}
 
 type PurchaseRequest struct {
 	ShopItemID string `json:"shop_item_id"`
@@ -410,23 +424,43 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 	// 2. Parse payload
 	var req ValidateIAPPayload
 	if err := json.Unmarshal([]byte(payload), &req); err != nil {
-		logger.Error("Failed to unmarshal IAP validation payload: %v", err)
+		logger.Error("[IAP] Failed to unmarshal payload: %v", err)
 		return "", errors.ErrInvalidInput
 	}
 	if req.ProductID == "" || req.JwsRepresentation == "" {
 		return "", errors.ErrInvalidInput
 	}
 
+	// Structured log prefix for correlation
+	logPrefix := fmt.Sprintf("[IAP] tx=%s origTx=%s user=%s product=%s",
+		req.TransactionId, req.OriginalTransactionId, userID, req.ProductID)
+
+	// 2b. Dedup: if originalTransactionId is present, check if already granted
+	if req.OriginalTransactionId != "" {
+		objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
+			Collection: StorageCollectionIAPPurchases,
+			Key:        req.OriginalTransactionId,
+			UserID:     userID,
+		}})
+		if err == nil && len(objects) > 0 {
+			var existing IAPPurchaseGrant
+			if jsonErr := json.Unmarshal([]byte(objects[0].Value), &existing); jsonErr == nil && existing.Status == "validated" {
+				logger.Info("%s Dedup hit — returning success", logPrefix)
+				return `{"success":true}`, nil
+			}
+		}
+	}
+
 	// 3. Validate receipt with Apple via Nakama
 	// persist=true — Nakama stores validated purchases in its DB for idempotency
 	resp, err := nk.PurchaseValidateApple(ctx, userID, req.JwsRepresentation, true)
 	if err != nil {
-		logger.Error("Apple receipt validation failed: %v", err)
+		logger.Error("%s Apple validation failed: %v", logPrefix, err)
 		return "", errors.ErrInternalError
 	}
 
 	if len(resp.ValidatedPurchases) == 0 {
-		logger.Warn("No validated purchases in Apple response for product: %s", req.ProductID)
+		logger.Warn("%s No validated purchases in Apple response", logPrefix)
 		return "", errors.ErrInvalidInput
 	}
 
@@ -439,19 +473,19 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		}
 	}
 	if purchase == nil {
-		logger.Warn("Product %s not found in validated purchases for user %s", req.ProductID, userID)
+		logger.Warn("%s Product not found in Apple response", logPrefix)
 		return "", errors.ErrInvalidInput
 	}
 
 	// 5. Idempotency — if Nakama already saw this transaction, skip grant
 	if purchase.SeenBefore {
-		logger.Info("Duplicate IAP transaction %s for product %s — skipping grant", purchase.TransactionId, req.ProductID)
+		logger.Info("%s Nakama seen_before — skipping grant", logPrefix)
 		return `{"success":true}`, nil
 	}
 
 	// 6. Check for refunds
 	if purchase.RefundTime != nil && !purchase.RefundTime.AsTime().IsZero() {
-		logger.Warn("Refunded IAP transaction %s for product %s — skipping grant", purchase.TransactionId, req.ProductID)
+		logger.Warn("%s Refunded — skipping grant", logPrefix)
 		return "", errors.ErrInvalidInput
 	}
 
@@ -466,7 +500,7 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		}
 	}
 	if !productFound || gemAmount <= 0 {
-		logger.Error("Unknown IAP product or zero gems: %s", req.ProductID)
+		logger.Error("%s Unknown product or zero gems", logPrefix)
 		return "", errors.ErrInvalidInput
 	}
 
@@ -475,19 +509,44 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 	pending.AddWalletUpdate(userID, map[string]int64{"gems": int64(gemAmount)})
 
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
-		logger.Error("Failed to commit IAP gem grant for user %s: %v", userID, err)
+		logger.Error("%s Failed to commit gem grant: %v", logPrefix, err)
 		return "", errors.ErrInternalError
 	}
 
-	// 9. Send CodeReward notification (server controls the payout)
+	// 9. Persist grant record for dedup + revocation tracking
+	if req.OriginalTransactionId != "" {
+		grant := IAPPurchaseGrant{
+			OriginalTransactionId: req.OriginalTransactionId,
+			ProductId:             req.ProductID,
+			UserId:                userID,
+			Jws:                   req.JwsRepresentation,
+			Status:                "validated",
+			GrantedAt:             time.Now().UnixMilli(),
+		}
+		grantBytes, _ := json.Marshal(grant)
+		_, writeErr := nk.StorageWrite(ctx, []*runtime.StorageWrite{{
+			Collection:      StorageCollectionIAPPurchases,
+			Key:             req.OriginalTransactionId,
+			UserID:          userID,
+			Value:           string(grantBytes),
+			PermissionRead:  0,
+			PermissionWrite: 0,
+		}})
+		if writeErr != nil {
+			logger.Warn("%s Failed to persist grant record: %v", logPrefix, writeErr)
+			// Non-fatal — gems already granted
+		}
+	}
+
+	// 10. Send CodeReward notification (server controls the payout)
 	reward := notify.NewRewardPayload("iap")
 	reward.Wallet = &notify.WalletDelta{Gems: gemAmount}
 	if err := notify.SendReward(ctx, nk, userID, reward); err != nil {
-		logger.Error("Failed to send IAP reward notification: %v", err)
-		// Non-fatal — gems already granted, just log
+		logger.Error("%s Failed to send reward notification: %v", logPrefix, err)
+		// Non-fatal — gems already granted
 	}
 
-	logger.Info("IAP validated: user=%s product=%s gems=%d txn=%s", userID, req.ProductID, gemAmount, purchase.TransactionId)
+	logger.Info("%s Validated: gems=%d txn=%s", logPrefix, gemAmount, purchase.TransactionId)
 	return `{"success":true}`, nil
 }
 
@@ -661,4 +720,69 @@ func purchaseFail(requestId, userID string, nk runtime.NakamaModule, logger runt
 		writePurchaseLog(context.Background(), nk, userID, requestId, "", 0, 0, false, nil)
 	}
 	return "", fmt.Errorf("%s", reason)
+}
+
+// ── Revocation RPC ───────────────────────────────────────────────────────────
+
+// RpcRevokeIAPPurchase handles server-side revocation of a previously validated IAP.
+// Called by Apple App Store Server Notifications or manual admin action.
+func RpcRevokeIAPPurchase(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
+	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
+	if !ok || userID == "" {
+		return "", errors.ErrNoUserIdFound
+	}
+
+	var req struct {
+		OriginalTransactionId string `json:"original_transaction_id"`
+		RevocationReason      string `json:"revocation_reason"`
+	}
+	if err := json.Unmarshal([]byte(payload), &req); err != nil {
+		return "", fmt.Errorf("invalid payload: %w", err)
+	}
+
+	logPrefix := fmt.Sprintf("[IAP-REVOKE] origTx=%s user=%s", req.OriginalTransactionId, userID)
+
+	// Read grant record
+	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
+		Collection: StorageCollectionIAPPurchases,
+		Key:        req.OriginalTransactionId,
+		UserID:     userID,
+	}})
+	if err != nil || len(objects) == 0 {
+		logger.Warn("%s Unknown grant — no-op", logPrefix)
+		return `{"success":true}`, nil // Not an error
+	}
+
+	var grant IAPPurchaseGrant
+	if err := json.Unmarshal([]byte(objects[0].Value), &grant); err != nil {
+		return "", fmt.Errorf("corrupt grant record: %w", err)
+	}
+
+	if grant.Status == "revoked" {
+		logger.Info("%s Already revoked", logPrefix)
+		return `{"success":true}`, nil // Idempotent
+	}
+
+	// Update grant record
+	now := time.Now().UnixMilli()
+	grant.Status = "revoked"
+	grant.RevokedAt = &now
+
+	grantBytes, _ := json.Marshal(grant)
+	_, writeErr := nk.StorageWrite(ctx, []*runtime.StorageWrite{{
+		Collection:      StorageCollectionIAPPurchases,
+		Key:             req.OriginalTransactionId,
+		UserID:          userID,
+		Value:           string(grantBytes),
+		PermissionRead:  0,
+		PermissionWrite: 0,
+	}})
+	if writeErr != nil {
+		logger.Error("%s Failed to write revocation: %v", logPrefix, writeErr)
+	}
+
+	// TODO: Compute balance adjustment from grant.ProductId → gem mapping
+	// For now, just log the revocation event
+	logger.Info("%s Revoked: reason=%s", logPrefix, req.RevocationReason)
+	return `{"success":true}`, nil
 }
