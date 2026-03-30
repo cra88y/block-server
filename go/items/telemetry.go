@@ -23,7 +23,8 @@ var validEventTypes = map[string]bool{
 	"piece_placed":      true,
 	"round_won":         true,
 	"round_lost":        true,
-	"progression_claimed": true,
+	"progression_claimed":     true,
+	"progression_claimed_all": true,
 }
 
 // INVARIANT: 30-day retention balances analytics value vs storage cost

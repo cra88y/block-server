@@ -399,13 +399,13 @@ func RpcUsePetTreat(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 	newLevel, pending, err := PrepareExperience(ctx, nk, logger, userID, storageKeyPet, req.PetID, xpAmount)
 	if err != nil {
 		logger.WithFields(map[string]interface{}{
-			"user":   userID,
-			"petID":  req.PetID,
-			"xp":     xpAmount,
-			"cost":   costAmount,
+			"user":     userID,
+			"petID":    req.PetID,
+			"xp":       xpAmount,
+			"cost":     costAmount,
 			"currency": costCurrency,
-			"error":  err.Error(),
-			"action": "use_pet_treat",
+			"error":    err.Error(),
+			"action":   "use_pet_treat",
 		}).Error("Failed to prepare pet XP")
 		return "", errors.ErrPrepareFailed
 	}
@@ -552,12 +552,12 @@ func RpcUseGoldForClassXP(ctx context.Context, logger runtime.Logger, db *sql.DB
 	// Commit all writes atomically via MultiUpdate
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
 		logger.WithFields(map[string]interface{}{
-			"user":    userID,
-			"classID": req.ClassID,
-			"cost":    costAmount,
+			"user":     userID,
+			"classID":  req.ClassID,
+			"cost":     costAmount,
 			"currency": costCurrency,
-			"error":   err.Error(),
-			"action":  "use_gold_for_class_xp",
+			"error":    err.Error(),
+			"action":   "use_gold_for_class_xp",
 		}).Error("Failed to commit class XP transaction")
 		return "", errors.ErrTransactionFailed
 	}
@@ -618,10 +618,10 @@ func RpcClaimProgressionReward(ctx context.Context, logger runtime.Logger, db *s
 
 	if !ValidateItemExists(req.ItemType, req.ItemID) {
 		logger.WithFields(map[string]interface{}{
-			"user":   userID,
+			"user":     userID,
 			"itemType": req.ItemType,
-			"itemID": req.ItemID,
-			"action": "claim_progression_reward",
+			"itemID":   req.ItemID,
+			"action":   "claim_progression_reward",
 		}).Error("Invalid item ID or type")
 		return "", errors.ErrInvalidItemID
 	}
@@ -696,7 +696,7 @@ func RpcClaimProgressionReward(ctx context.Context, logger runtime.Logger, db *s
 		}).Error("Failed to prepare level rewards")
 		return "", errors.ErrPrepareFailed
 	}
-	
+
 	pending.Merge(levelRewards)
 
 	// Commit everything atomically
@@ -741,11 +741,130 @@ func RpcClaimProgressionReward(ctx context.Context, logger runtime.Logger, db *s
 			"reward":   result,
 		},
 	}
-	
+
 	// Fire and forget telemetry event via background context to unblock UI thread instantly
 	go func() {
 		if telErr := processTelemetryEvent(context.Background(), logger, db, nk, userID, telemetryEvent); telErr != nil {
 			logger.Warn("Failed to record progression telemetry: %v", telErr)
+		}
+	}()
+
+	return string(respBytes), nil
+}
+
+// RpcClaimAllProgressionRewards claims all unclaimed rewards for a given item.
+func RpcClaimAllProgressionRewards(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
+		logger.Error("No user ID found in context for claim all rewards")
+		return "", errors.ErrNoUserIdFound
+	}
+
+	var req ClaimRewardRequest
+	if err := json.Unmarshal([]byte(payload), &req); err != nil {
+		logger.Error("Failed to unmarshal claim all rewards request: %v", err)
+		return "", errors.ErrUnmarshal
+	}
+
+	if !ValidateItemExists(req.ItemType, req.ItemID) {
+		return "", errors.ErrInvalidItemID
+	}
+
+	owned, err := IsItemOwned(ctx, nk, userID, req.ItemID, req.ItemType)
+	if err != nil {
+		return "", errors.ErrFailedCheckOwnership
+	}
+	if !owned {
+		return "", errors.ErrItemNotOwnedForbidden
+	}
+
+	treeName, err := GetLevelTreeName(req.ItemType, req.ItemID)
+	if err != nil {
+		return "", errors.ErrInvalidConfig
+	}
+
+	var progressionKey string
+	switch req.ItemType {
+	case storageKeyPet:
+		progressionKey = ProgressionKeyPet
+	case storageKeyClass:
+		progressionKey = ProgressionKeyClass
+	default:
+		return "", errors.ErrInvalidItemType
+	}
+
+	pending := NewPendingWrites()
+	var levelsToClaim []int
+
+	// Prepare progression update to claim all unclaimed rewards
+	_, progWrite, err := PrepareProgressionUpdate(ctx, nk, logger, userID, progressionKey, req.ItemID, func(prog *ItemProgression) error {
+		if len(prog.UnclaimedRewards) == 0 {
+			return errors.ErrRewardAlreadyClaimed
+		}
+		// Safely copy levels out of closure
+		levelsToClaim = append([]int(nil), prog.UnclaimedRewards...)
+		prog.UnclaimedRewards = []int{}
+		return nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	if progWrite != nil {
+		pending.AddStorageWrite(progWrite)
+	}
+
+	if len(levelsToClaim) == 0 {
+		return "", errors.ErrRewardAlreadyClaimed
+	}
+
+	// Prepare rewards for all levels safely OUTSIDE the synchronous DB lock closure
+	for _, level := range levelsToClaim {
+		levelRewards, err := PrepareLevelRewards(ctx, nk, logger, userID, treeName, level, req.ItemType, req.ItemID)
+		if err != nil {
+			logger.Error("Failed to prepare level rewards: %v", err)
+			return "", err
+		}
+		pending.Merge(levelRewards)
+	}
+
+	// Commit atomically
+	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
+		logger.Error("Failed to commit claim all rewards: %v", err)
+		return "", errors.ErrTransactionFailed
+	}
+
+	result := pending.Payload
+	if result == nil {
+		result = notify.NewRewardPayload("claim_all_rewards")
+	}
+	result.Source = "claim_all_rewards"
+	result.ReasonKey = "reward.progression.all_claimed"
+
+	respBytes, err := json.Marshal(result)
+	if err != nil {
+		return "", errors.ErrMarshal
+	}
+
+	logger.Info("Claimed %d progression rewards for user=%s itemType=%s itemID=%d", len(levelsToClaim), userID, req.ItemType, req.ItemID)
+
+	// Emit directly into the persistent analytics pipeline without network overhead
+	telemetryEvent := TelemetryEvent{
+		EventType: "progression_claimed_all",
+		Timestamp: float64(time.Now().Unix()),
+		Data: map[string]interface{}{
+			"itemType":    req.ItemType,
+			"itemId":      req.ItemID,
+			"levelsCount": len(levelsToClaim),
+			"reward":      result,
+		},
+	}
+	
+	// Fire and forget telemetry event via background context to unblock UI thread instantly
+	go func() {
+		if telErr := processTelemetryEvent(context.Background(), logger, db, nk, userID, telemetryEvent); telErr != nil {
+			logger.Warn("Failed to record batch progression telemetry: %v", telErr)
 		}
 	}()
 
