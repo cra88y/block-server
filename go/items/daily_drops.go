@@ -200,31 +200,7 @@ func canUserClaimDailyDrops(d dailyDrops) bool {
 	return lastClaimTime.Before(midnightUTC)
 }
 
-// consumeDropTicket deducts one slot. Unused — token-exchange pulls slots inside processMatchRewards. Remove in next cleanup.
-func consumeDropTicket(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) (bool, error) {
-	account, err := nk.AccountGetId(ctx, userID)
-	if err != nil {
-		return false, err
-	}
 
-	var wallet map[string]int64
-	if err := json.Unmarshal([]byte(account.Wallet), &wallet); err != nil {
-		return false, err
-	}
-
-	dropsLeft := wallet[walletKeyDropsLeft]
-	if dropsLeft <= 0 {
-		return false, nil
-	}
-
-	changeset := map[string]int64{walletKeyDropsLeft: -1}
-	if _, _, err := nk.WalletUpdate(ctx, userID, changeset, nil, false); err != nil {
-		return false, err
-	}
-
-	logger.Info("User %s consumed drop ticket. Remaining: %d", userID, dropsLeft-1)
-	return true, nil
-}
 
 const storageKeyDailyMatches = "daily_matches"
 

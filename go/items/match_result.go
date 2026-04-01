@@ -132,7 +132,7 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	}
 
 	// Consensus check (unified path: solo short-circuits in resolveMatchConsensus)
-	consensusResult, err := resolveMatchConsensus(ctx, nk, logger, userID, activeMatch.OpponentID, req.MatchID, req.Won, req.FinalScore)
+	consensusResult, err := resolveMatchConsensus(ctx, nk, logger, userID, activeMatch.OpponentID, req.MatchID, req.Won, req.FinalScore, req.OpponentForfeited)
 	if err != nil {
 		logger.Warn("Consensus check failed for user %s: %v", userID, err)
 		return "", err
@@ -167,11 +167,12 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		// NOTE: req.Won is set to false below via req.Won = actualWon, but req.RoundsWon is NOT
 		// zeroed — the player still earns tokens from their round history in a conflict.
 
-	case "ok":
-		// Second submitter: grant ourselves full rewards, then push deferred gold to first submitter
-		if activeMatch.OpponentID != "" {
+	case "ok", "forfeit_win":
+		// Second submitter (or unilateral forfeit winner): grant ourselves full rewards
+		actualWon = req.Won
+		if consensusResult == "ok" && activeMatch.OpponentID != "" {
 			opponentIDForDeferred = activeMatch.OpponentID
-			// Opponent won if they claimed win AND we didn't (only one can win)
+			// Only push deferred if this was a normal "ok" consensus
 			opponentWonForDeferred = !req.Won
 		}
 	}
@@ -191,6 +192,52 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 
 	// Process rewards atomically, then clean up active match
 	result, err := processMatchRewards(ctx, nk, logger, userID, &req, isSolo)
+	if err == nil {
+		// Emit authoritative telemetry metric (match_completed)
+		go func() {
+			winnerID := activeMatch.OpponentID
+			loserID := userID
+			winnerScore := req.OpponentScore
+			loserScore := req.FinalScore
+
+			if actualWon {
+				winnerID = userID
+				loserID = activeMatch.OpponentID
+				winnerScore = req.FinalScore
+				loserScore = req.OpponentScore
+			}
+
+			gameMode := "1v1"
+			if isSolo {
+				loserID = "unknown"
+				gameMode = "solo"
+			}
+
+			telemetryData, _ := json.Marshal(map[string]interface{}{
+				"$type":           "MatchCompletedMetric",
+				"MatchId":         req.MatchID,
+				"WinnerId":        winnerID,
+				"LoserId":         loserID,
+				"WinnerScore":     winnerScore,
+				"LoserScore":      loserScore,
+				"DurationSeconds": float64(req.MatchDurationSec),
+				"GameMode":        gameMode,
+				"RoundsWon":       req.RoundsWon,
+				"RoundsLost":      req.RoundsLost,
+			})
+
+			telemetryEvent := TelemetryEvent{
+				EventType: "match_completed",
+				Timestamp: float64(time.Now().UnixNano()) / 1e9,
+				Data:      string(telemetryData),
+			}
+
+			if telErr := processTelemetryEvent(context.Background(), logger, db, nk, userID, telemetryEvent); telErr != nil {
+				logger.Warn("Failed to record match_completed telemetry: %v", telErr)
+			}
+		}()
+	}
+
 	if err != nil {
 		logger.Error("Failed to process match rewards: %v", err)
 		return "", err
@@ -309,9 +356,10 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 //
 //	pending  — first submitter (opponent not yet written). Caller grants participation-only.
 //	ok       — second submitter. Caller grants full rewards + deferred bonus to first submitter.
+//	forfeit_win — opponent abandoned. Caller grants full rewards immediately without waiting.
 //	resolved — late arrival (opponent already set Resolved=true on their record). Participation-only.
 //	conflict — both claimed win. Both downgraded.
-func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, opponentID string, matchID string, claimedWin bool, score int) (string, error) {
+func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, opponentID string, matchID string, claimedWin bool, score int, opponentForfeited bool) (string, error) {
 	if opponentID == "" {
 		return "ok", nil // Solo — no consensus needed, caller handles isSolo reward reduction
 	}
@@ -336,6 +384,22 @@ func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger 
 	}})
 	if err != nil {
 		return "", err
+	}
+
+	// If opponent forfeited, bypass waiting for their claim and resolve unilaterally
+	if opponentForfeited && claimedWin {
+		logger.Info("Match %s: User %s claims victory via opponent forfeit. Bypassing pending state.", matchID, userID)
+		myRecord.Resolved = true
+		myRecordBytes, _ = json.Marshal(myRecord)
+		nk.StorageWrite(ctx, []*runtime.StorageWrite{{
+			Collection:      storageCollectionResults,
+			Key:             matchID + "_" + userID,
+			UserID:          userID,
+			Value:           string(myRecordBytes),
+			PermissionRead:  0,
+			PermissionWrite: 0,
+		}})
+		return "forfeit_win", nil
 	}
 
 	// Step 2: Read opponent's claim AFTER writing ours
@@ -527,11 +591,18 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		finalDrops--
 		finalTokens = int64(cfg.TokenExchangeThresh)
 	}
+	// In the pre-bank path tokensEarned==0 (no new grant was made here), but the
+	// client end-screen needs the actual delta earned this match to animate correctly.
+	// Use tokensBanked (already committed by report_round_result RPCs) as the display value.
+	effectiveEarned := tokensEarned
+	if tokensBanked > 0 {
+		effectiveEarned = tokensBanked
+	}
 	result.Meta = &notify.RewardMeta{
 		DailyMatches:   notify.IntPtr(matchesToday),
 		DropsRemaining: notify.IntPtr(int(finalDrops)),
 		RoundTokens:    notify.IntPtr(int(finalTokens)),
-		TokensEarned:   notify.IntPtr(int(tokensEarned)),
+		TokensEarned:   notify.IntPtr(effectiveEarned),
 	}
 
 	return result, nil

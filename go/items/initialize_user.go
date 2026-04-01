@@ -49,7 +49,7 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		"gold":      500,
 		"gems":      100,
 		"treats":    1,
-		"dropsLeft": 0,
+		"dropsLeft": 5,
 	}
 	pending.AddWalletUpdate(userID, walletChangeset)
 

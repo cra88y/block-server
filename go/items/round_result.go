@@ -24,7 +24,8 @@ type RoundRecord struct {
 	PlayerWon     bool   `json:"player_won"`
 	TokensGranted int    `json:"tokens_granted"` // what was actually banked; returned on idempotent replay
 	DurationMs    int64  `json:"duration_ms"`    // anti-cheat telemetry
-	Score         int    `json:"score"`          // anti-cheat telemetry
+	Score         int    `json:"score"`          // anti-cheat height telemetry
+	PiecesPlaced  int    `json:"pieces_placed"`  // anti-cheat pieces telemetry
 	GrantedAt     int64  `json:"granted_at"`     // unix ms, audit trail
 }
 
@@ -44,8 +45,9 @@ type RoundResultRequest struct {
 	RoundNumber int    `json:"round_number"` // 1-indexed; rounds outside TokenRoundCap earn 0
 	PlayerWon   bool   `json:"player_won"`   // 1v1 only: true if player won the round
 	Survived    bool   `json:"survived"`     // true if player's health > 0 at round end
-	DurationMs  int64  `json:"duration_ms"`  // used for min duration check
-	Score       int    `json:"score"`        // telemetry
+	DurationMs   int64  `json:"duration_ms"`   // used for min duration check
+	Score        int    `json:"score"`         // height telemetry
+	PiecesPlaced int    `json:"pieces_placed"` // pieces telemetry
 }
 
 // RoundResultResponse is returned to the client to enable display reconciliation.
@@ -159,6 +161,7 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		TokensGranted: tokensGranted,
 		DurationMs:    req.DurationMs,
 		Score:         req.Score,
+		PiecesPlaced:  req.PiecesPlaced,
 		GrantedAt:     time.Now().UnixMilli(),
 	}
 	recordValue, err := json.Marshal(record)
