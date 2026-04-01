@@ -13,6 +13,9 @@ import (
 )
 
 // INVARIANT: Whitelist prevents malformed events from corrupting stats or filling storage
+// INVARIANT: These strings are the canonical wire-protocol values.
+// Client-side constants in TelemetryEventTypes.cs MUST match this list exactly.
+// Adding a new metric type = add here AND in TelemetryEventTypes.cs.
 var validEventTypes = map[string]bool{
 	"match_completed":         true,
 	"match_abandoned":         true,
@@ -27,16 +30,22 @@ var validEventTypes = map[string]bool{
 	"round_lost":              true,
 	"progression_claimed":     true,
 	"progression_claimed_all": true,
+	"latency":                 true, // LatencyMetric
+	"state_hash":              true, // StateHashMetric
+	"social_event":            true, // SocialEventMetric
 }
 
 // INVARIANT: 30-day retention balances analytics value vs storage cost
 const retentionDays = 30
 
-// INVARIANT: Timestamp is client-provided for ordering, not server-generated
+// INVARIANT: Timestamp is client-provided for ordering, not server-generated.
+// Data is stored as a raw JSON string — the client serializes it as an escaped
+// JSON string for AOT compatibility (iOS). The server stores it verbatim.
+// Do NOT change Data to map[string]interface{} — that would break the wire contract.
 type TelemetryEvent struct {
-	EventType string                 `json:"event_type"`
-	Timestamp float64                `json:"timestamp"`
-	Data      map[string]interface{} `json:"data"`
+	EventType string `json:"event_type"`
+	Timestamp float64 `json:"timestamp"`
+	Data      string `json:"data"`
 }
 
 // INVARIANT: Batch size is bounded by client-side queue (MAX_QUEUE_SIZE)
@@ -92,13 +101,11 @@ func validateTelemetryEvent(event TelemetryEvent) error {
 		return fmt.Errorf("event timestamp in future: %d", eventTime)
 	}
 
-	// Validate payload size (prevent abuse)
-	dataJSON, err := json.Marshal(event.Data)
-	if err != nil {
-		return fmt.Errorf("failed to marshal event data: %w", err)
-	}
-	if len(dataJSON) > 10240 { // 10KB max
-		return fmt.Errorf("event data too large: %d bytes (max: 10240)", len(dataJSON))
+	// Validate payload size (prevent abuse).
+	// Data is a raw JSON string — measure it directly, not via json.Marshal
+	// (which would add escaping and double-count the size).
+	if len(event.Data) > 10240 { // 10KB max
+		return fmt.Errorf("event data too large: %d bytes (max: 10240)", len(event.Data))
 	}
 
 	return nil
@@ -106,13 +113,15 @@ func validateTelemetryEvent(event TelemetryEvent) error {
 
 // INVARIANT: Write-first ordering collapses the TOCTOU window for stats updates
 func processTelemetryEvent(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, userID string, event TelemetryEvent) error {
+	// Data is already a JSON string from the client — embed it directly.
+	// Do not re-marshal: mustMarshal(event.Data) would double-escape it.
 	storageWrite := &runtime.StorageWrite{
 		Collection:      "telemetry",
 		Key:             fmt.Sprintf("%s_%d", event.EventType, int64(event.Timestamp)),
 		UserID:          userID,
-		Value:           fmt.Sprintf(`{"event_type":"%s","timestamp":%f,"data":%s}`, event.EventType, event.Timestamp, mustMarshal(event.Data)),
-		PermissionRead:  0, // INVARIANT: Server-only access prevents client tampering
-		PermissionWrite: 0, // INVARIANT: Server-only access prevents client tampering
+		Value:           fmt.Sprintf(`{"event_type":"%s","timestamp":%f,"data":%s}`, event.EventType, event.Timestamp, event.Data),
+		PermissionRead:  0,
+		PermissionWrite: 0,
 	}
 
 	// HAZARD: Storage write failure loses event permanently - no retry mechanism
@@ -198,14 +207,6 @@ func updateAggregatedStats(ctx context.Context, logger runtime.Logger, db *sql.D
 	return nil
 }
 
-// INVARIANT: Panic on marshal failure = corrupted data is worse than missing data
-func mustMarshal(data interface{}) string {
-	bytes, err := json.Marshal(data)
-	if err != nil {
-		panic(fmt.Sprintf("failed to marshal data: %v", err))
-	}
-	return string(bytes)
-}
 
 // CleanupOldTelemetry deletes telemetry events older than retention period
 // HAZARD: Run during off-peak hours to avoid impacting active users
