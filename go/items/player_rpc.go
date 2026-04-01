@@ -731,15 +731,16 @@ func RpcClaimProgressionReward(ctx context.Context, logger runtime.Logger, db *s
 	}).Info("Progression reward claimed successfully")
 
 	// Emit directly into the persistent analytics pipeline without network overhead
+	telemetryData, _ := json.Marshal(map[string]interface{}{
+		"itemType": req.ItemType,
+		"itemId":   req.ItemID,
+		"level":    req.Level,
+		"reward":   result,
+	})
 	telemetryEvent := TelemetryEvent{
 		EventType: "progression_claimed",
 		Timestamp: float64(time.Now().Unix()),
-		Data: map[string]interface{}{
-			"itemType": req.ItemType,
-			"itemId":   req.ItemID,
-			"level":    req.Level,
-			"reward":   result,
-		},
+		Data:      string(telemetryData),
 	}
 
 	// Fire and forget telemetry event via background context to unblock UI thread instantly
@@ -850,17 +851,18 @@ func RpcClaimAllProgressionRewards(ctx context.Context, logger runtime.Logger, d
 	logger.Info("Claimed %d progression rewards for user=%s itemType=%s itemID=%d", len(levelsToClaim), userID, req.ItemType, req.ItemID)
 
 	// Emit directly into the persistent analytics pipeline without network overhead
+	telemetryData, _ := json.Marshal(map[string]interface{}{
+		"itemType":    req.ItemType,
+		"itemId":      req.ItemID,
+		"levelsCount": len(levelsToClaim),
+		"reward":      result,
+	})
 	telemetryEvent := TelemetryEvent{
 		EventType: "progression_claimed_all",
 		Timestamp: float64(time.Now().Unix()),
-		Data: map[string]interface{}{
-			"itemType":    req.ItemType,
-			"itemId":      req.ItemID,
-			"levelsCount": len(levelsToClaim),
-			"reward":      result,
-		},
+		Data:      string(telemetryData),
 	}
-	
+
 	// Fire and forget telemetry event via background context to unblock UI thread instantly
 	go func() {
 		if telErr := processTelemetryEvent(context.Background(), logger, db, nk, userID, telemetryEvent); telErr != nil {
