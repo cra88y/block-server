@@ -79,7 +79,7 @@ func RpcSubmitTelemetry(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 	}
 
 	logger.Info("Processed %d telemetry events for user %s", len(batch.Events), userID)
-	return "ok", nil
+	return `{"success": true}`, nil
 }
 
 // INVARIANT: Validation prevents malformed events from corrupting stats or filling storage
