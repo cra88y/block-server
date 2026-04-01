@@ -168,7 +168,7 @@ func RpcGetShopCatalog(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 	}
 
 	if shopConfig == nil {
-		return "", fmt.Errorf("shop not configured")
+		return "", errors.ErrShopNotConfigured
 	}
 
 	// Get user's inventory to check ownership
@@ -258,24 +258,24 @@ func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB,
 	}
 
 	if item == nil {
-		return purchaseFail(req.RequestId, userID, nk, logger, "item not found")
+		return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrItemNotFound)
 	}
 
 	if item.Type == "lootbox" {
-		return purchaseFail(req.RequestId, userID, nk, logger, "use purchase_lootbox RPC for lootboxes")
+		return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrWrongItemType)
 	}
 
 	// Check ownership
 	ownedItems := getUserOwnedItems(ctx, nk, userID)
 	if isItemOwned(ownedItems, item.Type, item.ItemID) {
-		return purchaseFail(req.RequestId, userID, nk, logger, "item already owned")
+		return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrItemAlreadyOwned)
 	}
 
 	// Check rotation (if applicable)
 	if item.RotationSlot != nil {
 		activeSlots := getActiveRotationSlots()
 		if !isSlotActive(*item.RotationSlot, activeSlots) {
-			return purchaseFail(req.RequestId, userID, nk, logger, "item not currently available")
+			return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrItemNotAvailable)
 		}
 	}
 
@@ -295,12 +295,12 @@ func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB,
 	// Currency deduction
 	if item.Price.Gems > 0 {
 		if wallet["gems"] < int64(item.Price.Gems) {
-			return purchaseFail(req.RequestId, userID, nk, logger, "insufficient gems")
+			return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrInsufficientGems)
 		}
 		pending.AddWalletDeduction(userID, "gems", int64(item.Price.Gems))
 	} else if item.Price.Gold > 0 {
 		if wallet["gold"] < int64(item.Price.Gold) {
-			return purchaseFail(req.RequestId, userID, nk, logger, "insufficient gold")
+			return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrInsufficientGold)
 		}
 		pending.AddWalletDeduction(userID, "gold", int64(item.Price.Gold))
 	}
@@ -314,11 +314,11 @@ func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB,
 	}
 	storageKey, ok2 := typeToKey[item.Type]
 	if !ok2 {
-		return purchaseFail(req.RequestId, userID, nk, logger, "unknown item type")
+		return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrInvalidItemType)
 	}
 	itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, storageKey, item.ItemID)
 	if err != nil {
-		return purchaseFail(req.RequestId, userID, nk, logger, "failed to grant item")
+		return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrInternalError)
 	}
 	pending.Merge(itemPending)
 
@@ -365,12 +365,12 @@ func RpcPurchaseLootbox(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 
 	tierDef, exists := shopConfig.LootboxTiers[req.Tier]
 	if !exists {
-		return "", fmt.Errorf("invalid lootbox tier: %s", req.Tier)
+		return "", errors.ErrInvalidLootboxTier
 	}
 
 	price := tierDef.PriceGems
 	if price <= 0 {
-		return "", fmt.Errorf("tier %s cannot be purchased", req.Tier)
+		return "", errors.ErrTierNotPurchasable
 	}
 
 	// Verify sufficient balance
@@ -383,7 +383,7 @@ func RpcPurchaseLootbox(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 		return "", errors.ErrUnmarshal
 	}
 	if wallet["gems"] < int64(price) {
-		return "", fmt.Errorf("insufficient gems: have %d, need %d", wallet["gems"], price)
+		return "", errors.ErrInsufficientGems
 	}
 
 	// Prepare all writes atomically
@@ -395,13 +395,13 @@ func RpcPurchaseLootbox(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 	// Lootbox creation
 	lootbox, lootboxWrite, err := PrepareCreateLootbox(userID, req.Tier)
 	if err != nil {
-		return "", fmt.Errorf("failed to prepare lootbox: %w", err)
+		return "", errors.ErrPrepareFailed
 	}
 	pending.AddStorageWrite(lootboxWrite)
 
 	// Commit atomically
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
-		return "", fmt.Errorf("lootbox purchase failed: %w", err)
+		return "", errors.ErrTransactionFailed
 	}
 
 	logger.Info("User %s purchased %s lootbox for %d gems", userID, req.Tier, price)
@@ -715,11 +715,11 @@ func writePurchaseLog(ctx context.Context, nk runtime.NakamaModule, userID, requ
 }
 
 // purchaseFail returns an error response and writes a failed audit log if requestId is present.
-func purchaseFail(requestId, userID string, nk runtime.NakamaModule, logger runtime.Logger, reason string) (string, error) {
+func purchaseFail(requestId, userID string, nk runtime.NakamaModule, logger runtime.Logger, err error) (string, error) {
 	if requestId != "" {
 		writePurchaseLog(context.Background(), nk, userID, requestId, "", 0, 0, false, nil)
 	}
-	return "", fmt.Errorf("%s", reason)
+	return "", err
 }
 
 // ── Revocation RPC ───────────────────────────────────────────────────────────
@@ -737,7 +737,7 @@ func RpcRevokeIAPPurchase(ctx context.Context, logger runtime.Logger, db *sql.DB
 		RevocationReason      string `json:"revocation_reason"`
 	}
 	if err := json.Unmarshal([]byte(payload), &req); err != nil {
-		return "", fmt.Errorf("invalid payload: %w", err)
+		return "", errors.ErrUnmarshal
 	}
 
 	logPrefix := fmt.Sprintf("[IAP-REVOKE] origTx=%s user=%s", req.OriginalTransactionId, userID)

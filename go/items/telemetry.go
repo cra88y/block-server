@@ -7,22 +7,24 @@ import (
 	"fmt"
 	"time"
 
+	"block-server/errors"
+
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
 // INVARIANT: Whitelist prevents malformed events from corrupting stats or filling storage
 var validEventTypes = map[string]bool{
-	"match_completed":   true,
-	"match_abandoned":   true,
-	"network_quality":   true,
-	"performance":       true,
-	"crash":             true,
-	"session_start":     true,
-	"session_end":       true,
-	"ability_used":      true,
-	"piece_placed":      true,
-	"round_won":         true,
-	"round_lost":        true,
+	"match_completed":         true,
+	"match_abandoned":         true,
+	"network_quality":         true,
+	"performance":             true,
+	"crash":                   true,
+	"session_start":           true,
+	"session_end":             true,
+	"ability_used":            true,
+	"piece_placed":            true,
+	"round_won":               true,
+	"round_lost":              true,
 	"progression_claimed":     true,
 	"progression_claimed_all": true,
 }
@@ -47,13 +49,13 @@ func RpcSubmitTelemetry(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 	var batch TelemetryBatch
 	if err := json.Unmarshal([]byte(payload), &batch); err != nil {
 		logger.Error("Failed to unmarshal telemetry batch: %v", err)
-		return "", fmt.Errorf("invalid telemetry payload: %w", err)
+		return "", errors.ErrUnmarshal
 	}
 
 	// HAZARD: User ID is required for storage ownership - missing = silent data loss
 	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 	if !ok {
-		return "", fmt.Errorf("user ID not found in context")
+		return "", errors.ErrNoUserIdFound
 	}
 
 	// INVARIANT: Individual event failures don't abort batch - best-effort delivery
@@ -81,7 +83,7 @@ func validateTelemetryEvent(event TelemetryEvent) error {
 	// Validate timestamp (not too old, not in future)
 	now := time.Now().Unix()
 	eventTime := int64(event.Timestamp)
-	
+
 	// HAZARD: Timestamp bounds prevent stale or future events from corrupting time-range queries
 	if eventTime < now-(retentionDays*24*60*60) {
 		return fmt.Errorf("event timestamp too old: %d (retention: %d days)", eventTime, retentionDays)
@@ -130,21 +132,21 @@ func processTelemetryEvent(ctx context.Context, logger runtime.Logger, db *sql.D
 func updateAggregatedStats(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, userID string, event TelemetryEvent) error {
 	// INVARIANT: Daily key format enables time-range queries without indexing
 	today := time.Now().Format("2006-01-02")
-	
+
 	statsKey := fmt.Sprintf("daily_%s", today)
-	
+
 	// HAZARD: No locking - concurrent reads can return stale data
 	storageRead := &runtime.StorageRead{
 		Collection: "telemetry_stats",
 		Key:        statsKey,
-		UserID:      userID,
+		UserID:     userID,
 	}
-	
+
 	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{storageRead})
 	if err != nil {
 		return fmt.Errorf("failed to read existing stats: %w", err)
 	}
-	
+
 	// INVARIANT: Empty stats = first event of the day, not an error
 	var stats map[string]interface{}
 	if len(objects) > 0 && objects[0].Value != "" {
@@ -155,7 +157,7 @@ func updateAggregatedStats(ctx context.Context, logger runtime.Logger, db *sql.D
 	} else {
 		stats = make(map[string]interface{})
 	}
-	
+
 	// INVARIANT: Float64 type matches Nakama's JSON unmarshaling behavior
 	eventCountKey := fmt.Sprintf("%s_count", event.EventType)
 	if count, ok := stats[eventCountKey].(float64); ok {
@@ -163,23 +165,23 @@ func updateAggregatedStats(ctx context.Context, logger runtime.Logger, db *sql.D
 	} else {
 		stats[eventCountKey] = 1
 	}
-	
+
 	// INVARIANT: Total count enables quick health checks without scanning all events
 	if total, ok := stats["total_events"].(float64); ok {
 		stats["total_events"] = total + 1
 	} else {
 		stats["total_events"] = 1
 	}
-	
+
 	// INVARIANT: Unix timestamp enables TTL-based cleanup without parsing dates
 	stats["last_updated"] = time.Now().Unix()
-	
+
 	// HAZARD: Write failure loses stats update - event already persisted successfully
 	statsJSON, err := json.Marshal(stats)
 	if err != nil {
 		return fmt.Errorf("failed to marshal stats: %w", err)
 	}
-	
+
 	storageWrite := &runtime.StorageWrite{
 		Collection:      "telemetry_stats",
 		Key:             statsKey,
@@ -188,11 +190,11 @@ func updateAggregatedStats(ctx context.Context, logger runtime.Logger, db *sql.D
 		PermissionRead:  0,
 		PermissionWrite: 0,
 	}
-	
+
 	if _, err := nk.StorageWrite(ctx, []*runtime.StorageWrite{storageWrite}); err != nil {
 		return fmt.Errorf("failed to write updated stats: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -209,7 +211,7 @@ func mustMarshal(data interface{}) string {
 // HAZARD: Run during off-peak hours to avoid impacting active users
 func CleanupOldTelemetry(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule) error {
 	cutoffTime := time.Now().AddDate(0, 0, -retentionDays).Unix()
-	
+
 	// List all telemetry objects for all users
 	// HAZARD: This is a full scan - consider pagination for large datasets
 	objects, _, err := nk.StorageList(ctx, "", "", "telemetry", 1000, "")

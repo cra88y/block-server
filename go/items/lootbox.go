@@ -146,7 +146,7 @@ func RpcOpenLootbox(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 	// Commit all writes atomically
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
 		logger.Error("Failed to commit lootbox open transaction: %v", err)
-		return "", fmt.Errorf("lootbox open failed: %w", err)
+		return "", errors.ErrLootboxOpenFailed
 	}
 
 	// Build unified RewardPayload

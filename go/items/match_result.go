@@ -513,7 +513,7 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	// --- Phase 2: Atomic commit (XP + tokens + exchange + lootbox) ---
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
 		logger.Error("Match result commit failed: %v", err)
-		return nil, fmt.Errorf("match reward commit failed: %w", err)
+		return nil, errors.ErrMatchRewardCommit
 	}
 
 	// StorageDelete cannot go in MultiUpdate; runs after commit.
@@ -884,7 +884,7 @@ func createLootbox(ctx context.Context, nk runtime.NakamaModule, logger runtime.
 
 	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{write})
 	if err != nil {
-		return nil, fmt.Errorf("failed to write lootbox: %w", err)
+		return nil, errors.ErrLootboxWriteFailed
 	}
 
 	return lootbox, nil

@@ -183,7 +183,7 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
 		logger.Error("[RoundResult] Commit failed for user %s round %d: %v", userID, req.RoundNumber, err)
-		return "", fmt.Errorf("round result commit failed: %w", err)
+		return "", errors.ErrRoundCommit
 	}
 
 	logger.Info("[RoundResult] Banked %d tokens for user %s match %s round %d (won=%v, solo=%v)",

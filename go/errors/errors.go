@@ -66,10 +66,10 @@ var (
 
 	// Match validation errors (code 3 → HTTP 400 → client does NOT retry)
 	// Using CodeInvalidArg instead of fmt.Errorf so the SDK treats these as non-retryable.
-	ErrMatchTooShort        = runtime.NewError("match duration too short", CodeInvalidArg)
-	ErrNoActiveMatch        = runtime.NewError("no active match found", CodeInvalidArg)
-	ErrMatchIDMismatch      = runtime.NewError("match ID mismatch", CodeInvalidArg)
-	ErrStaleMatchExpired    = runtime.NewError("stale active match expired", CodeInvalidArg)
+	ErrMatchTooShort     = runtime.NewError("match duration too short", CodeInvalidArg)
+	ErrNoActiveMatch     = runtime.NewError("no active match found", CodeInvalidArg)
+	ErrMatchIDMismatch   = runtime.NewError("match ID mismatch", CodeInvalidArg)
+	ErrStaleMatchExpired = runtime.NewError("stale active match expired", CodeInvalidArg)
 
 	// Forbidden errors (code 7)
 	ErrItemNotOwnedForbidden = runtime.NewError("item not owned", CodeForbidden)
@@ -79,4 +79,21 @@ var (
 	// Transaction / commit errors (code 13)
 	ErrTransactionFailed = runtime.NewError("transaction failed", CodeInternal)
 	ErrPrepareFailed     = runtime.NewError("prepare failed", CodeInternal)
+
+	// Shop errors
+	ErrShopNotConfigured  = runtime.NewError("shop not configured", CodeInternal)
+	ErrLootboxOpenFailed  = runtime.NewError("lootbox open failed", CodeInternal)
+	ErrMatchRewardCommit  = runtime.NewError("match reward commit failed", CodeInternal)
+	ErrRoundCommit        = runtime.NewError("round result commit failed", CodeInternal)
+	ErrLootboxWriteFailed = runtime.NewError("failed to write lootbox", CodeInternal)
+
+	// Shop validation errors (code 3)
+	ErrInvalidLootboxTier = runtime.NewError("invalid lootbox tier", CodeInvalidArg)
+	ErrTierNotPurchasable = runtime.NewError("tier cannot be purchased", CodeInvalidArg)
+	ErrInsufficientGems   = runtime.NewError("insufficient gems", CodeInvalidArg)
+	ErrInsufficientGold   = runtime.NewError("insufficient gold", CodeInvalidArg)
+	ErrItemAlreadyOwned   = runtime.NewError("item already owned", CodeInvalidArg)
+	ErrItemNotAvailable   = runtime.NewError("item not currently available", CodeInvalidArg)
+	ErrInvalidShopItem    = runtime.NewError("invalid shop item", CodeInvalidArg)
+	ErrWrongItemType      = runtime.NewError("wrong item type for RPC", CodeInvalidArg)
 )
