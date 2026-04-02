@@ -187,14 +187,15 @@ type RoundResult struct {
 
 // Match Result Types
 type MatchResultRequest struct {
-	MatchID          string        `json:"match_id"`
-	Won              bool          `json:"won"`
-	FinalScore       int           `json:"final_score"`
-	OpponentScore    int           `json:"opponent_score"`
-	MatchDurationSec int           `json:"match_duration_sec"`
-	EquippedPetID    uint32        `json:"equipped_pet_id"`
-	EquippedClassID  uint32        `json:"equipped_class_id"`
-	RoundsWon        int           `json:"rounds_won"`
-	RoundsLost       int           `json:"rounds_lost"`
-	Rounds           []RoundResult `json:"rounds"` // Per-round history; server validates plausibility
+	MatchID           string        `json:"match_id"`
+	Won               bool          `json:"won"`
+	FinalScore        int           `json:"final_score"`
+	OpponentScore     int           `json:"opponent_score"`
+	MatchDurationSec  int           `json:"match_duration_sec"`
+	EquippedPetID     uint32        `json:"equipped_pet_id"`
+	EquippedClassID   uint32        `json:"equipped_class_id"`
+	RoundsWon         int           `json:"rounds_won"`
+	RoundsLost        int           `json:"rounds_lost"`
+	Rounds            []RoundResult `json:"rounds"`             // Per-round history; server validates plausibility
+	OpponentForfeited bool          `json:"opponent_forfeited"` // Whether the opponent forfeited the match
 }
