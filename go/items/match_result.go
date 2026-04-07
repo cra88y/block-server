@@ -256,6 +256,29 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		}
 	}
 
+	// SYNCHRONOUS: Write leaderboard records and capture rank for response payload.
+	// Must occur before marshaling — LeaderboardRank is included in the cached response.
+	// Failure is non-fatal: logs and returns rank=0 (omitted from response via omitempty).
+	leaderboardRank := writeLeaderboardRecords(ctx, nk, logger, userID, &req, isSolo, actualWon)
+	if leaderboardRank > 0 {
+		result.LeaderboardRank = leaderboardRank
+	}
+
+	// ASYNC: Update competitive stats + append match history.
+	// Self-idempotency gate: if history already exists, stats were already written — skip both.
+	// Goroutine captures explicit copies (reqCopy, opponentIDCopy) to avoid data races.
+	reqCopy := req
+	opponentIDCopy := activeMatch.OpponentID
+	go func() {
+		bgCtx := context.Background()
+		if MatchHistoryExists(bgCtx, nk, userID, reqCopy.MatchID) {
+			logger.Info("[competitive] stats+history already processed for user %s match %s — skipping goroutine", userID, reqCopy.MatchID)
+			return
+		}
+		AppendMatchHistory(bgCtx, nk, logger, userID, &reqCopy, isSolo, actualWon, opponentIDCopy)
+		UpdatePlayerStats(bgCtx, nk, logger, userID, &reqCopy, isSolo, actualWon)
+	}()
+
 	respBytes, err := json.Marshal(result)
 	if err != nil {
 		logger.Error("Failed to marshal match reward response: %v", err)

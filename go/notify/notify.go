@@ -44,6 +44,10 @@ type RewardPayload struct {
 	Action        string `json:"action,omitempty"`
 	ActionPayload string `json:"action_payload,omitempty"`
 
+	// LeaderboardRank is the player's resulting rank after this match's leaderboard write.
+	// 0 (omitted) means the write failed or the mode doesn't write a board (e.g. 1v1 loss).
+	LeaderboardRank int `json:"leaderboard_rank,omitempty"`
+
 	// MECE Reward Domains
 	Inventory   *InventoryDelta   `json:"inventory,omitempty"`
 	Wallet      *WalletDelta      `json:"wallet,omitempty"`
@@ -75,21 +79,21 @@ type WalletDelta struct {
 
 // XP and level-ups. Driven strictly by the server.
 type ProgressionDelta struct {
-	XpGranted      *int               `json:"xp_granted,omitempty"`
-	XpBase         *int               `json:"xp_base,omitempty"` // Before diminishing
-	NewPlayerLevel *int               `json:"new_player_level,omitempty"`
-	NewPetLevel    *int               `json:"new_pet_level,omitempty"`
-	NewClassLevel  *int               `json:"new_class_level,omitempty"`
-	NewUnclaimedRewards []int         `json:"new_unclaimed_rewards,omitempty"`
-	Unlocks        []ProgressionUnlock `json:"unlocks,omitempty"`
+	XpGranted           *int                `json:"xp_granted,omitempty"`
+	XpBase              *int                `json:"xp_base,omitempty"` // Before diminishing
+	NewPlayerLevel      *int                `json:"new_player_level,omitempty"`
+	NewPetLevel         *int                `json:"new_pet_level,omitempty"`
+	NewClassLevel       *int                `json:"new_class_level,omitempty"`
+	NewUnclaimedRewards []int               `json:"new_unclaimed_rewards,omitempty"`
+	Unlocks             []ProgressionUnlock `json:"unlocks,omitempty"`
 }
 
 // ProgressionUnlock represents an ability/sprite unlock from level-up.
 type ProgressionUnlock struct {
-	System  string   `json:"system"`   // pet, class
-	ItemID  uint32   `json:"item_id"`  // Which pet/class
-	Type    string   `json:"type"`     // ability, sprite
-	Indices []uint32 `json:"indices"`  // Position-based indices
+	System  string   `json:"system"`  // pet, class
+	ItemID  uint32   `json:"item_id"` // Which pet/class
+	Type    string   `json:"type"`    // ability, sprite
+	Indices []uint32 `json:"indices"` // Position-based indices
 }
 
 // Grants a sealed lootbox. Contents remain a mystery until the player opens it.

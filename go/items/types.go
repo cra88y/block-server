@@ -199,3 +199,117 @@ type MatchResultRequest struct {
 	Rounds            []RoundResult `json:"rounds"`             // Per-round history; server validates plausibility
 	OpponentForfeited bool          `json:"opponent_forfeited"` // Whether the opponent forfeited the match
 }
+
+// ─── Leaderboard & Competitive System ───────────────────────────────────────
+
+const (
+	// Leaderboard IDs — must match LeaderboardCreate calls in InitModule.
+	// solo_* : BEST operator — highest single-run score wins.
+	// 1v1_*  : INCREMENT operator — win count accumulates, resets per cadence.
+	//
+	// Season boards (no auto-reset): manually wiped at major balance patches / season boundaries.
+	// Weekly boards:                 auto-reset Monday midnight UTC.
+	LeaderboardSoloSeason = "solo_season" // primary season score board; wipe on patch/season boundary
+	LeaderboardSoloWeekly = "solo_weekly" // primary weekly competitive surface
+	Leaderboard1v1Season  = "1v1_season"  // season win count
+	Leaderboard1v1Weekly  = "1v1_weekly"
+)
+
+const (
+	storageCollectionCompetitiveStats = "competitive_stats"
+	storageKeyStats                   = "stats"
+	storageCollectionMatchHistory     = "match_history"
+	maxMatchHistoryPerUser            = 100
+
+	// Schema versions — bump on breaking struct changes.
+	PlayerStatsSchema       = 1
+	MatchHistoryEntrySchema = 1
+)
+
+// PlayerStats is the competitive aggregate for a single player.
+// Collection: competitive_stats, Key: "stats", UserID: playerID.
+// OCC-protected: Version is read from storage and written back.
+// Rating is ELO-ready from day one; computation is stubbed until matchmaking is skill-based.
+type PlayerStats struct {
+	Schema        int    `json:"schema"` // always PlayerStatsSchema
+	Rating        int    `json:"rating"` // ELO rating; initialised to 1000
+	PeakRating    int    `json:"peak_rating"`
+	Wins          int    `json:"wins"`
+	Losses        int    `json:"losses"`
+	MatchesPlayed int    `json:"matches_played"`
+	BestSoloScore int    `json:"best_solo_score"`
+	SeasonID      string `json:"season_id,omitempty"` // set when seasons are introduced
+	UpdatedAt     int64  `json:"updated_at"`
+	Version       string `json:"-"` // OCC version key from storage; not serialised to JSON
+}
+
+// MatchHistoryEntry is a single match record, written after each completed match.
+// Collection: match_history, Key: matchID+"_"+userID, UserID: playerID.
+// Append-only and idempotent (same key overwrites with equivalent data).
+// Rating and RatingDelta are nil until ELO is active — nil != 0.
+type MatchHistoryEntry struct {
+	Schema      int    `json:"schema"` // always MatchHistoryEntrySchema
+	MatchID     string `json:"match_id"`
+	Mode        string `json:"mode"`  // "solo" | "1v1"
+	Score       int    `json:"score"` // FinalScore
+	OpponentID  string `json:"opponent_id,omitempty"`
+	Won         bool   `json:"won"`
+	RoundsWon   int    `json:"rounds_won"`
+	RoundsLost  int    `json:"rounds_lost"`
+	DurationSec int    `json:"duration_sec"`
+	Rating      *int   `json:"rating,omitempty"`       // player rating at match time; nil until ELO
+	RatingDelta *int   `json:"rating_delta,omitempty"` // ELO delta applied; nil until ELO
+	PlayedAt    int64  `json:"played_at"`
+}
+
+// ─── RPC request/response types ─────────────────────────────────────────────
+
+// LeaderboardRequest fetches a board's top entries + the caller's own record.
+type LeaderboardRequest struct {
+	BoardID string `json:"board_id"`
+	Limit   int    `json:"limit,omitempty"`  // default 20, max 100
+	Cursor  string `json:"cursor,omitempty"` // empty = start from top
+}
+
+// LeaderboardEntry is one row returned from a leaderboard query.
+type LeaderboardEntry struct {
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+	Score    int64  `json:"score"`
+	Subscore int64  `json:"subscore"`
+	Rank     int64  `json:"rank"`
+	Metadata string `json:"metadata,omitempty"`
+}
+
+// LeaderboardResponse is returned by get_leaderboard and get_friends_leaderboard.
+// MyEntry is the caller's own record; nil if they have no entry on this board.
+type LeaderboardResponse struct {
+	Entries    []LeaderboardEntry `json:"entries"`
+	MyEntry    *LeaderboardEntry  `json:"my_entry,omitempty"`
+	NextCursor string             `json:"next_cursor,omitempty"`
+	PrevCursor string             `json:"prev_cursor,omitempty"`
+}
+
+// FriendsLeaderboardRequest fetches a board filtered to the caller's friends + self.
+type FriendsLeaderboardRequest struct {
+	BoardID string `json:"board_id"`
+	Limit   int    `json:"limit,omitempty"` // default 50, max 50
+}
+
+// PlayerStatsRequest fetches competitive stats for a user.
+// Omitting UserID returns the calling user's own stats.
+type PlayerStatsRequest struct {
+	UserID string `json:"user_id,omitempty"`
+}
+
+// MatchHistoryRequest fetches paginated match history for the calling user.
+type MatchHistoryRequest struct {
+	Limit  int    `json:"limit,omitempty"` // default 20, max maxMatchHistoryPerUser
+	Cursor string `json:"cursor,omitempty"`
+}
+
+// MatchHistoryResponse is returned by get_match_history.
+type MatchHistoryResponse struct {
+	Entries    []MatchHistoryEntry `json:"entries"`
+	NextCursor string              `json:"next_cursor,omitempty"`
+}

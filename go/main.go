@@ -48,6 +48,28 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		len(items.GameData.PieceStyles),
 		len(items.GameData.LevelTrees))
 
+	// Bootstrap leaderboards (idempotent — safe to call on every startup).
+	// solo_global / solo_weekly: BEST operator (highest single-run score wins).
+	// 1v1_global  / 1v1_weekly:  INCREMENT operator (win count accumulates).
+	// Weekly boards reset Monday midnight UTC (≥0 0 * * 1⊹).
+	// Global boards have no reset schedule; wipe manually on major balance patches.
+	for _, lb := range []struct {
+		id, sortOrder, operator, reset string
+	}{
+		{items.LeaderboardSoloSeason, "desc", "best", ""},
+		{items.LeaderboardSoloWeekly, "desc", "best", "0 0 * * 1"},
+		{items.Leaderboard1v1Season, "desc", "incr", ""},
+		{items.Leaderboard1v1Weekly, "desc", "incr", "0 0 * * 1"},
+	} {
+		if err := nk.LeaderboardCreate(ctx, lb.id, true, lb.sortOrder, lb.operator, lb.reset, nil, true); err != nil {
+			logger.Error("Failed to create leaderboard %s: %v", lb.id, err)
+			// Non-fatal: boards may already exist from a previous startup.
+		}
+	}
+	logger.Info("Leaderboards bootstrapped: %s, %s, %s, %s",
+		items.LeaderboardSoloSeason, items.LeaderboardSoloWeekly,
+		items.Leaderboard1v1Season, items.Leaderboard1v1Weekly)
+
 	if err := initializer.RegisterAfterAuthenticateDevice(items.AfterAuthorizeUserDevice); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
@@ -161,6 +183,24 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		return err
 	}
 	if err := initializer.RegisterRpc("submit_telemetry", items.RpcSubmitTelemetry); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
+
+	// Competitive / Leaderboard RPCs
+	if err := initializer.RegisterRpc("get_leaderboard", items.RpcGetLeaderboard); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
+	if err := initializer.RegisterRpc("get_friends_leaderboard", items.RpcGetFriendsLeaderboard); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
+	if err := initializer.RegisterRpc("get_player_stats", items.RpcGetPlayerStats); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
+	if err := initializer.RegisterRpc("get_match_history", items.RpcGetMatchHistory); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
