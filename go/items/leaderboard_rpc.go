@@ -43,9 +43,15 @@ func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logge
 		"pet_id":   req.EquippedPetID,
 	}
 
+	// Fetch username for leaderboard record
+	username := ""
+	if users, err := nk.UsersGetId(ctx, []string{userID}, nil); err == nil && len(users) > 0 {
+		username = users[0].Username
+	}
+
 	// Write global board — capture rank from this record.
 	var rank int64
-	record, err := nk.LeaderboardRecordWrite(ctx, globalBoard, userID, "", score, subscore, metadata, nil)
+	record, err := nk.LeaderboardRecordWrite(ctx, globalBoard, userID, username, score, subscore, metadata, nil)
 	if err != nil {
 		logger.Warn("[leaderboard] Failed to write %s for user %s: %v", globalBoard, userID, err)
 	} else if record != nil {
@@ -53,7 +59,7 @@ func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logge
 	}
 
 	// Write weekly board — rank not captured (global is the canonical rank surface).
-	if _, err := nk.LeaderboardRecordWrite(ctx, weeklyBoard, userID, "", score, subscore, metadata, nil); err != nil {
+	if _, err := nk.LeaderboardRecordWrite(ctx, weeklyBoard, userID, username, score, subscore, metadata, nil); err != nil {
 		logger.Warn("[leaderboard] Failed to write %s for user %s: %v", weeklyBoard, userID, err)
 	}
 
