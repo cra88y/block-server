@@ -18,7 +18,6 @@ func RpcGetGameConfig(ctx context.Context, logger runtime.Logger, db *sql.DB, nk
 		return "", runtime.NewError("failed to marshal economy config", 13)
 	}
 
-	// Result is a composite of the raw gamedata and the dynamic economy config
 	response := fmt.Sprintf("{\"items\": %s, \"economy\": %s}", string(gamedata), string(cfgJson))
 	return response, nil
 }

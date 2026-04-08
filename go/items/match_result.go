@@ -264,8 +264,9 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		result.LeaderboardRank = leaderboardRank
 	}
 
-	// ASYNC: Update competitive stats + append match history.
+	// ASYNC: Update competitive stats + append match history atomically.
 	// Self-idempotency gate: if history already exists, stats were already written — skip both.
+	// Uses single MultiUpdate commit for reduced RPC round-trips.
 	// Goroutine captures explicit copies (reqCopy, opponentIDCopy) to avoid data races.
 	reqCopy := req
 	opponentIDCopy := activeMatch.OpponentID
@@ -275,8 +276,9 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 			logger.Info("[competitive] stats+history already processed for user %s match %s — skipping goroutine", userID, reqCopy.MatchID)
 			return
 		}
-		AppendMatchHistory(bgCtx, nk, logger, userID, &reqCopy, isSolo, actualWon, opponentIDCopy)
-		UpdatePlayerStats(bgCtx, nk, logger, userID, &reqCopy, isSolo, actualWon)
+		if err := UpdatePlayerStatsAndHistory(bgCtx, nk, logger, userID, &reqCopy, isSolo, actualWon, opponentIDCopy); err != nil {
+			logger.Warn("[competitive] Failed to update stats+history for user %s match %s: %v", userID, reqCopy.MatchID, err)
+		}
 	}()
 
 	respBytes, err := json.Marshal(result)

@@ -3,6 +3,7 @@ package items
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/heroiclabs/nakama-common/runtime"
@@ -24,10 +25,10 @@ func GetOrCreatePlayerStats(ctx context.Context, nk runtime.NakamaModule, userID
 	if len(objects) == 0 {
 		// Empty Version → StorageWrite create-only semantics (no overwrite risk).
 		return &PlayerStats{
-			Schema:    PlayerStatsSchema,
-			Rating:    1000,
+			Schema:     PlayerStatsSchema,
+			Rating:     1000,
 			PeakRating: 1000,
-			UpdatedAt: time.Now().UnixMilli(),
+			UpdatedAt:  time.Now().UnixMilli(),
 		}, nil
 	}
 
@@ -37,48 +38,6 @@ func GetOrCreatePlayerStats(ctx context.Context, nk runtime.NakamaModule, userID
 	}
 	stats.Version = objects[0].Version
 	return &stats, nil
-}
-
-// UpdatePlayerStats increments win/loss counters and best solo score.
-// OCC-protected via the Version captured by GetOrCreatePlayerStats.
-// On conflict (rare retry race), logs and continues — off-by-one is acceptable at launch scale.
-func UpdatePlayerStats(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool, won bool) {
-	stats, err := GetOrCreatePlayerStats(ctx, nk, userID)
-	if err != nil {
-		logger.Warn("[competitive] Failed to read player stats for %s: %v", userID, err)
-		return
-	}
-
-	stats.MatchesPlayed++
-	if won {
-		stats.Wins++
-	} else {
-		stats.Losses++
-	}
-	if isSolo && req.FinalScore > stats.BestSoloScore {
-		stats.BestSoloScore = req.FinalScore
-	}
-	stats.UpdatedAt = time.Now().UnixMilli()
-
-	value, err := json.Marshal(stats)
-	if err != nil {
-		logger.Warn("[competitive] Failed to marshal player stats for %s: %v", userID, err)
-		return
-	}
-
-	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{{
-		Collection:      storageCollectionCompetitiveStats,
-		Key:             storageKeyStats,
-		UserID:          userID,
-		Value:           string(value),
-		Version:         stats.Version, // OCC: empty string = create-only; populated = update-only
-		PermissionRead:  2,             // Public read — profile cards can display opponent stats
-		PermissionWrite: 0,             // Server-only write
-	}})
-	if err != nil {
-		// OCC conflict expected on retry races — stat will be off by one match.
-		logger.Warn("[competitive] Failed to write player stats for %s (OCC conflict or write error): %v", userID, err)
-	}
 }
 
 // MatchHistoryExists is the idempotency gate for the stats+history goroutine.
@@ -97,10 +56,44 @@ func MatchHistoryExists(ctx context.Context, nk runtime.NakamaModule, userID, ma
 	return len(objects) > 0
 }
 
-// AppendMatchHistory writes a single match record.
-// Key is matchID+"_"+userID — idempotent: re-write on retry produces equivalent data.
-// OpponentID is passed explicitly (activeMatch.OpponentID is cleared before this runs).
-func AppendMatchHistory(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool, won bool, opponentID string) {
+// PreparePlayerStatsUpdate builds a storage write for updated player stats without committing.
+// Returns the write operation to be batched into a PendingWrites collection.
+func PreparePlayerStatsUpdate(ctx context.Context, nk runtime.NakamaModule, userID string, req *MatchResultRequest, isSolo bool, won bool) (*runtime.StorageWrite, error) {
+	stats, err := GetOrCreatePlayerStats(ctx, nk, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read player stats for %s: %w", userID, err)
+	}
+
+	stats.MatchesPlayed++
+	if won {
+		stats.Wins++
+	} else {
+		stats.Losses++
+	}
+	if isSolo && req.FinalScore > stats.BestSoloScore {
+		stats.BestSoloScore = req.FinalScore
+	}
+	stats.UpdatedAt = time.Now().UnixMilli()
+
+	value, err := json.Marshal(stats)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal player stats for %s: %w", userID, err)
+	}
+
+	return &runtime.StorageWrite{
+		Collection:      storageCollectionCompetitiveStats,
+		Key:             storageKeyStats,
+		UserID:          userID,
+		Value:           string(value),
+		Version:         stats.Version, // OCC: empty string = create-only; populated = update-only
+		PermissionRead:  2,             // Public read — profile cards can display opponent stats
+		PermissionWrite: 0,             // Server-only write
+	}, nil
+}
+
+// PrepareMatchHistoryEntry builds a storage write for match history without committing.
+// Returns the write operation to be batched into a PendingWrites collection.
+func PrepareMatchHistoryEntry(userID string, req *MatchResultRequest, isSolo bool, won bool, opponentID string) (*runtime.StorageWrite, error) {
 	mode := "1v1"
 	if isSolo {
 		mode = "solo"
@@ -116,25 +109,55 @@ func AppendMatchHistory(ctx context.Context, nk runtime.NakamaModule, logger run
 		RoundsWon:   req.RoundsWon,
 		RoundsLost:  req.RoundsLost,
 		DurationSec: req.MatchDurationSec,
-		// Rating and RatingDelta intentionally nil until ELO is active.
-		PlayedAt: time.Now().UnixMilli(),
+		PlayedAt:    time.Now().UnixMilli(),
 	}
 
 	value, err := json.Marshal(entry)
 	if err != nil {
-		logger.Warn("[competitive] Failed to marshal match history for user %s match %s: %v", userID, req.MatchID, err)
-		return
+		return nil, fmt.Errorf("failed to marshal match history for user %s match %s: %w", userID, req.MatchID, err)
 	}
 
-	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{{
+	return &runtime.StorageWrite{
 		Collection:      storageCollectionMatchHistory,
 		Key:             req.MatchID + "_" + userID,
 		UserID:          userID,
 		Value:           string(value),
 		PermissionRead:  1, // Owner-only: match history is personal data
 		PermissionWrite: 0,
-	}})
+	}, nil
+}
+
+// UpdatePlayerStatsAndHistory atomically updates both competitive stats and match history.
+// Uses PendingWrites for a single MultiUpdate commit, reducing RPC round-trips and
+// ensuring both writes succeed or fail together.
+// On OCC conflict, logs and continues — off-by-one is acceptable at launch scale.
+func UpdatePlayerStatsAndHistory(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool, won bool, opponentID string) error {
+	pending := NewPendingWrites()
+
+	// Prepare stats write
+	statsWrite, err := PreparePlayerStatsUpdate(ctx, nk, userID, req, isSolo, won)
 	if err != nil {
-		logger.Warn("[competitive] Failed to write match history for user %s match %s: %v", userID, req.MatchID, err)
+		logger.Warn("[competitive] %v", err)
+		// Continue — stats failure shouldn't block history write
+	} else if statsWrite != nil {
+		pending.AddStorageWrite(statsWrite)
 	}
+
+	// Prepare history write
+	historyWrite, err := PrepareMatchHistoryEntry(userID, req, isSolo, won, opponentID)
+	if err != nil {
+		logger.Warn("[competitive] %v", err)
+		// Continue — history failure shouldn't block stats write
+	} else if historyWrite != nil {
+		pending.AddStorageWrite(historyWrite)
+	}
+
+	// Commit both writes atomically
+	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
+		logger.Warn("[competitive] Atomic commit failed for user %s match %s: %v", userID, req.MatchID, err)
+		// Non-fatal: partial failure is acceptable for async stats updates
+		return nil
+	}
+
+	return nil
 }

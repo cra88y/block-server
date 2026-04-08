@@ -48,11 +48,6 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		len(items.GameData.PieceStyles),
 		len(items.GameData.LevelTrees))
 
-	// Bootstrap leaderboards (idempotent — safe to call on every startup).
-	// solo_global / solo_weekly: BEST operator (highest single-run score wins).
-	// 1v1_global  / 1v1_weekly:  INCREMENT operator (win count accumulates).
-	// Weekly boards reset Monday midnight UTC (≥0 0 * * 1⊹).
-	// Global boards have no reset schedule; wipe manually on major balance patches.
 	for _, lb := range []struct {
 		id, sortOrder, operator, reset string
 	}{
