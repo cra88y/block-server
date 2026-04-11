@@ -1,4 +1,5 @@
 {
+  "version": null,
   "items": {
     "pets": {
       "0": {
@@ -14,7 +15,11 @@
         "styleIds": [
           0
         ],
-        "levelTreeName": "pet_basic"
+        "levelTreeName": "pet_basic",
+        "baseAttack": 15,
+        "attackScalePercent": 10,
+        "baseHealth": 90,
+        "healthScalePercent": 5
       },
       "1": {
         "name": "White Dragon",
@@ -29,7 +34,11 @@
         "styleIds": [
           0
         ],
-        "levelTreeName": "pet_basic"
+        "levelTreeName": "pet_basic",
+        "baseAttack": 15,
+        "attackScalePercent": 10,
+        "baseHealth": 90,
+        "healthScalePercent": 5
       },
       "2": {
         "name": "Froggie",
@@ -44,7 +53,11 @@
         "styleIds": [
           0
         ],
-        "levelTreeName": "pet_basic"
+        "levelTreeName": "pet_basic",
+        "baseAttack": 15,
+        "attackScalePercent": 9,
+        "baseHealth": 110,
+        "healthScalePercent": 6
       }
     },
     "classes": {
@@ -61,7 +74,11 @@
         "styleIds": [
           3
         ],
-        "levelTreeName": "class_basic"
+        "levelTreeName": "class_basic",
+        "baseAttack": 0,
+        "attackScalePercent": 0,
+        "baseHealth": 0,
+        "healthScalePercent": 0
       },
       "0": {
         "name": "Knight",
@@ -76,7 +93,11 @@
         "styleIds": [
           4
         ],
-        "levelTreeName": "class_basic"
+        "levelTreeName": "class_basic",
+        "baseAttack": 0,
+        "attackScalePercent": 0,
+        "baseHealth": 0,
+        "healthScalePercent": 0
       },
       "2": {
         "name": "Mage",
@@ -91,7 +112,11 @@
         "styleIds": [
           6
         ],
-        "levelTreeName": "class_basic"
+        "levelTreeName": "class_basic",
+        "baseAttack": 0,
+        "attackScalePercent": 0,
+        "baseHealth": 0,
+        "healthScalePercent": 0
       }
     },
     "backgrounds": {
@@ -275,9 +300,9 @@
     }
   },
   "economy": {
-    "win_xp": 50,
-    "loss_xp": 20,
-    "tokens_per_round_win": 2,
+    "win_xp": 100,
+    "loss_xp": 25,
+    "tokens_per_round_win": 3,
     "tokens_per_round_loss": 1,
     "tokens_per_solo_round": 1,
     "token_exchange_thresh": 6,

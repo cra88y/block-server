@@ -24,11 +24,14 @@ func LoadGameData() error {
 	var parseErrors []error
 	GameDataOnce.Do(func() {
 		var raw struct {
-			Pets        map[string]Pet        `json:"pets"`
-			Classes     map[string]Class      `json:"classes"`
-			Backgrounds map[string]Background `json:"backgrounds"`
-			PieceStyles map[string]PieceStyle `json:"piece_styles"`
-			LevelTrees  map[string]LevelTree  `json:"level_trees"`
+			Items struct {
+				Pets        map[string]Pet        `json:"pets"`
+				Classes     map[string]Class      `json:"classes"`
+				Backgrounds map[string]Background `json:"backgrounds"`
+				PieceStyles map[string]PieceStyle `json:"piece_styles"`
+				LevelTrees  map[string]LevelTree  `json:"level_trees"`
+			} `json:"items"`
+			Economy EconomyConfig `json:"economy"`
 		}
 
 		if err := json.Unmarshal(gamedata, &raw); err != nil {
@@ -36,15 +39,16 @@ func LoadGameData() error {
 			return
 		}
 
+		economyConfig = &raw.Economy
 		GameData = &GameDataStruct{
-			Pets:        make(map[uint32]*Pet, len(raw.Pets)),
-			Classes:     make(map[uint32]*Class, len(raw.Classes)),
-			Backgrounds: make(map[uint32]Background, len(raw.Backgrounds)),
-			PieceStyles: make(map[uint32]PieceStyle, len(raw.PieceStyles)),
-			LevelTrees:  make(map[string]LevelTree, len(raw.LevelTrees)),
+			Pets:        make(map[uint32]*Pet, len(raw.Items.Pets)),
+			Classes:     make(map[uint32]*Class, len(raw.Items.Classes)),
+			Backgrounds: make(map[uint32]Background, len(raw.Items.Backgrounds)),
+			PieceStyles: make(map[uint32]PieceStyle, len(raw.Items.PieceStyles)),
+			LevelTrees:  make(map[string]LevelTree, len(raw.Items.LevelTrees)),
 		}
 
-		for name, tree := range raw.LevelTrees {
+		for name, tree := range raw.Items.LevelTrees {
 			t := tree
 			t.LevelThresholds = make([]int, t.MaxLevel+1)
 			cumulative := 0
@@ -55,7 +59,7 @@ func LoadGameData() error {
 			GameData.LevelTrees[name] = t
 		}
 
-		for k, v := range raw.Pets {
+		for k, v := range raw.Items.Pets {
 			id, err := strconv.ParseUint(k, 10, 32)
 			if err != nil {
 				parseErrors = append(parseErrors, fmt.Errorf("invalid pet ID %q: %w", k, err))
@@ -76,7 +80,7 @@ func LoadGameData() error {
 			}
 		}
 
-		for k, v := range raw.Classes {
+		for k, v := range raw.Items.Classes {
 			id, err := strconv.ParseUint(k, 10, 32)
 			if err != nil {
 				parseErrors = append(parseErrors, fmt.Errorf("invalid class ID %q: %w", k, err))
@@ -97,7 +101,7 @@ func LoadGameData() error {
 			}
 		}
 
-		for k, v := range raw.Backgrounds {
+		for k, v := range raw.Items.Backgrounds {
 			id, err := strconv.ParseUint(k, 10, 32)
 			if err != nil {
 				parseErrors = append(parseErrors, fmt.Errorf("invalid background ID %q: %w", k, err))
@@ -106,7 +110,7 @@ func LoadGameData() error {
 			GameData.Backgrounds[uint32(id)] = v
 		}
 
-		for k, v := range raw.PieceStyles {
+		for k, v := range raw.Items.PieceStyles {
 			id, err := strconv.ParseUint(k, 10, 32)
 			if err != nil {
 				parseErrors = append(parseErrors, fmt.Errorf("invalid piece style ID %q: %w", k, err))
@@ -232,3 +236,4 @@ func createAbilitySet(ids []uint32) map[uint32]struct{} {
 	}
 	return set
 }
+
