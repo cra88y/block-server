@@ -21,6 +21,10 @@ type Pet struct {
 	BackgroundIDs []uint32 `json:"backgroundIds"`
 	StyleIDs      []uint32 `json:"styleIds"`
 	LevelTreeName string   `json:"levelTreeName"`
+	BaseAttack         int    `json:"baseAttack"`
+	AttackScalePercent int    `json:"attackScalePercent"`
+	BaseHealth         int    `json:"baseHealth"`
+	HealthScalePercent int    `json:"healthScalePercent"`
 }
 
 type Class struct {
@@ -31,6 +35,10 @@ type Class struct {
 	BackgroundIDs []uint32 `json:"backgroundIds"`
 	StyleIDs      []uint32 `json:"styleIds"`
 	LevelTreeName string   `json:"levelTreeName"`
+	BaseAttack         int    `json:"baseAttack"`
+	AttackScalePercent int    `json:"attackScalePercent"`
+	BaseHealth         int    `json:"baseHealth"`
+	HealthScalePercent int    `json:"healthScalePercent"`
 }
 
 type Background struct {
@@ -194,10 +202,17 @@ type MatchResultRequest struct {
 	MatchDurationSec  int           `json:"match_duration_sec"`
 	EquippedPetID     uint32        `json:"equipped_pet_id"`
 	EquippedClassID   uint32        `json:"equipped_class_id"`
+	OpponentPetID     uint32        `json:"opponent_pet_id,omitempty"`
+	OpponentClassID   uint32        `json:"opponent_class_id,omitempty"`
 	RoundsWon         int           `json:"rounds_won"`
 	RoundsLost        int           `json:"rounds_lost"`
 	Rounds            []RoundResult `json:"rounds"`             // Per-round history; server validates plausibility
 	OpponentForfeited bool          `json:"opponent_forfeited"` // Whether the opponent forfeited the match
+	AbilitiesCast     int           `json:"abilities_cast"`
+	APM               int           `json:"apm"`
+	PiecesPlaced      int           `json:"pieces_placed"`
+	TowerHeight       int           `json:"tower_height"`
+	OpponentName      string        `json:"opponent_name,omitempty"`
 }
 
 // ─── Leaderboard & Competitive System ───────────────────────────────────────
@@ -251,15 +266,26 @@ type MatchHistoryEntry struct {
 	Schema      int    `json:"schema"` // always MatchHistoryEntrySchema
 	MatchID     string `json:"match_id"`
 	Mode        string `json:"mode"`  // "solo" | "1v1"
-	Score       int    `json:"score"` // FinalScore
-	OpponentID  string `json:"opponent_id,omitempty"`
-	Won         bool   `json:"won"`
-	RoundsWon   int    `json:"rounds_won"`
-	RoundsLost  int    `json:"rounds_lost"`
-	DurationSec int    `json:"duration_sec"`
-	Rating      *int   `json:"rating,omitempty"`       // player rating at match time; nil until ELO
-	RatingDelta *int   `json:"rating_delta,omitempty"` // ELO delta applied; nil until ELO
-	PlayedAt    int64  `json:"played_at"`
+	Score        int    `json:"score"` // FinalScore
+	OpponentID   string `json:"opponent_id,omitempty"`
+	OpponentName string `json:"opponent_name,omitempty"`
+	Won          bool   `json:"won"`
+	MyPetID         uint32 `json:"my_pet_id,omitempty"`
+	MyClassID       uint32 `json:"my_class_id,omitempty"`
+	OpponentPetID   uint32 `json:"opponent_pet_id"`
+	OpponentClassID uint32 `json:"opponent_class_id"`
+
+	AbilitiesCast int `json:"abilities_cast"`
+	APM           int `json:"apm"`
+
+	RoundsWon    int    `json:"rounds_won"`
+	RoundsLost   int    `json:"rounds_lost"`
+	DurationSec  int    `json:"duration_sec"`
+	PiecesPlaced int    `json:"pieces_placed"`
+	TowerHeight  int    `json:"tower_height"`
+	Rating       *int   `json:"rating,omitempty"`       // player rating at match time; nil until ELO
+	RatingDelta  *int   `json:"rating_delta,omitempty"` // ELO delta applied; nil until ELO
+	PlayedAt     int64  `json:"played_at"`
 }
 
 // ─── RPC request/response types ─────────────────────────────────────────────
@@ -313,3 +339,26 @@ type MatchHistoryResponse struct {
 	Entries    []MatchHistoryEntry `json:"entries"`
 	NextCursor string              `json:"next_cursor,omitempty"`
 }
+
+// GetUsersLoadoutsPayload is the request payload for get_users_loadouts
+type GetUsersLoadoutsPayload struct {
+	UserIDs []string `json:"user_ids"`
+}
+
+// PlayerLoadout represents the authoritative stats for a player entering a match
+type PlayerLoadout struct {
+	PetID          uint32 `json:"pet_id"`
+	PetLevel       int    `json:"pet_level"`
+	PetAbilityID   uint32 `json:"pet_ability_id"`
+	ClassID        uint32 `json:"class_id"`
+	ClassLevel     int    `json:"class_level"`
+	ClassAbilityID uint32 `json:"class_ability_id"`
+	ThemeID        uint32 `json:"theme_id"`
+	BackgroundID   uint32 `json:"background_id"`
+}
+
+
+
+
+
+

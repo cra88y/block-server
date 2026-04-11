@@ -69,6 +69,10 @@ func LoadGameData() error {
 				BackgroundIDs: v.BackgroundIDs,
 				StyleIDs:      v.StyleIDs,
 				LevelTreeName: v.LevelTreeName,
+				BaseAttack:         v.BaseAttack,
+				AttackScalePercent: v.AttackScalePercent,
+				BaseHealth:         v.BaseHealth,
+				HealthScalePercent: v.HealthScalePercent,
 			}
 		}
 
@@ -86,6 +90,10 @@ func LoadGameData() error {
 				BackgroundIDs: v.BackgroundIDs,
 				StyleIDs:      v.StyleIDs,
 				LevelTreeName: v.LevelTreeName,
+				BaseAttack:         v.BaseAttack,
+				AttackScalePercent: v.AttackScalePercent,
+				BaseHealth:         v.BaseHealth,
+				HealthScalePercent: v.HealthScalePercent,
 			}
 		}
 

@@ -2,6 +2,7 @@ package items
 
 import (
 	"context"
+	"fmt"
 	"database/sql"
 	"encoding/json"
 	"strings"
@@ -872,3 +873,107 @@ func RpcClaimAllProgressionRewards(ctx context.Context, logger runtime.Logger, d
 
 	return string(respBytes), nil
 }
+
+
+func RpcGetUsersLoadouts(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
+	var req GetUsersLoadoutsPayload
+	if err := json.Unmarshal([]byte(payload), &req); err != nil {
+		logger.Error("Failed to parse get_users_loadouts payload: %v", err)
+		return "", errors.ErrUnmarshal
+	}
+
+	if len(req.UserIDs) == 0 {
+		return "{}", nil
+	}
+
+	loadouts := make(map[string]PlayerLoadout)
+
+	for _, userID := range req.UserIDs {
+		// Prepare reads for equipment
+		reads := []*runtime.StorageRead{
+			{Collection: storageCollectionEquipment, Key: storageKeyPet, UserID: userID},
+			{Collection: storageCollectionEquipment, Key: storageKeyClass, UserID: userID},
+			{Collection: storageCollectionEquipment, Key: storageKeyBackground, UserID: userID},
+			{Collection: storageCollectionEquipment, Key: storageKeyPieceStyle, UserID: userID},
+		}
+
+		objs, err := nk.StorageRead(ctx, reads)
+		if err != nil {
+			logger.WithFields(map[string]interface{}{
+				"user":  userID,
+				"error": err.Error(),
+			}).Error("Equipment storage read failure in get_users_loadouts")
+			continue
+		}
+
+		loadout := PlayerLoadout{
+			PetID:        DefaultPetID,
+			PetLevel:     1,
+			ClassID:      DefaultClassID,
+			ClassLevel:   1,
+			BackgroundID: DefaultBackgroundID,
+			ThemeID:      DefaultPieceStyleID,
+		}
+
+		for _, obj := range objs {
+			if obj == nil {
+				continue
+			}
+
+			var data EquipmentData
+			if err := json.Unmarshal([]byte(obj.Value), &data); err == nil {
+				switch obj.Key {
+				case storageKeyPet:
+					loadout.PetID = data.ID
+				case storageKeyClass:
+					loadout.ClassID = data.ID
+				case storageKeyBackground:
+					loadout.BackgroundID = data.ID
+				case storageKeyPieceStyle:
+					loadout.ThemeID = data.ID
+				}
+			}
+		}
+
+		petKey := fmt.Sprintf("%s%d", ProgressionKeyPet, loadout.PetID)
+		classKey := fmt.Sprintf("%s%d", ProgressionKeyClass, loadout.ClassID)
+
+		progReads := []*runtime.StorageRead{
+			{Collection: storageCollectionProgression, Key: petKey, UserID: userID},
+			{Collection: storageCollectionProgression, Key: classKey, UserID: userID},
+		}
+
+		progObjs, err := nk.StorageRead(ctx, progReads)
+		if err == nil {
+			for _, pObj := range progObjs {
+				if pObj == nil {
+					continue
+				}
+				var prog ItemProgression
+				if err := json.Unmarshal([]byte(pObj.Value), &prog); err == nil {
+					if pObj.Key == petKey {
+						loadout.PetLevel = prog.Level
+						if loadout.PetLevel < 1 { loadout.PetLevel = 1 }
+						loadout.PetAbilityID = uint32(prog.EquippedAbility)
+					} else if pObj.Key == classKey {
+						loadout.ClassLevel = prog.Level
+						if loadout.ClassLevel < 1 { loadout.ClassLevel = 1 }
+						loadout.ClassAbilityID = uint32(prog.EquippedAbility)
+					}
+				}
+			}
+		}
+
+		loadouts[userID] = loadout
+	}
+
+	resp, err := json.Marshal(loadouts)
+	if err != nil {
+		logger.Error("Failed to marshal get_users_loadouts response: %v", err)
+		return "", errors.ErrMarshal
+	}
+
+	return string(resp), nil
+}
+
+

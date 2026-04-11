@@ -200,6 +200,11 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		return err
 	}
 
+	if err := initializer.RegisterRpc("get_users_loadouts", items.RpcGetUsersLoadouts); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
+
 	// Social RPCs
 	if err := initializer.RegisterRpc("send_game_invite", items.RpcSendGameInvite); err != nil {
 		logger.Error("Unable to register: %v", err)
@@ -225,3 +230,4 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 	logger.Info("Plugin loaded in '%d' msec.", time.Since(initStart).Milliseconds())
 	return nil
 }
+
