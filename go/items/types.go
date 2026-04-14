@@ -73,7 +73,7 @@ const (
 	storageKeyClass            = "classes"      // [0,1,2]
 	storageKeyBackground       = "backgrounds"  // [0,1,2,3]
 	storageKeyPieceStyle       = "piece_styles" // [0]
-	storageKeyPlayer           = "player"       // Singleton — ID 0 is always the local player
+	storageKeyPlayer           = "player"       // Singleton â€” ID 0 is always the local player
 
 	storageCollectionEquipment   = "equipment"
 	storageCollectionProgression = "progression"
@@ -93,7 +93,7 @@ type ItemProgression struct {
 	EquippedSprite  int `json:"es"`
 
 	UnlockedAbilityIndices ClaimedIndices `json:"au"`
-	UnlockedSpriteIndices  []uint32       `json:"su"`
+	UnlockedSpriteIndices ClaimedSpriteIndices `json:"su"`
 	BackgroundsUnlocked    int            `json:"bu"`
 	PieceStylesUnlocked    int            `json:"pu"`
 
@@ -103,6 +103,36 @@ type ItemProgression struct {
 }
 
 // ClaimedIndices is []int32 with migration from old int format
+type ClaimedSpriteIndices []uint32
+
+func (c *ClaimedSpriteIndices) UnmarshalJSON(data []byte) error {
+	var arr []uint32
+	if err := json.Unmarshal(data, &arr); err == nil {
+		if arr == nil {
+			arr = []uint32{}
+		}
+		*c = ClaimedSpriteIndices(arr)
+		return nil
+	}
+
+	var n uint32
+	if err := json.Unmarshal(data, &n); err != nil {
+		return fmt.Errorf("ClaimedSpriteIndices: expected int or array, got %s", string(data))
+	}
+
+	if n <= 0 {
+		*c = ClaimedSpriteIndices{}
+		return nil
+	}
+
+	result := make([]uint32, n)
+	for i := range result {
+		result[i] = uint32(i)
+	}
+	*c = ClaimedSpriteIndices(result)
+	return nil
+}
+
 type ClaimedIndices []int32
 
 // UnmarshalJSON handles migration from old AbilitiesUnlocked int format
@@ -117,7 +147,7 @@ func (c *ClaimedIndices) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	// Try int (old format) — migrate
+	// Try int (old format) â€” migrate
 	var n int
 	if err := json.Unmarshal(data, &n); err != nil {
 		return fmt.Errorf("ClaimedIndices: expected int or array, got %s", string(data))
@@ -184,7 +214,7 @@ type PetTreatRequest struct {
 }
 
 // RoundResult is one player's self-reported round outcome, embedded in MatchResultRequest.Rounds[].
-// The server cross-validates this against RoundRecord (written by report_round_result) —
+// The server cross-validates this against RoundRecord (written by report_round_result) â€”
 // discrepancies between the two streams are the primary audit signal.
 type RoundResult struct {
 	RoundNumber int   `json:"round"`
@@ -215,12 +245,12 @@ type MatchResultRequest struct {
 	OpponentName      string        `json:"opponent_name,omitempty"`
 }
 
-// ─── Leaderboard & Competitive System ───────────────────────────────────────
+// â”€â”€â”€ Leaderboard & Competitive System â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const (
-	// Leaderboard IDs — must match LeaderboardCreate calls in InitModule.
-	// solo_* : BEST operator — highest single-run score wins.
-	// 1v1_*  : INCREMENT operator — win count accumulates, resets per cadence.
+	// Leaderboard IDs â€” must match LeaderboardCreate calls in InitModule.
+	// solo_* : BEST operator â€” highest single-run score wins.
+	// 1v1_*  : INCREMENT operator â€” win count accumulates, resets per cadence.
 	//
 	// Season boards (no auto-reset): manually wiped at major balance patches / season boundaries.
 	// Weekly boards:                 auto-reset Monday midnight UTC.
@@ -236,7 +266,7 @@ const (
 	storageCollectionMatchHistory     = "match_history"
 	maxMatchHistoryPerUser            = 100
 
-	// Schema versions — bump on breaking struct changes.
+	// Schema versions â€” bump on breaking struct changes.
 	PlayerStatsSchema       = 1
 	MatchHistoryEntrySchema = 1
 )
@@ -261,7 +291,7 @@ type PlayerStats struct {
 // MatchHistoryEntry is a single match record, written after each completed match.
 // Collection: match_history, Key: matchID+"_"+userID, UserID: playerID.
 // Append-only and idempotent (same key overwrites with equivalent data).
-// Rating and RatingDelta are nil until ELO is active — nil != 0.
+// Rating and RatingDelta are nil until ELO is active â€” nil != 0.
 type MatchHistoryEntry struct {
 	Schema      int    `json:"schema"` // always MatchHistoryEntrySchema
 	MatchID     string `json:"match_id"`
@@ -288,7 +318,7 @@ type MatchHistoryEntry struct {
 	PlayedAt     int64  `json:"played_at"`
 }
 
-// ─── RPC request/response types ─────────────────────────────────────────────
+// â”€â”€â”€ RPC request/response types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // LeaderboardRequest fetches a board's top entries + the caller's own record.
 type LeaderboardRequest struct {

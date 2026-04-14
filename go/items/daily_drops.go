@@ -72,7 +72,7 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 		return errors.ErrDropsAlreadyClaimed
 	}
 
-	// Prepare wallet changeset without committing — prevents free-drops exploit
+	// Prepare wallet changeset without committing Ã¢â‚¬â€ prevents free-drops exploit
 	// if the timestamp write were to fail after an immediate WalletUpdate.
 	changeset, newTotal, err := prepareCappedDrops(ctx, nk, logger, userID, dailyDropGrantCount)
 	if err != nil {
@@ -105,7 +105,7 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 	pending.AddStorageWrite(&runtime.StorageWrite{
 		Collection:      storageCollectionDrops,
 		Key:             storageKeyDaily,
-		// PermissionRead: 1 — drops state is private (last claim time is PII-adjacent).
+		// PermissionRead: 1 Ã¢â‚¬â€ drops state is private (last claim time is PII-adjacent).
 		// Other game data uses 2 (public) for leaderboard/social features.
 		// daily_matches uses 0 (server-only) since it's a rate-limit counter.
 		PermissionRead:  1,

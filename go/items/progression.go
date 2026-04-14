@@ -81,6 +81,8 @@ func PrepareProgressionUpdate(ctx context.Context, nk runtime.NakamaModule, logg
 		return nil, nil, err
 	}
 
+	oldValue, _ := json.Marshal(prog)
+
 	if err := updateFunc(prog); err != nil {
 		LogWithUser(ctx, logger, "error", "Failed to apply progression update", map[string]interface{}{
 			"error":          err,
@@ -90,8 +92,12 @@ func PrepareProgressionUpdate(ctx context.Context, nk runtime.NakamaModule, logg
 		return nil, nil, err
 	}
 
-	key := progressionKey + strconv.Itoa(int(itemID))
 	value, err := json.Marshal(prog)
+	if string(oldValue) == string(value) {
+		return prog, nil, nil
+	}
+
+	key := progressionKey + strconv.Itoa(int(itemID))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to marshal progression: %w", err)
 	}
