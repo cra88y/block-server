@@ -25,6 +25,12 @@ type ShopConfig struct {
 	ShopItems      []ShopItem                `json:"shop_items"`
 	RotationConfig RotationConfig            `json:"rotation_config"`
 	IAPProducts    []IAPProduct              `json:"iap_products"`
+	ItemPools      map[string][]PoolItem     `json:"item_pools"`
+}
+
+type PoolItem struct {
+	Type string `json:"type"` // "background", "piece_style", "pet", "class"
+	ID   uint32 `json:"id"`
 }
 
 type ExchangeRates struct {
@@ -38,11 +44,19 @@ type LootboxTierDef struct {
 }
 
 type DropTable struct {
-	Gold       DropRange `json:"gold"`
-	Gems       DropRange `json:"gems"`
-	Treats     DropRange `json:"treats"`
-	ItemChance float64   `json:"item_chance"`
-	ItemPools  []string  `json:"item_pools"`
+	Gold      DropRange `json:"gold"`
+	Gems      DropRange `json:"gems"`
+	Treats    DropRange `json:"treats"`
+	ItemPools []PoolRef `json:"item_pools"`
+}
+
+// PoolRef defines a named item pool with its independent drop chance (0.0–1.0).
+// Each pool is evaluated independently, so a box can drop from multiple pools
+// on a single open if you configure it that way. Mutually exclusive designs
+// can be achieved by keeping chances low and non-overlapping.
+type PoolRef struct {
+	Pool   string  `json:"pool"`
+	Chance float64 `json:"chance"`
 }
 
 type DropRange struct {

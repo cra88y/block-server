@@ -205,6 +205,11 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		return err
 	}
 
+	if err := initializer.RegisterRpc("delete_account", items.RpcDeleteAccount); err != nil {
+		logger.Error("Unable to register delete_account: %v", err)
+		return err
+	}
+
 	// Social RPCs
 	if err := initializer.RegisterRpc("send_game_invite", items.RpcSendGameInvite); err != nil {
 		logger.Error("Unable to register: %v", err)

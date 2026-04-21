@@ -53,12 +53,12 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 	}
 	pending.AddWalletUpdate(userID, walletChangeset)
 
-	// Add all items to inventory
-	if err := prepareAllItemGrants(ctx, nk, logger, userID, pending); err != nil {
+	// Grant only starter items to new accounts. Full catalog grants are prohibited here.
+	if err := GiveStarterItemsToUser(ctx, nk, logger, userID); err != nil {
 		logger.WithFields(map[string]interface{}{
 			"user":  userID,
 			"error": err.Error(),
-		}).Error("Failed to prepare item grants for initialization")
+		}).Error("Failed to grant starter items during initialization")
 		return err
 	}
 
@@ -153,25 +153,29 @@ func prepareAllItemGrants(ctx context.Context, nk runtime.NakamaModule, logger r
 }
 
 // GiveStarterItemsToUser grants only starter items atomically.
+// Item IDs are driven by starter_pack config in items.json.
 func GiveStarterItemsToUser(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) error {
 	pending := NewPendingWrites()
+	pack := GetStarterPack()
 
-	items := []struct {
-		itemType string
-		itemID   uint32
+	grants := []struct {
+		key string
+		ids []uint32
 	}{
-		{storageKeyPet, DefaultPetID},
-		{storageKeyClass, DefaultClassID},
-		{storageKeyBackground, DefaultBackgroundID},
-		{storageKeyPieceStyle, DefaultPieceStyleID},
+		{storageKeyPet, pack.Pets},
+		{storageKeyClass, pack.Classes},
+		{storageKeyBackground, pack.Backgrounds},
+		{storageKeyPieceStyle, pack.PieceStyles},
 	}
 
-	for _, item := range items {
-		itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, item.itemType, item.itemID)
-		if err != nil {
-			return err
+	for _, g := range grants {
+		for _, id := range g.ids {
+			p, err := PrepareItemGrant(ctx, nk, logger, userID, g.key, id)
+			if err != nil {
+				return err
+			}
+			pending.Merge(p)
 		}
-		pending.Merge(itemPending)
 	}
 
 	return CommitPendingWrites(ctx, nk, logger, pending)

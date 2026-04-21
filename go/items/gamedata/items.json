@@ -1,5 +1,6 @@
 {
   "version": null,
+  "config_version": "20260421-0222",
   "items": {
     "pets": {
       "0": {
@@ -140,14 +141,122 @@
       }
     },
     "piece_styles": {
+      "20": {
+        "name": "ALKALINE6"
+      },
+      "53": {
+        "name": "AUTUMN DECAY"
+      },
+      "26": {
+        "name": "BERRIES AND CREAM"
+      },
       "7": {
         "name": "Blackout"
+      },
+      "9": {
+        "name": "Blood Moon"
+      },
+      "21": {
+        "name": "BLOOD MOON 2"
+      },
+      "31": {
+        "name": "BLUEBERRY VANILLA"
+      },
+      "54": {
+        "name": "CLOUDFRENZY"
+      },
+      "39": {
+        "name": "COMPLIMENT6"
+      },
+      "16": {
+        "name": "Crimson Twilight"
+      },
+      "57": {
+        "name": "CRYPTIC OCEAN"
+      },
+      "59": {
+        "name": "CURIOSITIES"
+      },
+      "52": {
+        "name": "CYBERGUM6"
+      },
+      "56": {
+        "name": "CYCLOPE6"
+      },
+      "10": {
+        "name": "Deep Sea Trench"
+      },
+      "55": {
+        "name": "DNO\u0027T FROGET"
       },
       "0": {
         "name": "Tealeous"
       },
+      "47": {
+        "name": "EGGDEALER6"
+      },
+      "48": {
+        "name": "ENBYDIADE6"
+      },
+      "45": {
+        "name": "ENCHANTED 6"
+      },
+      "60": {
+        "name": "FAUST"
+      },
+      "29": {
+        "name": "GOLDEN 6"
+      },
+      "13": {
+        "name": "Golden Hour"
+      },
+      "33": {
+        "name": "GRAPE SODA ARCADE"
+      },
       "1": {
         "name": "Teal to Gray"
+      },
+      "22": {
+        "name": "GREENLINE"
+      },
+      "58": {
+        "name": "HOPE DIAMOND"
+      },
+      "36": {
+        "name": "ICE CREAM SPICE"
+      },
+      "51": {
+        "name": "ICYWITCH"
+      },
+      "28": {
+        "name": "LAVENDERTOWN"
+      },
+      "19": {
+        "name": "LIBERTY"
+      },
+      "11": {
+        "name": "Matcha Latte"
+      },
+      "40": {
+        "name": "MESQUITA\u0027S MONOCHROMATIC RED"
+      },
+      "25": {
+        "name": "MOCHA"
+      },
+      "49": {
+        "name": "MOLTEN"
+      },
+      "14": {
+        "name": "Monochrome Noir"
+      },
+      "50": {
+        "name": "MONOMETALIC"
+      },
+      "24": {
+        "name": "NOELLE\u0027S ROOM"
+      },
+      "15": {
+        "name": "Oil"
       },
       "2": {
         "name": "Drab Paints"
@@ -158,14 +267,62 @@
       "4": {
         "name": "Purplink"
       },
+      "27": {
+        "name": "PINK MARSHMALLOWS 6"
+      },
+      "37": {
+        "name": "PINK NEON SIGN 6"
+      },
+      "44": {
+        "name": "PUFFBALL-6"
+      },
       "5": {
         "name": "Vibrant Seas"
+      },
+      "46": {
+        "name": "ROBOTS ARE COOL!"
+      },
+      "35": {
+        "name": "ROYALGUARD"
       },
       "6": {
         "name": "Teal Seas"
       },
+      "30": {
+        "name": "SEOUL CITY"
+      },
+      "42": {
+        "name": "SEPIA6"
+      },
+      "18": {
+        "name": "Sorbet"
+      },
+      "38": {
+        "name": "TEAVIIE"
+      },
+      "17": {
+        "name": "Toxic Swamp"
+      },
+      "43": {
+        "name": "UNICORN 6"
+      },
+      "12": {
+        "name": "Vaporwave Dream"
+      },
+      "34": {
+        "name": "VICRON"
+      },
+      "41": {
+        "name": "VINTAGE VOLTAGE"
+      },
+      "23": {
+        "name": "WEIRD OCEAN"
+      },
       "8": {
         "name": "Whiteout"
+      },
+      "32": {
+        "name": "YAMAZAKI"
       }
     },
     "level_trees": {
@@ -307,5 +464,23 @@
     "tokens_per_solo_round": 1,
     "token_exchange_thresh": 6,
     "token_round_cap": 3
+  },
+  "starter_pack": {
+    "pets": [
+      0
+    ],
+    "classes": [
+      0
+    ],
+    "backgrounds": [
+      0
+    ],
+    "piece_styles": [
+      0,
+      8
+    ]
+  },
+  "version_requirements": {
+    "min_client_version": "0.71"
   }
 }

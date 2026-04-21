@@ -976,4 +976,56 @@ func RpcGetUsersLoadouts(ctx context.Context, logger runtime.Logger, db *sql.DB,
 	return string(resp), nil
 }
 
+func RpcDeleteAccount(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
+		logger.Error("No user ID found in context for account deletion")
+		return "", errors.ErrNoUserIdFound
+	}
+
+	// Wipe all user storage collections
+	collections := []string{
+		storageCollectionInventory,
+		storageCollectionEquipment,
+		storageCollectionProgression,
+		storageCollectionShopHistory,
+		"telemetry",
+		"telemetry_stats",
+		"daily_drops",
+	}
+
+	for _, col := range collections {
+		objects, _, err := nk.StorageList(ctx, userID, userID, col, 100, "")
+		if err != nil {
+			logger.Warn("Failed to list storage for collection %s during account deletion: %v", col, err)
+			continue
+		}
+
+		var deletes []*runtime.StorageDelete
+		for _, o := range objects {
+			deletes = append(deletes, &runtime.StorageDelete{
+				Collection: col,
+				Key:        o.Key,
+				UserID:     userID,
+			})
+		}
+
+		if len(deletes) > 0 {
+			if err := nk.StorageDelete(ctx, deletes); err != nil {
+				logger.Warn("Failed to delete storage objects in collection %s: %v", col, err)
+			}
+		}
+	}
+
+	// iap_purchases: anonymize, not delete (v1 acceptable to wipe for pre-revenue TestFlight)
+	
+	if err := nk.AccountDeleteId(ctx, userID, false); err != nil {
+		logger.Error("Failed to delete Nakama account: %v", err)
+		return "", errors.ErrInternalError
+	}
+
+	logger.Info("Account %s successfully deleted, memory scrubbed.", userID)
+	return "{}", nil
+}
+
 

@@ -3,26 +3,261 @@
         "gold_per_gem": 100,
         "treats_per_gem": 5
     },
+    "item_pools": {
+        "backgrounds": [
+            {
+                "type": "background",
+                "id": 1
+            },
+            {
+                "type": "background",
+                "id": 2
+            },
+            {
+                "type": "background",
+                "id": 3
+            }
+        ],
+        "piece_styles": [
+            {
+                "type": "piece_style",
+                "id": 0
+            },
+            {
+                "type": "piece_style",
+                "id": 1
+            },
+            {
+                "type": "piece_style",
+                "id": 2
+            },
+            {
+                "type": "piece_style",
+                "id": 3
+            },
+            {
+                "type": "piece_style",
+                "id": 4
+            },
+            {
+                "type": "piece_style",
+                "id": 5
+            },
+            {
+                "type": "piece_style",
+                "id": 6
+            },
+            {
+                "type": "piece_style",
+                "id": 7
+            },
+            {
+                "type": "piece_style",
+                "id": 8
+            },
+            {
+                "type": "piece_style",
+                "id": 10
+            },
+            {
+                "type": "piece_style",
+                "id": 11
+            },
+            {
+                "type": "piece_style",
+                "id": 12
+            },
+            {
+                "type": "piece_style",
+                "id": 14
+            },
+            {
+                "type": "piece_style",
+                "id": 15
+            },
+            {
+                "type": "piece_style",
+                "id": 16
+            },
+            {
+                "type": "piece_style",
+                "id": 17
+            },
+            {
+                "type": "piece_style",
+                "id": 18
+            },
+            {
+                "type": "piece_style",
+                "id": 19
+            },
+            {
+                "type": "piece_style",
+                "id": 20
+            },
+            {
+                "type": "piece_style",
+                "id": 21
+            },
+            {
+                "type": "piece_style",
+                "id": 23
+            },
+            {
+                "type": "piece_style",
+                "id": 24
+            },
+            {
+                "type": "piece_style",
+                "id": 25
+            },
+            {
+                "type": "piece_style",
+                "id": 27
+            },
+            {
+                "type": "piece_style",
+                "id": 28
+            },
+            {
+                "type": "piece_style",
+                "id": 29
+            },
+            {
+                "type": "piece_style",
+                "id": 31
+            },
+            {
+                "type": "piece_style",
+                "id": 32
+            },
+            {
+                "type": "piece_style",
+                "id": 33
+            },
+            {
+                "type": "piece_style",
+                "id": 34
+            },
+            {
+                "type": "piece_style",
+                "id": 35
+            },
+            {
+                "type": "piece_style",
+                "id": 36
+            },
+            {
+                "type": "piece_style",
+                "id": 37
+            },
+            {
+                "type": "piece_style",
+                "id": 39
+            },
+            {
+                "type": "piece_style",
+                "id": 42
+            },
+            {
+                "type": "piece_style",
+                "id": 43
+            },
+            {
+                "type": "piece_style",
+                "id": 45
+            },
+            {
+                "type": "piece_style",
+                "id": 46
+            },
+            {
+                "type": "piece_style",
+                "id": 48
+            },
+            {
+                "type": "piece_style",
+                "id": 49
+            },
+            {
+                "type": "piece_style",
+                "id": 50
+            },
+            {
+                "type": "piece_style",
+                "id": 51
+            },
+            {
+                "type": "piece_style",
+                "id": 55
+            },
+            {
+                "type": "piece_style",
+                "id": 56
+            },
+            {
+                "type": "piece_style",
+                "id": 58
+            },
+            {
+                "type": "piece_style",
+                "id": 59
+            }
+        ],
+        "premium_piece_styles": [
+            {
+                "type": "piece_style",
+                "id": 4
+            }
+        ],
+        "pets": [
+            {
+                "type": "pet",
+                "id": 1
+            },
+            {
+                "type": "pet",
+                "id": 2
+            },
+            {
+                "type": "pet",
+                "id": 3
+            }
+        ],
+        "classes": [
+            {
+                "type": "class",
+                "id": 1
+            },
+            {
+                "type": "class",
+                "id": 2
+            },
+            {
+                "type": "class",
+                "id": 3
+            }
+        ]
+    },
     "lootbox_tiers": {
         "standard": {
             "price_gems": 0,
             "drop_table": {
                 "gold": {
-                    "min": 50,
-                    "max": 150
+                    "min": 200,
+                    "max": 300
                 },
                 "gems": {
                     "min": 0,
-                    "max": 0
+                    "max": 1
                 },
                 "treats": {
                     "min": 1,
-                    "max": 2
+                    "max": 5
                 },
-                "item_chance": 0.15,
                 "item_pools": [
-                    "backgrounds",
-                    "piece_styles"
+                    { "pool": "backgrounds",  "chance": 0.01 },
+                    { "pool": "piece_styles",  "chance": 0.01 }
                 ]
             }
         },
@@ -41,12 +276,12 @@
                     "min": 2,
                     "max": 4
                 },
-                "item_chance": 0.50,
                 "item_pools": [
-                    "backgrounds",
-                    "piece_styles",
-                    "pets",
-                    "classes"
+                    { "pool": "backgrounds",         "chance": 0.05 },
+                    { "pool": "piece_styles",         "chance": 0.10 },
+                    { "pool": "premium_piece_styles", "chance": 0.03 },
+                    { "pool": "pets",                 "chance": 0.02 },
+                    { "pool": "classes",              "chance": 0.02 }
                 ]
             }
         }

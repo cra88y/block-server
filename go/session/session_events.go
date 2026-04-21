@@ -71,9 +71,8 @@ func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtim
 			logger.WithField("err", err).Warn("daily drops claim failed")
 		}
 
-		if err := items.GiveAllItemsToUser(ctx, nk, logger, userID); err != nil {
-			logger.WithField("err", err).Error("failed to give all items to user on session start")
-		}
+		// DO NOT add GiveAllItemsToUser here. Dev convenience only.
+		// New-user item grants belong in initialize_user.go, guarded by out.Created.
 
 		report, err := items.VerifyAndFixUserProgression(ctx, nk, logger, userID)
 		if err != nil {

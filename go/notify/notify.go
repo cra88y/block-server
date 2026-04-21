@@ -55,7 +55,8 @@ type RewardPayload struct {
 	Lootboxes   []LootboxGrant    `json:"lootboxes,omitempty"`
 
 	// Meta (non-reward feedback)
-	Meta *RewardMeta `json:"meta,omitempty"`
+	Meta        *RewardMeta       `json:"meta,omitempty"`
+	DisplayTier string            `json:"display_tier,omitempty"`
 }
 
 // Client-side inventory state must be add-only. No removals.

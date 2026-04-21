@@ -175,10 +175,7 @@ func RpcOpenLootbox(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 	}
 
 	// Tier for display
-	result.Lootboxes = []notify.LootboxGrant{{
-		ID:   lootbox.ID,
-		Tier: lootbox.Tier,
-	}}
+	result.DisplayTier = lootbox.Tier
 
 	respBytes, err := json.Marshal(result)
 	if err != nil {
@@ -243,23 +240,48 @@ func generateLootboxContents(ctx context.Context, nk runtime.NakamaModule, userI
 		ItemTypes: make([]string, 0),
 	}
 
-	if rand.Float64() < dt.ItemChance && len(dt.ItemPools) > 0 {
-		itemType, itemID := pickRandomItemFromPools(dt.ItemPools, ownedItems)
-		if itemID > 0 {
-			contents.Items = append(contents.Items, itemID)
-			contents.ItemTypes = append(contents.ItemTypes, itemType)
+	// Each pool rolls independently — a single open can theoretically drop
+	// from multiple pools if configured that way.
+	for _, poolRef := range dt.ItemPools {
+		if rand.Float64() < poolRef.Chance {
+			itemType, itemID := pickRandomItemFromPool(poolRef.Pool, ownedItems)
+			if itemID > 0 {
+				contents.Items = append(contents.Items, itemID)
+				contents.ItemTypes = append(contents.ItemTypes, itemType)
+			}
 		}
 	}
 
 	return contents, nil
 }
 
-func pickRandomItemFromPools(pools []string, ownedItems map[string][]uint32) (string, uint32) {
-	if len(pools) == 0 {
+// pickRandomItemFromPool picks a single unowned item from a single named pool.
+func pickRandomItemFromPool(poolName string, ownedItems map[string][]uint32) (string, uint32) {
+	shopCfg := GetShopConfig()
+	if shopCfg == nil || len(shopCfg.ItemPools) == 0 {
 		return "", 0
 	}
 
-	// Helper to check if item is owned
+	poolItems, ok := shopCfg.ItemPools[poolName]
+	if !ok || len(poolItems) == 0 {
+		return "", 0
+	}
+
+	typeToStorageKey := func(t string) string {
+		switch t {
+		case "background":
+			return storageKeyBackground
+		case "piece_style":
+			return storageKeyPieceStyle
+		case "pet":
+			return storageKeyPet
+		case "class":
+			return storageKeyClass
+		default:
+			return ""
+		}
+	}
+
 	isOwned := func(storageKey string, itemID uint32) bool {
 		for _, id := range ownedItems[storageKey] {
 			if id == itemID {
@@ -269,66 +291,20 @@ func pickRandomItemFromPools(pools []string, ownedItems map[string][]uint32) (st
 		return false
 	}
 
-	// Helper to filter owned items from a pool
-	filterOwned := func(storageKey string, allIDs []uint32) []uint32 {
-		available := make([]uint32, 0, len(allIDs))
-		for _, id := range allIDs {
-			if !isOwned(storageKey, id) {
-				available = append(available, id)
-			}
-		}
-		return available
-	}
-
-	// Shuffle pools to try different ones if first is exhausted
-	shuffledPools := make([]string, len(pools))
-	copy(shuffledPools, pools)
-	rand.Shuffle(len(shuffledPools), func(i, j int) {
-		shuffledPools[i], shuffledPools[j] = shuffledPools[j], shuffledPools[i]
-	})
-
-	for _, pool := range shuffledPools {
-		var storageKey string
-		var allIDs []uint32
-
-		switch pool {
-		case "backgrounds":
-			storageKey = storageKeyBackground
-			allIDs = make([]uint32, 0, len(GameData.Backgrounds))
-			for id := range GameData.Backgrounds {
-				allIDs = append(allIDs, id)
-			}
-		case "piece_styles":
-			storageKey = storageKeyPieceStyle
-			allIDs = make([]uint32, 0, len(GameData.PieceStyles))
-			for id := range GameData.PieceStyles {
-				allIDs = append(allIDs, id)
-			}
-		case "pets":
-			storageKey = storageKeyPet
-			allIDs = make([]uint32, 0, len(GameData.Pets))
-			for id := range GameData.Pets {
-				allIDs = append(allIDs, id)
-			}
-		case "classes":
-			storageKey = storageKeyClass
-			allIDs = make([]uint32, 0, len(GameData.Classes))
-			for id := range GameData.Classes {
-				allIDs = append(allIDs, id)
-			}
-		default:
-			continue
-		}
-
-		// Filter out owned items
-		available := filterOwned(storageKey, allIDs)
-		if len(available) > 0 {
-			return pool, available[rand.Intn(len(available))]
+	available := make([]PoolItem, 0, len(poolItems))
+	for _, item := range poolItems {
+		storageKey := typeToStorageKey(item.Type)
+		if storageKey != "" && !isOwned(storageKey, item.ID) {
+			available = append(available, item)
 		}
 	}
 
-	// All pools exhausted (player owns everything)
-	return "", 0
+	if len(available) == 0 {
+		return "", 0
+	}
+
+	picked := available[rand.Intn(len(available))]
+	return picked.Type, picked.ID
 }
 
 func randomRange(min, max int) int {

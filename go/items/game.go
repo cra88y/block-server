@@ -14,8 +14,11 @@ import (
 var gamedata []byte
 
 var (
-	GameData     *GameDataStruct
-	GameDataOnce sync.Once
+	GameData         *GameDataStruct
+	GameDataOnce     sync.Once
+	starterPack      *StarterPack
+	configVersion    string
+	minClientVersion string
 )
 
 // LoadGameData loads and parses game data from embedded JSON
@@ -31,7 +34,12 @@ func LoadGameData() error {
 				PieceStyles map[string]PieceStyle `json:"piece_styles"`
 				LevelTrees  map[string]LevelTree  `json:"level_trees"`
 			} `json:"items"`
-			Economy EconomyConfig `json:"economy"`
+			Economy          EconomyConfig `json:"economy"`
+			StarterPack      StarterPack   `json:"starter_pack"`
+			ConfigVersion    string        `json:"config_version"`
+			VersionRequirements struct {
+				MinClientVersion string `json:"min_client_version"`
+			} `json:"version_requirements"`
 		}
 
 		if err := json.Unmarshal(gamedata, &raw); err != nil {
@@ -40,6 +48,9 @@ func LoadGameData() error {
 		}
 
 		economyConfig = &raw.Economy
+		starterPack = &raw.StarterPack
+		configVersion = raw.ConfigVersion
+		minClientVersion = raw.VersionRequirements.MinClientVersion
 		GameData = &GameDataStruct{
 			Pets:        make(map[uint32]*Pet, len(raw.Items.Pets)),
 			Classes:     make(map[uint32]*Class, len(raw.Items.Classes)),
@@ -66,13 +77,13 @@ func LoadGameData() error {
 				continue
 			}
 			GameData.Pets[uint32(id)] = &Pet{
-				Name:          v.Name,
-				SpriteCount:   v.SpriteCount,
-				AbilityIDs:    v.AbilityIDs,
-				AbilitySet:    createAbilitySet(v.AbilityIDs),
-				BackgroundIDs: v.BackgroundIDs,
-				StyleIDs:      v.StyleIDs,
-				LevelTreeName: v.LevelTreeName,
+				Name:               v.Name,
+				SpriteCount:        v.SpriteCount,
+				AbilityIDs:         v.AbilityIDs,
+				AbilitySet:         createAbilitySet(v.AbilityIDs),
+				BackgroundIDs:      v.BackgroundIDs,
+				StyleIDs:           v.StyleIDs,
+				LevelTreeName:      v.LevelTreeName,
 				BaseAttack:         v.BaseAttack,
 				AttackScalePercent: v.AttackScalePercent,
 				BaseHealth:         v.BaseHealth,
@@ -87,13 +98,13 @@ func LoadGameData() error {
 				continue
 			}
 			GameData.Classes[uint32(id)] = &Class{
-				Name:          v.Name,
-				SpriteCount:   v.SpriteCount,
-				AbilityIDs:    v.AbilityIDs,
-				AbilitySet:    createAbilitySet(v.AbilityIDs),
-				BackgroundIDs: v.BackgroundIDs,
-				StyleIDs:      v.StyleIDs,
-				LevelTreeName: v.LevelTreeName,
+				Name:               v.Name,
+				SpriteCount:        v.SpriteCount,
+				AbilityIDs:         v.AbilityIDs,
+				AbilitySet:         createAbilitySet(v.AbilityIDs),
+				BackgroundIDs:      v.BackgroundIDs,
+				StyleIDs:           v.StyleIDs,
+				LevelTreeName:      v.LevelTreeName,
 				BaseAttack:         v.BaseAttack,
 				AttackScalePercent: v.AttackScalePercent,
 				BaseHealth:         v.BaseHealth,
@@ -237,3 +248,29 @@ func createAbilitySet(ids []uint32) map[uint32]struct{} {
 	return set
 }
 
+// GetStarterPack returns the starter item pack configuration.
+// Falls back to default IDs [0, 0, 0, 0] if not configured in items.json.
+func GetStarterPack() *StarterPack {
+	if starterPack != nil {
+		return starterPack
+	}
+	// Fallback defaults
+	return &StarterPack{
+		Pets:        []uint32{0},
+		Classes:     []uint32{0},
+		Backgrounds: []uint32{0},
+		PieceStyles: []uint32{0},
+	}
+}
+
+// GetConfigVersion returns the data config version stamped at export time.
+// Empty string means the embedded items.json predates this feature.
+func GetConfigVersion() string {
+	return configVersion
+}
+
+// GetMinClientVersion returns the minimum client version required for online play.
+// Empty string means no gate is currently enforced.
+func GetMinClientVersion() string {
+	return minClientVersion
+}

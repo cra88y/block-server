@@ -11,34 +11,42 @@ type GameDataStruct struct {
 	Backgrounds map[uint32]Background `json:"backgrounds"`
 	PieceStyles map[uint32]PieceStyle `json:"piece_styles"`
 	LevelTrees  map[string]LevelTree  `json:"level_trees"`
+	StarterPack *StarterPack          `json:"starter_pack,omitempty"`
+}
+
+type StarterPack struct {
+	Pets        []uint32 `json:"pets"`
+	Classes     []uint32 `json:"classes"`
+	Backgrounds []uint32 `json:"backgrounds"`
+	PieceStyles []uint32 `json:"piece_styles"`
 }
 
 type Pet struct {
-	Name          string   `json:"name"`
-	SpriteCount   int      `json:"spriteCount"`
-	AbilityIDs    []uint32 `json:"abilityIds"`
-	AbilitySet    map[uint32]struct{}
-	BackgroundIDs []uint32 `json:"backgroundIds"`
-	StyleIDs      []uint32 `json:"styleIds"`
-	LevelTreeName string   `json:"levelTreeName"`
-	BaseAttack         int    `json:"baseAttack"`
-	AttackScalePercent int    `json:"attackScalePercent"`
-	BaseHealth         int    `json:"baseHealth"`
-	HealthScalePercent int    `json:"healthScalePercent"`
+	Name               string   `json:"name"`
+	SpriteCount        int      `json:"spriteCount"`
+	AbilityIDs         []uint32 `json:"abilityIds"`
+	AbilitySet         map[uint32]struct{}
+	BackgroundIDs      []uint32 `json:"backgroundIds"`
+	StyleIDs           []uint32 `json:"styleIds"`
+	LevelTreeName      string   `json:"levelTreeName"`
+	BaseAttack         int      `json:"baseAttack"`
+	AttackScalePercent int      `json:"attackScalePercent"`
+	BaseHealth         int      `json:"baseHealth"`
+	HealthScalePercent int      `json:"healthScalePercent"`
 }
 
 type Class struct {
-	Name          string   `json:"name"`
-	SpriteCount   int      `json:"spriteCount"`
-	AbilityIDs    []uint32 `json:"abilityIds"`
-	AbilitySet    map[uint32]struct{}
-	BackgroundIDs []uint32 `json:"backgroundIds"`
-	StyleIDs      []uint32 `json:"styleIds"`
-	LevelTreeName string   `json:"levelTreeName"`
-	BaseAttack         int    `json:"baseAttack"`
-	AttackScalePercent int    `json:"attackScalePercent"`
-	BaseHealth         int    `json:"baseHealth"`
-	HealthScalePercent int    `json:"healthScalePercent"`
+	Name               string   `json:"name"`
+	SpriteCount        int      `json:"spriteCount"`
+	AbilityIDs         []uint32 `json:"abilityIds"`
+	AbilitySet         map[uint32]struct{}
+	BackgroundIDs      []uint32 `json:"backgroundIds"`
+	StyleIDs           []uint32 `json:"styleIds"`
+	LevelTreeName      string   `json:"levelTreeName"`
+	BaseAttack         int      `json:"baseAttack"`
+	AttackScalePercent int      `json:"attackScalePercent"`
+	BaseHealth         int      `json:"baseHealth"`
+	HealthScalePercent int      `json:"healthScalePercent"`
 }
 
 type Background struct {
@@ -92,10 +100,10 @@ type ItemProgression struct {
 	EquippedAbility int `json:"ea"`
 	EquippedSprite  int `json:"es"`
 
-	UnlockedAbilityIndices ClaimedIndices `json:"au"`
-	UnlockedSpriteIndices ClaimedSpriteIndices `json:"su"`
-	BackgroundsUnlocked    int            `json:"bu"`
-	PieceStylesUnlocked    int            `json:"pu"`
+	UnlockedAbilityIndices ClaimedIndices       `json:"au"`
+	UnlockedSpriteIndices  ClaimedSpriteIndices `json:"su"`
+	BackgroundsUnlocked    int                  `json:"bu"`
+	PieceStylesUnlocked    int                  `json:"pu"`
 
 	UnclaimedRewards []int `json:"ur,omitempty"`
 
@@ -293,13 +301,13 @@ type PlayerStats struct {
 // Append-only and idempotent (same key overwrites with equivalent data).
 // Rating and RatingDelta are nil until ELO is active â€” nil != 0.
 type MatchHistoryEntry struct {
-	Schema      int    `json:"schema"` // always MatchHistoryEntrySchema
-	MatchID     string `json:"match_id"`
-	Mode        string `json:"mode"`  // "solo" | "1v1"
-	Score        int    `json:"score"` // FinalScore
-	OpponentID   string `json:"opponent_id,omitempty"`
-	OpponentName string `json:"opponent_name,omitempty"`
-	Won          bool   `json:"won"`
+	Schema          int    `json:"schema"` // always MatchHistoryEntrySchema
+	MatchID         string `json:"match_id"`
+	Mode            string `json:"mode"`  // "solo" | "1v1"
+	Score           int    `json:"score"` // FinalScore
+	OpponentID      string `json:"opponent_id,omitempty"`
+	OpponentName    string `json:"opponent_name,omitempty"`
+	Won             bool   `json:"won"`
 	MyPetID         uint32 `json:"my_pet_id,omitempty"`
 	MyClassID       uint32 `json:"my_class_id,omitempty"`
 	OpponentPetID   uint32 `json:"opponent_pet_id"`
@@ -308,14 +316,14 @@ type MatchHistoryEntry struct {
 	AbilitiesCast int `json:"abilities_cast"`
 	APM           int `json:"apm"`
 
-	RoundsWon    int    `json:"rounds_won"`
-	RoundsLost   int    `json:"rounds_lost"`
-	DurationSec  int    `json:"duration_sec"`
-	PiecesPlaced int    `json:"pieces_placed"`
-	TowerHeight  int    `json:"tower_height"`
-	Rating       *int   `json:"rating,omitempty"`       // player rating at match time; nil until ELO
-	RatingDelta  *int   `json:"rating_delta,omitempty"` // ELO delta applied; nil until ELO
-	PlayedAt     int64  `json:"played_at"`
+	RoundsWon    int   `json:"rounds_won"`
+	RoundsLost   int   `json:"rounds_lost"`
+	DurationSec  int   `json:"duration_sec"`
+	PiecesPlaced int   `json:"pieces_placed"`
+	TowerHeight  int   `json:"tower_height"`
+	Rating       *int  `json:"rating,omitempty"`       // player rating at match time; nil until ELO
+	RatingDelta  *int  `json:"rating_delta,omitempty"` // ELO delta applied; nil until ELO
+	PlayedAt     int64 `json:"played_at"`
 }
 
 // â”€â”€â”€ RPC request/response types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -386,9 +394,3 @@ type PlayerLoadout struct {
 	ThemeID        uint32 `json:"theme_id"`
 	BackgroundID   uint32 `json:"background_id"`
 }
-
-
-
-
-
-
