@@ -274,3 +274,27 @@ func GetConfigVersion() string {
 func GetMinClientVersion() string {
 	return minClientVersion
 }
+
+// IsVersionValid compares client version vs minimum required using simple semantic checking.
+func IsVersionValid(clientVer, minReq string) bool {
+	if minReq == "" {
+		return true
+	}
+	if clientVer == "" {
+		return false
+	}
+	parseParts := func(v string) (int, int) {
+		var major, minor int
+		fmt.Sscanf(v, "%d.%d", &major, &minor)
+		return major, minor
+	}
+	cMaj, cMin := parseParts(clientVer)
+	mMaj, mMin := parseParts(minReq)
+
+	if cMaj < mMaj {
+		return false
+	} else if cMaj == mMaj {
+		return cMin >= mMin
+	}
+	return true
+}

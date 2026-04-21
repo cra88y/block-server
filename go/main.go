@@ -9,6 +9,7 @@ import (
 	"block-server/session"
 
 	"github.com/heroiclabs/nakama-common/runtime"
+	"github.com/heroiclabs/nakama-common/rtapi"
 )
 
 // startTelemetryCleanup starts a goroutine that periodically cleans up old telemetry data
@@ -73,7 +74,45 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
+	// Define the unified realtime version gate
+	versionGateHook := func(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, in *rtapi.Envelope) (*rtapi.Envelope, error) {
+		vars, ok := ctx.Value(runtime.RUNTIME_CTX_VARS).(map[string]string)
+		if !ok || !items.IsVersionValid(vars["app_version"], items.GetMinClientVersion()) {
+			return nil, runtime.NewError("version_mismatch", 13)
+		}
+		if items.GetConfigVersion() != "" && vars["config_version"] != items.GetConfigVersion() {
+			return nil, runtime.NewError("config_mismatch", 14)
+		}
+		return in, nil
+	}
+
+	// Apply version gate to all multiplayer entrypoints
+	rtHooks := []string{"MatchmakerAdd", "MatchJoin", "MatchCreate"}
+	for _, hook := range rtHooks {
+		if err := initializer.RegisterBeforeRt(hook, versionGateHook); err != nil {
+			logger.Error("Unable to register %s hook: %v", hook, err)
+			return err
+		}
+	}
+
+	// Middleware to enforce client version on critical RPCs
+	requireClientVersion := func(next func(context.Context, runtime.Logger, *sql.DB, runtime.NakamaModule, string) (string, error)) func(context.Context, runtime.Logger, *sql.DB, runtime.NakamaModule, string) (string, error) {
+		return func(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
+			vars, ok := ctx.Value(runtime.RUNTIME_CTX_VARS).(map[string]string)
+			if !ok || !items.IsVersionValid(vars["app_version"], items.GetMinClientVersion()) {
+				return "", runtime.NewError("version_mismatch", 13)
+			}
+			if items.GetConfigVersion() != "" && vars["config_version"] != items.GetConfigVersion() {
+				return "", runtime.NewError("config_mismatch", 14)
+			}
+			return next(ctx, logger, db, nk, payload)
+		}
+	}
 	if err := initializer.RegisterRpc("get_inventory", items.RpcGetInventory); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
+	if err := initializer.RegisterRpc("get_server_meta", items.RpcGetServerMeta); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
@@ -85,67 +124,67 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("get_progression", items.RpcGetProgression); err != nil {
+	if err := initializer.RegisterRpc("get_progression", requireClientVersion(items.RpcGetProgression)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("use_pet_treat", items.RpcUsePetTreat); err != nil {
+	if err := initializer.RegisterRpc("use_pet_treat", requireClientVersion(items.RpcUsePetTreat)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("use_gold_for_class_xp", items.RpcUseGoldForClassXP); err != nil {
+	if err := initializer.RegisterRpc("use_gold_for_class_xp", requireClientVersion(items.RpcUseGoldForClassXP)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("claim_progression_reward", items.RpcClaimProgressionReward); err != nil {
+	if err := initializer.RegisterRpc("claim_progression_reward", requireClientVersion(items.RpcClaimProgressionReward)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("claim_all_progression_rewards", items.RpcClaimAllProgressionRewards); err != nil {
+	if err := initializer.RegisterRpc("claim_all_progression_rewards", requireClientVersion(items.RpcClaimAllProgressionRewards)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("equip_class", items.RpcEquipClass); err != nil {
+	if err := initializer.RegisterRpc("equip_class", requireClientVersion(items.RpcEquipClass)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("equip_pet", items.RpcEquipPet); err != nil {
+	if err := initializer.RegisterRpc("equip_pet", requireClientVersion(items.RpcEquipPet)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("equip_class_ability", items.RpcEquipClassAbility); err != nil {
+	if err := initializer.RegisterRpc("equip_class_ability", requireClientVersion(items.RpcEquipClassAbility)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("equip_pet_ability", items.RpcEquipPetAbility); err != nil {
+	if err := initializer.RegisterRpc("equip_pet_ability", requireClientVersion(items.RpcEquipPetAbility)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("equip_background", items.RpcEquipBackground); err != nil {
+	if err := initializer.RegisterRpc("equip_background", requireClientVersion(items.RpcEquipBackground)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("equip_piece_style", items.RpcEquipPieceStyle); err != nil {
+	if err := initializer.RegisterRpc("equip_piece_style", requireClientVersion(items.RpcEquipPieceStyle)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("notify_match_start", items.RpcNotifyMatchStart); err != nil {
+	if err := initializer.RegisterRpc("notify_match_start", requireClientVersion(items.RpcNotifyMatchStart)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("report_round_result", items.RpcReportRoundResult); err != nil {
+	if err := initializer.RegisterRpc("report_round_result", requireClientVersion(items.RpcReportRoundResult)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("submit_match_result", items.RpcSubmitMatchResult); err != nil {
+	if err := initializer.RegisterRpc("submit_match_result", requireClientVersion(items.RpcSubmitMatchResult)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("get_lootboxes", items.RpcGetLootboxes); err != nil {
+	if err := initializer.RegisterRpc("get_lootboxes", requireClientVersion(items.RpcGetLootboxes)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("open_lootbox", items.RpcOpenLootbox); err != nil {
+	if err := initializer.RegisterRpc("open_lootbox", requireClientVersion(items.RpcOpenLootbox)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
@@ -161,11 +200,11 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("purchase_shop_item", items.RpcPurchaseShopItem); err != nil {
+	if err := initializer.RegisterRpc("purchase_shop_item", requireClientVersion(items.RpcPurchaseShopItem)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
-	if err := initializer.RegisterRpc("purchase_lootbox", items.RpcPurchaseLootbox); err != nil {
+	if err := initializer.RegisterRpc("purchase_lootbox", requireClientVersion(items.RpcPurchaseLootbox)); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
 	}
