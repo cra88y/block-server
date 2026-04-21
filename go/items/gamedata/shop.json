@@ -256,8 +256,14 @@
                     "max": 5
                 },
                 "item_pools": [
-                    { "pool": "backgrounds",  "chance": 0.01 },
-                    { "pool": "piece_styles",  "chance": 0.01 }
+                    {
+                        "pool": "backgrounds",
+                        "chance": 0.01
+                    },
+                    {
+                        "pool": "piece_styles",
+                        "chance": 0.1
+                    }
                 ]
             }
         },
@@ -277,11 +283,26 @@
                     "max": 4
                 },
                 "item_pools": [
-                    { "pool": "backgrounds",         "chance": 0.05 },
-                    { "pool": "piece_styles",         "chance": 0.10 },
-                    { "pool": "premium_piece_styles", "chance": 0.03 },
-                    { "pool": "pets",                 "chance": 0.02 },
-                    { "pool": "classes",              "chance": 0.02 }
+                    {
+                        "pool": "backgrounds",
+                        "chance": 0.05
+                    },
+                    {
+                        "pool": "piece_styles",
+                        "chance": 0.10
+                    },
+                    {
+                        "pool": "premium_piece_styles",
+                        "chance": 0.03
+                    },
+                    {
+                        "pool": "pets",
+                        "chance": 0.02
+                    },
+                    {
+                        "pool": "classes",
+                        "chance": 0.02
+                    }
                 ]
             }
         }
