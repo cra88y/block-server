@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/heroiclabs/nakama-common/runtime"
@@ -128,7 +129,7 @@ func PrepareMatchHistoryEntry(userID string, req *MatchResultRequest, isSolo boo
 
 	return &runtime.StorageWrite{
 		Collection:      storageCollectionMatchHistory,
-		Key:             req.MatchID + "_" + userID,
+		Key:             fmt.Sprintf("%020d_%s_%s", math.MaxInt64-entry.PlayedAt, req.MatchID, userID),
 		UserID:          userID,
 		Value:           string(value),
 		PermissionRead:  1, // Owner-only: match history is personal data
@@ -137,12 +138,10 @@ func PrepareMatchHistoryEntry(userID string, req *MatchResultRequest, isSolo boo
 }
 
 // UpdatePlayerStatsAndHistory writes competitive stats and match history.
-// Stats and history are committed in separate operations so that an OCC conflict
-// on stats (stale version field) never silently prevents the history record from landing.
-// History has no version field and is therefore conflict-free.
+// Commits are separate to prevent OCC stats conflicts from dropping history writes.
 func UpdatePlayerStatsAndHistory(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool, won bool, opponentID string) error {
 
-	// --- Stats write (may fail on OCC conflict; non-fatal) ---
+	// Stats write (non-fatal on OCC conflict)
 	statsWrite, err := PreparePlayerStatsUpdate(ctx, nk, userID, req, isSolo, won)
 	if err != nil {
 		logger.Warn("[competitive] stats prepare failed for user %s match %s: %v", userID, req.MatchID, err)

@@ -80,10 +80,9 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 		return err
 	}
 
-	// Nothing to grant (already at cap)
+	// Always consume the claim timestamp to prevent banking refreshes for later in the day.
 	if changeset == nil {
-		logger.Info("[DailyDrops] User %s already at cap (%d). Skipping refill.", userID, newTotal)
-		return nil
+		logger.Info("[DailyDrops] User %s already at cap (%d). Consuming daily claim timestamp.", userID, newTotal)
 	}
 
 	// Build timestamp write
@@ -101,7 +100,9 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 
 	// Commit wallet + timestamp atomically via MultiUpdate
 	pending := NewPendingWrites()
-	pending.AddWalletUpdate(userID, changeset)
+	if changeset != nil {
+		pending.AddWalletUpdate(userID, changeset)
+	}
 	pending.AddStorageWrite(&runtime.StorageWrite{
 		Collection:      storageCollectionDrops,
 		Key:             storageKeyDaily,

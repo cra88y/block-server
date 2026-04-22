@@ -56,10 +56,7 @@ func RpcNotifyMatchStart(ctx context.Context, logger runtime.Logger, db *sql.DB,
 		return "", errors.ErrInvalidInput
 	}
 
-	// Unconditionally overwrite any existing active match lock.
-	// This gracefully handles players abandoning a match mid-game and starting a new one.
-	// Since we record a fresh StartTime, the player must still satisfy minMatchDurationMs
-	// for the new match, ensuring security is preserved.
+	// Overwrite active match lock. Player must still satisfy minMatchDurationMs.
 
 	activeMatch := ActiveMatch{
 		MatchID:    req.MatchID,
@@ -162,10 +159,7 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	case "conflict":
 		logger.Warn("Match %s: Both players claimed victory. Voiding win for user %s", req.MatchID, userID)
 		actualWon = false
-		// No retroactive penalty under the token economy: tokens are computed per-player at
-		// submission time from their own round history. There is no shared ledger to unwind.
-		// NOTE: req.Won is set to false below via req.Won = actualWon, but req.RoundsWon is NOT
-		// zeroed — the player still earns tokens from their round history in a conflict.
+		// No shared ledger to unwind; players earn token baseline from round history even in conflict.
 
 	case "ok", "forfeit_win":
 		// Second submitter (or unilateral forfeit winner): grant ourselves full rewards
@@ -256,19 +250,14 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		}
 	}
 
-	// SYNCHRONOUS: Write leaderboard records and capture rank for response payload.
-	// Must occur before marshaling — LeaderboardRank is included in the cached response.
-	// Failure is non-fatal: logs and returns rank=0 (omitted from response via omitempty).
+	// Synchronous: Write leaderboard records (sets LeaderboardRank in payload). Non-fatal on err.
 	leaderboardRank := writeLeaderboardRecords(ctx, nk, logger, userID, &req, isSolo, actualWon)
 	if leaderboardRank > 0 {
 		result.LeaderboardRank = leaderboardRank
 	}
 
-	// SYNCHRONOUS: Write match history before caching the response.
-	// History must land before the cache is written — once the cache exists, any client retry
-	// returns the cached response immediately without re-entering this path. If history were
-	// written async (goroutine) and the goroutine failed transiently, the cache would mask the
-	// failure permanently. History has no OCC version field and is conflict-free.
+	// Synchronous history write must precede cache write.
+	// Prevents transient failures from being permanently masked by the idempotency cache.
 	historyWrite, historyPrepErr := PrepareMatchHistoryEntry(userID, &req, isSolo, actualWon, activeMatch.OpponentID)
 	if historyPrepErr != nil {
 		logger.Warn("[competitive] history prepare failed for user %s match %s: %v — proceeding without history", userID, req.MatchID, historyPrepErr)
@@ -281,15 +270,10 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		}
 	}
 
-	// ASYNC: Update competitive stats only (OCC-tolerant; off-by-one is acceptable).
-	// MatchHistoryExists is retained as a fast-path skip on duplicate goroutine invocations.
+	// ASYNC: Update competitive stats (OCC-tolerant).
 	reqCopy := req
 	go func() {
 		bgCtx := context.Background()
-		if MatchHistoryExists(bgCtx, nk, userID, reqCopy.MatchID) {
-			// History exists → stats were attempted (or this is a duplicate goroutine). Skip.
-			return
-		}
 		statsWrite, err := PreparePlayerStatsUpdate(bgCtx, nk, userID, &reqCopy, isSolo, actualWon)
 		if err != nil {
 			logger.Warn("[competitive] stats prepare failed for user %s match %s: %v", userID, reqCopy.MatchID, err)
@@ -332,16 +316,13 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 }
 
 const (
-	// minMatchDurationMs: server-enforced floor. Any match shorter than this is rejected.
-	// This is the primary anti-farming gate — no wall-clock inter-submission cooldown needed.
+	// minMatchDurationMs: floor gate for anti-farming.
 	minMatchDurationMs = 10000 // 10 seconds
 
-	// maxMatchDurationMs: stale-session ceiling for 1v1 matches.
-	// No competitive match physically lasts longer than 10 minutes; beyond this the session is abandoned.
+	// maxMatchDurationMs: 1v1 stale session ceiling.
 	maxMatchDurationMs = 600000 // 10 minutes
 
-	// maxSoloMatchDurationMs: stale-session ceiling for solo matches.
-	// Solo has no consensus deadline — a player can run long survival sessions.
+	// maxSoloMatchDurationMs: solo stale session ceiling.
 	// Use a 1-hour ceiling purely to clean up sessions from crashed/uninstalled clients.
 	maxSoloMatchDurationMs = 60 * 60 * 1000 // 1 hour
 
@@ -568,11 +549,8 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 
 	var tokensEarned int
 	var postTokens int64
-	var willExchange bool
-
 	if tokensBanked > 0 {
 		postTokens = preTokens
-		willExchange = preTokens >= int64(cfg.TokenExchangeThresh) && preDrops >= 1
 		logger.Info("Match %s: %d tokens pre-banked, skipping delta (audit_confirmed)", req.MatchID, tokensBanked)
 	} else {
 		// Fallback: no round records — network failure, legacy client, or pre-Phase2 solo.
@@ -581,43 +559,58 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 			tokensEarned = 0
 		}
 		postTokens = preTokens + int64(tokensEarned)
-		willExchange = postTokens >= int64(cfg.TokenExchangeThresh) && preDrops >= 1
 		if tokensEarned > 0 {
 			logger.Info("Match %s: no round records, granting %d tokens (audit_unconfirmed)", req.MatchID, tokensEarned)
 		}
 	}
 
-	// If no slots remain, clamp at threshold (no infinite banking).
-	if !willExchange && preDrops <= 0 && postTokens > int64(cfg.TokenExchangeThresh) {
-		postTokens = int64(cfg.TokenExchangeThresh)
-	}
+	// Token -> Lootbox Exchange Loop
+	thresh := int64(cfg.TokenExchangeThresh)
+	finalTokens := postTokens
+	finalDrops := preDrops
+	exchangesMade := 0
 
-	if willExchange {
-		// Calculate the exact delta needed to exchange the threshold tokens.
-		// If tokensEarned > 0, we must credit them simultaneously.
-		walletDelta := int64(tokensEarned) - int64(cfg.TokenExchangeThresh)
+	for finalTokens >= thresh && finalDrops >= 1 {
+		finalTokens -= thresh
+		finalDrops--
+		exchangesMade++
 
 		pending.AddWalletUpdate(userID, map[string]int64{
-			walletKeyRoundTokens: walletDelta,
+			walletKeyRoundTokens: -thresh,
 			walletKeyDropsLeft:   -1,
 		})
+
 		tier := GetLootboxConfig().MatchLossTier
 		if req.Won {
 			tier = GetLootboxConfig().MatchWinTier
 		}
+
 		if lootbox, lootboxWrite, lboxErr := PrepareCreateLootbox(userID, tier); lboxErr == nil {
 			pending.AddStorageWrite(lootboxWrite)
-			result.Lootboxes = []notify.LootboxGrant{{
+			result.Lootboxes = append(result.Lootboxes, notify.LootboxGrant{
 				ID:     lootbox.ID,
 				Tier:   lootbox.Tier,
 				Source: "token_exchange",
-			}}
+			})
 		}
-	} else if tokensEarned > 0 {
+	}
+
+	// If no slots remain, clamp at threshold (no infinite banking).
+	if finalDrops <= 0 && finalTokens > thresh {
+		finalTokens = thresh
+	}
+
+	// If we haven't made any exchanges but earned new tokens, credit them now.
+	// (If we made exchanges, the thresh deductions are already in 'pending').
+	if exchangesMade == 0 && tokensEarned > 0 {
 		delta := postTokens - preTokens
 		if delta > 0 {
 			pending.AddWalletUpdate(userID, map[string]int64{walletKeyRoundTokens: delta})
 		}
+	} else if exchangesMade > 0 && tokensEarned > 0 {
+		// We made exchanges AND earned tokens. The loop only deducted 'thresh * exchanges'.
+		// We still need to credit the base 'tokensEarned'.
+		pending.AddWalletUpdate(userID, map[string]int64{walletKeyRoundTokens: int64(tokensEarned)})
 	}
 
 	// --- Phase 2: Atomic commit (XP + tokens + exchange + lootbox) ---
@@ -629,17 +622,14 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	// StorageDelete cannot go in MultiUpdate; runs after commit.
 	clearActiveMatch(ctx, nk, logger, userID)
 
-	// --- Metadata: derived from pre-read + deltas — no second AccountGetId ---
-	finalTokens := postTokens
-	finalDrops := preDrops
-	if willExchange {
-		// Freeze tokens at the threshold so the client UI animates cleanly to 100%
-		finalDrops--
-		finalTokens = int64(cfg.TokenExchangeThresh)
+	// --- Metadata: derived from final state — no second AccountGetId ---
+	// If an exchange happened, we "freeze" the display tokens at the threshold
+	// for the first exchange to ensure the client UI animates cleanly to 100%.
+	displayTokens := finalTokens
+	if exchangesMade > 0 {
+		displayTokens = thresh
 	}
-	// In the pre-bank path tokensEarned==0 (no new grant was made here), but the
-	// client end-screen needs the actual delta earned this match to animate correctly.
-	// Use tokensBanked (already committed by report_round_result RPCs) as the display value.
+
 	effectiveEarned := tokensEarned
 	if tokensBanked > 0 {
 		effectiveEarned = tokensBanked
@@ -647,18 +637,14 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	result.Meta = &notify.RewardMeta{
 		DailyMatches:   notify.IntPtr(matchesToday),
 		DropsRemaining: notify.IntPtr(int(finalDrops)),
-		RoundTokens:    notify.IntPtr(int(finalTokens)),
+		RoundTokens:    notify.IntPtr(int(displayTokens)),
 		TokensEarned:   notify.IntPtr(effectiveEarned),
 	}
 
 	return result, nil
 }
 
-// processDeferredWinBonus is a no-op under the round-token economy.
-//
-// Gold win bonus is removed. Round tokens are computed symmetrically: each player earns
-// tokens from their own round history at submission time — there is no deferred per-player
-// top-up. The caller still invokes this function on the "ok" consensus path; returning
+// processDeferredWinBonus is a no-op cyrrentThe caller still invokes this function on the "ok" consensus path; returning
 // nil, nil causes the notification send to be skipped cleanly.
 func processDeferredWinBonus(_ context.Context, _ runtime.NakamaModule, _ runtime.Logger, _ string, _ bool) (*notify.RewardPayload, error) {
 	return nil, nil
@@ -810,7 +796,7 @@ func GetEconomyConfig() *EconomyConfig {
 // maxRoundsPerMatch is a hard server-side ceiling on round counts.
 // No legitimate match format has more rounds than this; guards against inflated
 // token claims when the Rounds array is absent (legacy client or empty payload).
-const maxRoundsPerMatch = 10
+const maxRoundsPerMatch = 99
 
 // computeTokensEarned returns half-token units earned for this match.
 // Pure function: no I/O. 1 full token = 2 units, 0.5 token = 1 unit.

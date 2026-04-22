@@ -304,7 +304,7 @@ func pickRandomItemFromPool(poolName string, ownedItems map[string][]uint32) (st
 	}
 
 	picked := available[rand.Intn(len(available))]
-	return picked.Type, picked.ID
+	return typeToStorageKey(picked.Type), picked.ID
 }
 
 func randomRange(min, max int) int {
