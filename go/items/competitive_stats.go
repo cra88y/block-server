@@ -136,37 +136,39 @@ func PrepareMatchHistoryEntry(userID string, req *MatchResultRequest, isSolo boo
 	}, nil
 }
 
-// UpdatePlayerStatsAndHistory atomically updates both competitive stats and match history.
-// Uses PendingWrites for a single MultiUpdate commit, reducing RPC round-trips and
-// ensuring both writes succeed or fail together.
-// On OCC conflict, logs and continues — off-by-one is acceptable at launch scale.
+// UpdatePlayerStatsAndHistory writes competitive stats and match history.
+// Stats and history are committed in separate operations so that an OCC conflict
+// on stats (stale version field) never silently prevents the history record from landing.
+// History has no version field and is therefore conflict-free.
 func UpdatePlayerStatsAndHistory(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool, won bool, opponentID string) error {
-	pending := NewPendingWrites()
 
-	// Prepare stats write
+	// --- Stats write (may fail on OCC conflict; non-fatal) ---
 	statsWrite, err := PreparePlayerStatsUpdate(ctx, nk, userID, req, isSolo, won)
 	if err != nil {
-		logger.Warn("[competitive] %v", err)
-		// Continue — stats failure shouldn't block history write
+		logger.Warn("[competitive] stats prepare failed for user %s match %s: %v", userID, req.MatchID, err)
 	} else if statsWrite != nil {
-		pending.AddStorageWrite(statsWrite)
+		statsPending := NewPendingWrites()
+		statsPending.AddStorageWrite(statsWrite)
+		if err := CommitPendingWrites(ctx, nk, logger, statsPending); err != nil {
+			// OCC conflict or transient error — log and continue. Off-by-one is acceptable.
+			logger.Warn("[competitive] stats commit failed for user %s match %s (OCC or transient): %v", userID, req.MatchID, err)
+		}
 	}
 
-	// Prepare history write
+	// --- History write (independent commit; no version field — conflict-free) ---
 	historyWrite, err := PrepareMatchHistoryEntry(userID, req, isSolo, won, opponentID)
 	if err != nil {
-		logger.Warn("[competitive] %v", err)
-		// Continue — history failure shouldn't block stats write
-	} else if historyWrite != nil {
-		pending.AddStorageWrite(historyWrite)
+		logger.Warn("[competitive] history prepare failed for user %s match %s: %v", userID, req.MatchID, err)
+		return err
 	}
 
-	// Commit both writes atomically
-	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
-		logger.Warn("[competitive] Atomic commit failed for user %s match %s: %v", userID, req.MatchID, err)
-		// Non-fatal: partial failure is acceptable for async stats updates
-		return nil
+	historyPending := NewPendingWrites()
+	historyPending.AddStorageWrite(historyWrite)
+	if err := CommitPendingWrites(ctx, nk, logger, historyPending); err != nil {
+		logger.Warn("[competitive] history commit failed for user %s match %s: %v", userID, req.MatchID, err)
+		return err
 	}
 
 	return nil
 }
+

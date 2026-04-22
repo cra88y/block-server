@@ -264,20 +264,41 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		result.LeaderboardRank = leaderboardRank
 	}
 
-	// ASYNC: Update competitive stats + append match history atomically.
-	// Self-idempotency gate: if history already exists, stats were already written — skip both.
-	// Uses single MultiUpdate commit for reduced RPC round-trips.
-	// Goroutine captures explicit copies (reqCopy, opponentIDCopy) to avoid data races.
+	// SYNCHRONOUS: Write match history before caching the response.
+	// History must land before the cache is written — once the cache exists, any client retry
+	// returns the cached response immediately without re-entering this path. If history were
+	// written async (goroutine) and the goroutine failed transiently, the cache would mask the
+	// failure permanently. History has no OCC version field and is conflict-free.
+	historyWrite, historyPrepErr := PrepareMatchHistoryEntry(userID, &req, isSolo, actualWon, activeMatch.OpponentID)
+	if historyPrepErr != nil {
+		logger.Warn("[competitive] history prepare failed for user %s match %s: %v — proceeding without history", userID, req.MatchID, historyPrepErr)
+	} else {
+		historyPending := NewPendingWrites()
+		historyPending.AddStorageWrite(historyWrite)
+		if commitErr := CommitPendingWrites(ctx, nk, logger, historyPending); commitErr != nil {
+			logger.Warn("[competitive] history commit failed for user %s match %s: %v — history may be missing", userID, req.MatchID, commitErr)
+			// Non-fatal: proceed so rewards are returned. History loss is logged.
+		}
+	}
+
+	// ASYNC: Update competitive stats only (OCC-tolerant; off-by-one is acceptable).
+	// MatchHistoryExists is retained as a fast-path skip on duplicate goroutine invocations.
 	reqCopy := req
-	opponentIDCopy := activeMatch.OpponentID
 	go func() {
 		bgCtx := context.Background()
 		if MatchHistoryExists(bgCtx, nk, userID, reqCopy.MatchID) {
-			logger.Info("[competitive] stats+history already processed for user %s match %s — skipping goroutine", userID, reqCopy.MatchID)
+			// History exists → stats were attempted (or this is a duplicate goroutine). Skip.
 			return
 		}
-		if err := UpdatePlayerStatsAndHistory(bgCtx, nk, logger, userID, &reqCopy, isSolo, actualWon, opponentIDCopy); err != nil {
-			logger.Warn("[competitive] Failed to update stats+history for user %s match %s: %v", userID, reqCopy.MatchID, err)
+		statsWrite, err := PreparePlayerStatsUpdate(bgCtx, nk, userID, &reqCopy, isSolo, actualWon)
+		if err != nil {
+			logger.Warn("[competitive] stats prepare failed for user %s match %s: %v", userID, reqCopy.MatchID, err)
+			return
+		}
+		statsPending := NewPendingWrites()
+		statsPending.AddStorageWrite(statsWrite)
+		if err := CommitPendingWrites(bgCtx, nk, logger, statsPending); err != nil {
+			logger.Warn("[competitive] stats commit failed for user %s match %s (OCC or transient): %v", userID, reqCopy.MatchID, err)
 		}
 	}()
 
@@ -881,8 +902,10 @@ func validateRounds(ctx context.Context, nk runtime.NakamaModule, req *MatchResu
 
 	// Cross-stream audit: compare client self-report against server RoundRecord objects.
 	// Discrepancy = client tampered with their batch report after rounds resolved.
-	cfg := GetEconomyConfig()
-	serverRecords, readErr := nk.StorageRead(ctx, buildRoundRecordReads(req.MatchID, userID, cfg.TokenRoundCap))
+	// Read window must be maxRoundsPerMatch, NOT TokenRoundCap:
+	// report_round_result writes a record for every round (including cap-exceeded ones with 0 tokens).
+	// Using TokenRoundCap here causes false "possible fabrication" warnings for legitimate rounds 4+.
+	serverRecords, readErr := nk.StorageRead(ctx, buildRoundRecordReads(req.MatchID, userID, maxRoundsPerMatch))
 	if readErr == nil {
 		recordMap := make(map[int]RoundRecord, len(serverRecords))
 		for _, obj := range serverRecords {
