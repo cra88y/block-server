@@ -12,12 +12,11 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-// round_records: permanent per-round records keyed "{match_id}_round_{n}".
-// Not deleted at submit — orphaned records (no match_result) reveal crashes/abandons.
+// Permanent per-round records. Orphaned records reveal crashes/abandons.
 const storageCollectionRoundRecords = "round_records"
 
-// RoundRecord is a permanent per-round commit keyed (userID, match_id, round_number).
-// Idempotent: second write to the same key returns the original TokensGranted.
+// Permanent per-round commit.
+// Idempotent: replaying a round_number returns the original TokensGranted.
 type RoundRecord struct {
 	MatchID       string `json:"match_id"`
 	RoundNumber   int    `json:"round_number"`
@@ -29,17 +28,8 @@ type RoundRecord struct {
 	GrantedAt     int64  `json:"granted_at"`     // unix ms, audit trail
 }
 
-// RoundResultRequest is sent by the client after each round completes.
-// IsSolo is derived from activeMatch.OpponentID — not passed by the client.
-//
-// Token matrix:
-//
-//	Solo:  Survived=true → TokensPerSoloRound, Survived=false → 0
-//	1v1:   PlayerWon=true → TokensPerRoundWin
-//	       PlayerWon=false, Survived=true → TokensPerRoundLoss
-//	       PlayerWon=false, Survived=false → 0
-//
-// Survived is the primary gate. PlayerWon only matters in 1v1 (win vs loss rate).
+// Sent by the client after each round. IsSolo is derived server-side.
+// Survived is the primary gate for earning tokens.
 type RoundResultRequest struct {
 	MatchID     string `json:"match_id"`
 	RoundNumber int    `json:"round_number"` // 1-indexed; rounds outside TokenRoundCap earn 0
@@ -62,8 +52,8 @@ func roundRecordKey(matchID string, roundNumber int) string {
 	return fmt.Sprintf("%s_round_%d", matchID, roundNumber)
 }
 
-// RpcReportRoundResult banks tokens for a completed round.
-// Idempotent by (match_id, round_number). Bank-only — exchange fires at submit_match_result.
+// Banks tokens for a completed round. Idempotent by (match_id, round_number).
+// Bank-only; token-to-lootbox exchange fires at match end.
 func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 	if !ok {
@@ -80,8 +70,7 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		return "", errors.ErrInvalidInput
 	}
 
-	// Anti-farm: reject rounds that are too short to be legitimate gameplay.
-	// A round under minRoundDurationMs was likely interrupted by a quit.
+	// Reject rounds that are too short to be legitimate gameplay.
 	const minRoundDurationMs = 15000 // 15 seconds
 	if req.DurationMs > 0 && req.DurationMs < minRoundDurationMs {
 		logger.Info("[RoundResult] Round %d too short (%dms) for user %s — tokens set to 0",
@@ -140,7 +129,7 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		}
 	}
 
-	// Grant 0 if drops exhausted — no phantom banking.
+	// Grant 0 if daily drops are exhausted.
 	if tokensGranted > 0 {
 		if account, err := nk.AccountGetId(ctx, userID); err == nil {
 			var wallet map[string]int64
@@ -153,7 +142,7 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		}
 	}
 
-	// Bank-only: no exchange threshold check. Exchange fires at submit_match_result.
+	// Bank-only; exchange occurs at match conclusion.
 	record := RoundRecord{
 		MatchID:       req.MatchID,
 		RoundNumber:   req.RoundNumber,
@@ -195,8 +184,7 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	return marshalRoundResponse(ctx, nk, logger, userID, tokensGranted, true)
 }
 
-// marshalRoundResponse reads current wallet state and builds the response.
-// Called for both new grants and idempotent replays.
+// Reads current wallet state and builds the response for both new and replayed grants.
 func marshalRoundResponse(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, tokensGranted int, acknowledged bool) (string, error) {
 	runningBalance := 0
 	dropsRemaining := 0
@@ -224,8 +212,8 @@ func marshalRoundResponse(ctx context.Context, nk runtime.NakamaModule, logger r
 	return string(b), nil
 }
 
-// ReadRoundRecordsTotal returns total tokens banked by report_round_result for this match.
-// Returns 0 on error — safe fallback to computeTokensEarned.
+// Returns total tokens banked for this match.
+// Safe fallback to computeTokensEarned on error (returns 0).
 func ReadRoundRecordsTotal(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID, matchID string, maxRounds int) int {
 	if maxRounds < 1 {
 		return 0
@@ -262,8 +250,7 @@ func ReadRoundRecordsTotal(ctx context.Context, nk runtime.NakamaModule, logger 
 	return total
 }
 
-// buildRoundRecordReads constructs a batch-read slice for all round records up to maxRounds.
-// Used by validateRounds in match_result.go for the cross-stream audit.
+// Constructs a batch-read slice for all round records up to maxRounds.
 func buildRoundRecordReads(matchID, userID string, maxRounds int) []*runtime.StorageRead {
 	reads := make([]*runtime.StorageRead, maxRounds)
 	for i := range reads {

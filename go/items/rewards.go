@@ -24,9 +24,8 @@ type RewardIndices struct {
 	SpriteIndex  int
 }
 
-// BuildRewardIndexMap pre-computes which pool index each level's reward maps to.
-// Abilities and sprites are tracked independently. Index 0 is pre-granted,
-// so tree rewards start at index 1.
+// Pre-computes which pool index each level's reward maps to.
+// Abilities and sprites are tracked independently starting at index 1.
 func BuildRewardIndexMap(treeName string) map[int]RewardIndices {
 	tree, exists := GetLevelTree(treeName)
 	if !exists {
@@ -55,9 +54,8 @@ func BuildRewardIndexMap(treeName string) map[int]RewardIndices {
 	return result
 }
 
-// PrepareLevelRewards prepares all rewards for a specific level without committing.
-// Returns *PendingWrites with all writes needed for level rewards.
-// Caller should merge into their pending writes and commit via MultiUpdate.
+// Prepares all rewards for a specific level without committing.
+// Returns *PendingWrites to be merged and committed via MultiUpdate.
 func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, treeName string, level int, itemType string, itemID uint32) (*PendingWrites, error) {
 	tree, exists := GetLevelTree(treeName)
 	if !exists {
@@ -181,8 +179,8 @@ func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	return pending, nil
 }
 
-// PrepareRewardItems prepares currency and item rewards without committing.
-// Returns *PendingWrites with all writes needed. Caller commits via MultiUpdate.
+// Prepares currency and item rewards without committing.
+// Returns *PendingWrites to be merged and committed via MultiUpdate.
 func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, rewards map[string]uint32, itemType string, itemID uint32) (*PendingWrites, error) {
 	pending := NewPendingWrites()
 	walletChanges := make(map[string]int64)
@@ -367,8 +365,8 @@ func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger run
 	return pending, nil
 }
 
-// PrepareExperience calculates XP and level gains, returns pending writes for progression and level rewards.
-// Does not commit anything - caller should use MultiUpdate.
+// Calculates XP and level gains. Returns pending writes for progression and level rewards.
+// Does not commit; caller must execute via MultiUpdate.
 func PrepareExperience(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, itemType string, itemID uint32, exp uint32) (newLevel int, pending *PendingWrites, err error) {
 	pending = NewPendingWrites()
 
@@ -461,8 +459,7 @@ func PrepareExperience(ctx context.Context, nk runtime.NakamaModule, logger runt
 		pending.AddStorageWrite(progWrite)
 	}
 
-	// Level-up rewards are no longer auto-claimed. They are now stored in prog.UnclaimedRewards 
-	// and must be manually claimed by the client calling RpcClaimProgressionReward.
+	// Level-up rewards are stored in UnclaimedRewards for manual client claim.
 
 	// Add final level to payload
 	if resultLevel > 0 {

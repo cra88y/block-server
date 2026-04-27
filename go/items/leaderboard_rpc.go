@@ -11,12 +11,8 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-// writeLeaderboardRecords writes the match result to the appropriate boards and
-// returns the player's resulting rank on the season board (0 on skip or failure).
-//
-// Must be called synchronously before response marshaling — rank is in the response payload.
-// Solo uses BEST operator (always write; lower scores auto-ignored). 1v1 uses INCREMENT on win only.
-// Subscore = MatchDurationSec for solo tiebreak; unused for 1v1.
+// Writes match result to leaderboards synchronously and returns the season rank.
+// Solo: BEST operator (writes always). 1v1: INCREMENT operator (writes on win only).
 func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool, actualWon bool) int {
 	var globalBoard, weeklyBoard string
 	var score, subscore int64
@@ -77,10 +73,7 @@ func leaderboardEntryFromRecord(r *api.LeaderboardRecord) LeaderboardEntry {
 	}
 }
 
-// RpcGetLeaderboard fetches top entries from a board plus the caller's own record.
-//
-// Request: LeaderboardRequest { board_id, limit?, cursor? }
-// Response: LeaderboardResponse { entries[], my_entry?, next_cursor?, prev_cursor? }
+// Fetches top entries from a board and the caller's own record.
 func RpcGetLeaderboard(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	userID, err := GetUserIDFromContext(ctx, logger)
 	if err != nil {
@@ -134,10 +127,7 @@ func RpcGetLeaderboard(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 	return string(b), nil
 }
 
-// RpcGetFriendsLeaderboard fetches a board filtered to the caller's mutual friends + self.
-//
-// Request: FriendsLeaderboardRequest { board_id, limit? }
-// Response: LeaderboardResponse { entries[], my_entry?, next_cursor? }
+// Fetches a board filtered to the caller's mutual friends and self.
 func RpcGetFriendsLeaderboard(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	userID, err := GetUserIDFromContext(ctx, logger)
 	if err != nil {
@@ -201,12 +191,7 @@ func RpcGetFriendsLeaderboard(ctx context.Context, logger runtime.Logger, db *sq
 	return string(b), nil
 }
 
-// RpcGetPlayerStats fetches competitive stats for a user.
-// Omitting user_id (or sending "{}") returns the calling user's own stats.
-// Providing a user_id allows fetching an opponent's public stats (profile card).
-//
-// Request: PlayerStatsRequest { user_id? }
-// Response: PlayerStats (JSON)
+// Fetches public competitive stats. Omitting user_id returns the caller's stats.
 func RpcGetPlayerStats(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	callerUserID, err := GetUserIDFromContext(ctx, logger)
 	if err != nil {
@@ -234,12 +219,7 @@ func RpcGetPlayerStats(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 	return string(b), nil
 }
 
-// RpcGetMatchHistory fetches paginated match history for the calling user.
-// Entries are ordered by StorageList's natural key order (alphabetical by matchID+"_"+userID).
-// Client should sort by PlayedAt for chronological display.
-//
-// Request: MatchHistoryRequest { limit?, cursor? }
-// Response: MatchHistoryResponse { entries[], next_cursor? }
+// Fetches paginated match history for the caller. Ordered alphabetically; client sorts chronologically.
 func RpcGetMatchHistory(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	userID, err := GetUserIDFromContext(ctx, logger)
 	if err != nil {

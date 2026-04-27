@@ -20,15 +20,6 @@ type GameInviteRequest struct {
 }
 
 // RpcSendGameInvite delivers a match invitation notification to a target player.
-//
-// Flow:
-//
-//	Caller (inviter) creates/joins a private Nakama match first,
-//	then calls this RPC with the match ID.
-//	Target receives a CodeSocial (5) notification → InviteService on client.
-//	Target calls JoinMatchById(matchId) to accept.
-//
-// Registered as: "send_game_invite"
 func RpcSendGameInvite(
 	ctx context.Context,
 	logger runtime.Logger,
@@ -74,11 +65,7 @@ func RpcSendGameInvite(
 	}
 
 	// ── Validate sender is actually in the claimed match ─────────────────────
-	// Prevents spoofed invites with arbitrary match IDs.
-	// Reads sender's active_match storage (same collection used by submit_match_result).
-	// Soft validation: if storage read fails, we allow the invite through rather than
-	// blocking a legitimate player due to a transient storage error.
-	// Design: no friendship gate — inviting a non-friend (e.g. post-match) is intentional.
+	// Soft validation: Transient storage read failures fail-open to prevent blocking legitimate invites.
 	activeMatchObjs, readErr := nk.StorageRead(ctx, []*runtime.StorageRead{{
 		Collection: storageCollectionActiveMatch,
 		Key:        storageKeyCurrentMatch,
@@ -98,10 +85,8 @@ func RpcSendGameInvite(
 		}
 	}
 
-	// ── Deduplicate: purge prior challenge notifications from this sender → target ─
-	// Each challenge attempt generates a fresh match_id UUID, so client-side
-	// match_id deduplication misses stale notifications. Delete them server-side
-	// before sending the new one so the target only ever sees one challenge per sender.
+	// ── Purge prior challenges ────────────────────────────────────────────────
+	// Enforces a limit of 1 active invite per sender/target pair.
 	if existing, _, listErr := nk.NotificationsList(ctx, req.TargetUserID, 20, ""); listErr == nil {
 		var staleIDs []string
 		for _, notif := range existing {
@@ -140,9 +125,8 @@ func RpcSendGameInvite(
 	}
 
 	// ── Send notification ─────────────────────────────────────────────────────
-	// Uses CodeSocial = 5 — matching client ServerNotifyCode.Social.
-	// CROSS-REPO CONTRACT: must match blockjitsu/scripts/services/notify/ServerNotifyTypes.cs
-	// Content parsed in InviteService.OnServerNotification on the client.
+	// CROSS-REPO CONTRACT: CodeSocial(5) matches ServerNotifyCode.Social.
+	// Content schema bound to InviteService.OnServerNotification.
 	content := map[string]interface{}{
 		"match_id":    req.MatchID,
 		"sender_id":   senderID,
@@ -155,9 +139,9 @@ func RpcSendGameInvite(
 		req.TargetUserID,
 		senderName+" challenged you!",
 		content,
-		notify.CodeSocial, // 5
-		senderID,          // non-empty → InviteService distinguishes from system toasts
-		true,              // persistent — survives to inbox until client deletes it
+		notify.CodeSocial,
+		senderID,          // Distinguishes P2P invites from system toasts
+		true,              // Persistent in inbox
 	); err != nil {
 		logger.WithFields(map[string]interface{}{
 			"sender":   senderID,
@@ -185,10 +169,7 @@ type CancelInviteRequest struct {
 	MatchID      string `json:"match_id"`
 }
 
-// RpcCancelGameInvite notifies the target player that a previously sent challenge
-// has been revoked by the sender.
-//
-// Registered as: "cancel_game_invite"
+// RpcCancelGameInvite notifies target that a challenge was revoked by the sender.
 func RpcCancelGameInvite(
 	ctx context.Context,
 	logger runtime.Logger,
@@ -220,11 +201,8 @@ func RpcCancelGameInvite(
 		return "", blockerrors.ErrInviteMissingMatch
 	}
 
-	// ── Purge the original challenge notification from target's inbox ─────────
-	// The challenge was sent as a persistent notification. Delete it server-side
-	// so it won't be hydrated on next login. Also send a cancel notification
-	// in case the target is currently online (the notification replay + delete
-	// pipeline will handle offline targets on their next connect).
+	// ── Purge original challenge notification ─────────────────────────────────
+	// Ensures offline targets do not hydrate cancelled invites on next login.
 	if existing, _, listErr := nk.NotificationsList(ctx, req.TargetUserID, 20, ""); listErr == nil {
 		var toDelete []string
 		for _, notif := range existing {
@@ -258,9 +236,7 @@ func RpcCancelGameInvite(
 	}
 
 	// ── Send cancellation notification ────────────────────────────────────────
-	// Non-persistent — it only matters if the target is currently online.
-	// The action "cancel_invite" is handled by InboxService.OnLiveNotification
-	// to silently remove the matching inbox item.
+	// Non-persistent. Handled by InboxService.OnLiveNotification if target is online.
 	content := map[string]interface{}{
 		"match_id":    req.MatchID,
 		"sender_id":   senderID,
@@ -273,9 +249,9 @@ func RpcCancelGameInvite(
 		req.TargetUserID,
 		senderName+" cancelled a challenge.",
 		content,
-		notify.CodeSocial, // 5 — same channel, filtered by action
+		notify.CodeSocial,
 		senderID,
-		false, // NOT persistent — don't hoard cancellation notices
+		false, // non-persistent
 	); err != nil {
 		logger.WithFields(map[string]interface{}{
 			"sender":   senderID,
@@ -295,11 +271,7 @@ func RpcCancelGameInvite(
 	return `{"success": true}`, nil
 }
 
-// RpcDeclineGameInvite notifies the sender that their challenge was declined by the target.
-// Initiated by the recipient (who received the invite). Sends a non-persistent notification
-// with action "decline_invite" back to the original sender.
-//
-// Registered as: "decline_game_invite"
+// RpcDeclineGameInvite sends a non-persistent decline notification back to the original sender.
 func RpcDeclineGameInvite(
 	ctx context.Context,
 	logger runtime.Logger,
@@ -377,12 +349,12 @@ func RpcDeclineGameInvite(
 
 	if err := nk.NotificationSend(
 		ctx,
-		senderID, // notify the original sender
+		senderID,
 		declinerName+" declined your challenge.",
 		content,
-		notify.CodeSocial, // 5
+		notify.CodeSocial,
 		declinerID,
-		false, // NOT persistent — only matters if sender is online
+		false, // non-persistent
 	); err != nil {
 		logger.WithFields(map[string]interface{}{
 			"decliner": declinerID,

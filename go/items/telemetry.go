@@ -12,10 +12,7 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-// INVARIANT: Whitelist prevents malformed events from corrupting stats or filling storage
-// INVARIANT: These strings are the canonical wire-protocol values.
-// Client-side constants in TelemetryEventTypes.cs MUST match this list exactly.
-// Adding a new metric type = add here AND in TelemetryEventTypes.cs.
+// Wire-protocol whitelist. Must match client-side TelemetryEventTypes.cs.
 var validEventTypes = map[string]bool{
 	"match_completed":         true,
 	"match_abandoned":         true,
@@ -35,25 +32,21 @@ var validEventTypes = map[string]bool{
 	"social_event":            true, // SocialEventMetric
 }
 
-// INVARIANT: 30-day retention balances analytics value vs storage cost
 const retentionDays = 30
 
-// INVARIANT: Timestamp is client-provided for ordering, not server-generated.
-// Data is stored as a raw JSON string — the client serializes it as an escaped
-// JSON string for AOT compatibility (iOS). The server stores it verbatim.
-// Do NOT change Data to map[string]interface{} — that would break the wire contract.
+// Timestamp is client-provided.
+// Data is a raw JSON string for AOT compatibility; do not change to map[string]interface{}.
 type TelemetryEvent struct {
 	EventType string `json:"event_type"`
 	Timestamp float64 `json:"timestamp"`
 	Data      string `json:"data"`
 }
 
-// INVARIANT: Batch size is bounded by client-side queue (MAX_QUEUE_SIZE)
 type TelemetryBatch struct {
 	Events []TelemetryEvent `json:"events"`
 }
 
-// INVARIANT: Batch processing is atomic per-request - partial failures don't rollback
+// Batch processing is atomic per-request; individual event failures don't abort the batch.
 func RpcSubmitTelemetry(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	var batch TelemetryBatch
 	if err := json.Unmarshal([]byte(payload), &batch); err != nil {
@@ -61,13 +54,11 @@ func RpcSubmitTelemetry(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 		return "", errors.ErrUnmarshal
 	}
 
-	// HAZARD: User ID is required for storage ownership - missing = silent data loss
 	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 	if !ok {
 		return "", errors.ErrNoUserIdFound
 	}
 
-	// INVARIANT: Individual event failures don't abort batch - best-effort delivery
 	for _, event := range batch.Events {
 		if err := validateTelemetryEvent(event); err != nil {
 			logger.Warn("Invalid telemetry event %s: %v", event.EventType, err)
@@ -82,18 +73,14 @@ func RpcSubmitTelemetry(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 	return `{"success": true}`, nil
 }
 
-// INVARIANT: Validation prevents malformed events from corrupting stats or filling storage
 func validateTelemetryEvent(event TelemetryEvent) error {
-	// Validate event type
 	if !validEventTypes[event.EventType] {
 		return fmt.Errorf("invalid event type: %s", event.EventType)
 	}
 
-	// Validate timestamp (not too old, not in future)
 	now := time.Now().Unix()
 	eventTime := int64(event.Timestamp)
 
-	// HAZARD: Timestamp bounds prevent stale or future events from corrupting time-range queries
 	if eventTime < now-(retentionDays*24*60*60) {
 		return fmt.Errorf("event timestamp too old: %d (retention: %d days)", eventTime, retentionDays)
 	}
@@ -111,7 +98,7 @@ func validateTelemetryEvent(event TelemetryEvent) error {
 	return nil
 }
 
-// INVARIANT: Write-first ordering collapses the TOCTOU window for stats updates
+// Persist event before aggregating.
 func processTelemetryEvent(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, userID string, event TelemetryEvent) error {
 	// Data is already a JSON string from the client — embed it directly.
 	// Do not re-marshal: mustMarshal(event.Data) would double-escape it.
@@ -124,12 +111,11 @@ func processTelemetryEvent(ctx context.Context, logger runtime.Logger, db *sql.D
 		PermissionWrite: 0,
 	}
 
-	// HAZARD: Storage write failure loses event permanently - no retry mechanism
 	if _, err := nk.StorageWrite(ctx, []*runtime.StorageWrite{storageWrite}); err != nil {
 		return fmt.Errorf("failed to write telemetry event to storage: %w", err)
 	}
 
-	// INVARIANT: Stats update failure is non-fatal - event already persisted
+	// Stats update failure is non-fatal; event is already persisted.
 	if err := updateAggregatedStats(ctx, logger, db, nk, userID, event); err != nil {
 		logger.Error("Failed to update aggregated stats: %v", err)
 	}
@@ -137,14 +123,13 @@ func processTelemetryEvent(ctx context.Context, logger runtime.Logger, db *sql.D
 	return nil
 }
 
-// HAZARD: Read-modify-write race condition - concurrent requests can lose updates
+// Warning: Read-modify-write here lacks OCC; concurrent requests may lose aggregated updates.
 func updateAggregatedStats(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, userID string, event TelemetryEvent) error {
-	// INVARIANT: Daily key format enables time-range queries without indexing
+	// Daily key format enables time-range queries without secondary indexing.
 	today := time.Now().Format("2006-01-02")
 
 	statsKey := fmt.Sprintf("daily_%s", today)
 
-	// HAZARD: No locking - concurrent reads can return stale data
 	storageRead := &runtime.StorageRead{
 		Collection: "telemetry_stats",
 		Key:        statsKey,
@@ -156,7 +141,6 @@ func updateAggregatedStats(ctx context.Context, logger runtime.Logger, db *sql.D
 		return fmt.Errorf("failed to read existing stats: %w", err)
 	}
 
-	// INVARIANT: Empty stats = first event of the day, not an error
 	var stats map[string]interface{}
 	if len(objects) > 0 && objects[0].Value != "" {
 		if err := json.Unmarshal([]byte(objects[0].Value), &stats); err != nil {
@@ -167,7 +151,7 @@ func updateAggregatedStats(ctx context.Context, logger runtime.Logger, db *sql.D
 		stats = make(map[string]interface{})
 	}
 
-	// INVARIANT: Float64 type matches Nakama's JSON unmarshaling behavior
+	// Nakama's JSON unmarshaler yields float64 for numbers.
 	eventCountKey := fmt.Sprintf("%s_count", event.EventType)
 	if count, ok := stats[eventCountKey].(float64); ok {
 		stats[eventCountKey] = count + 1
@@ -175,17 +159,14 @@ func updateAggregatedStats(ctx context.Context, logger runtime.Logger, db *sql.D
 		stats[eventCountKey] = 1
 	}
 
-	// INVARIANT: Total count enables quick health checks without scanning all events
 	if total, ok := stats["total_events"].(float64); ok {
 		stats["total_events"] = total + 1
 	} else {
 		stats["total_events"] = 1
 	}
 
-	// INVARIANT: Unix timestamp enables TTL-based cleanup without parsing dates
 	stats["last_updated"] = time.Now().Unix()
 
-	// HAZARD: Write failure loses stats update - event already persisted successfully
 	statsJSON, err := json.Marshal(stats)
 	if err != nil {
 		return fmt.Errorf("failed to marshal stats: %w", err)
@@ -207,14 +188,11 @@ func updateAggregatedStats(ctx context.Context, logger runtime.Logger, db *sql.D
 	return nil
 }
 
-
-// CleanupOldTelemetry deletes telemetry events older than retention period
-// HAZARD: Run during off-peak hours to avoid impacting active users
+// Deletes telemetry events older than retention period. Best run during off-peak hours.
 func CleanupOldTelemetry(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule) error {
 	cutoffTime := time.Now().AddDate(0, 0, -retentionDays).Unix()
 
-	// List all telemetry objects for all users
-	// HAZARD: This is a full scan - consider pagination for large datasets
+	// TODO: Pagination required for large datasets.
 	objects, _, err := nk.StorageList(ctx, "", "", "telemetry", 1000, "")
 	if err != nil {
 		return fmt.Errorf("failed to list telemetry objects: %w", err)
@@ -222,7 +200,6 @@ func CleanupOldTelemetry(ctx context.Context, logger runtime.Logger, nk runtime.
 
 	var deletes []*runtime.StorageDelete
 	for _, obj := range objects {
-		// Parse timestamp from key (format: eventtype_timestamp)
 		var eventType string
 		var timestamp int64
 		if _, err := fmt.Sscanf(obj.Key, "%s_%d", &eventType, &timestamp); err != nil {
@@ -230,7 +207,6 @@ func CleanupOldTelemetry(ctx context.Context, logger runtime.Logger, nk runtime.
 			continue
 		}
 
-		// HAZARD: Delete only if timestamp is parseable and older than cutoff
 		if timestamp < cutoffTime {
 			deletes = append(deletes, &runtime.StorageDelete{
 				Collection: "telemetry",

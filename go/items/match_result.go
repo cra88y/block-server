@@ -135,11 +135,6 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		return "", err
 	}
 
-	// Resolve per-role rewards:
-	//   pending  — first submitter, opponent not yet in. Participation-only (no win bonus).
-	//   ok       — second submitter, resolved. Full rewards + deferred bonus to first submitter.
-	//   resolved — late arrival, already resolved by opponent. Participation-only (bonus already pushed).
-	//   conflict — both claimed win. Both downgraded, opponent retroactively penalised.
 	isSolo := activeMatch.OpponentID == ""
 	actualWon := req.Won
 	var opponentIDForDeferred string
@@ -147,26 +142,21 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 
 	switch consensusResult {
 	case "pending":
-		// First submitter: withhold win bonus until opponent confirms
 		actualWon = false
 		logger.Info("Match %s: user %s is first submitter, granting participation rewards", req.MatchID, userID)
 
 	case "resolved":
-		// Opponent already resolved and pushed our deferred win bonus via notification
 		actualWon = false
 		logger.Info("Match %s: user %s arrived late, rewards already resolved by opponent", req.MatchID, userID)
 
 	case "conflict":
 		logger.Warn("Match %s: Both players claimed victory. Voiding win for user %s", req.MatchID, userID)
 		actualWon = false
-		// No shared ledger to unwind; players earn token baseline from round history even in conflict.
 
 	case "ok", "forfeit_win":
-		// Second submitter (or unilateral forfeit winner): grant ourselves full rewards
 		actualWon = req.Won
 		if consensusResult == "ok" && activeMatch.OpponentID != "" {
 			opponentIDForDeferred = activeMatch.OpponentID
-			// Only push deferred if this was a normal "ok" consensus
 			opponentWonForDeferred = !req.Won
 		}
 	}
@@ -373,19 +363,15 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 	return &activeMatch, nil
 }
 
-// resolveMatchConsensus implements write-first single-resolution consensus.
+// Write-first single-resolution consensus.
+// Writing our claim before reading the opponent's claim collapses the TOCTOU window.
 //
-// Write-first ordering: we commit our claim before reading opponent's.
-// After our StorageWrite returns, opponent's subsequent StorageRead will see our record.
-// This collapses the TOCTOU window vs. the prior read→write ordering.
-//
-// Resolution roles:
-//
-//	pending  — first submitter (opponent not yet written). Caller grants participation-only.
-//	ok       — second submitter. Caller grants full rewards + deferred bonus to first submitter.
-//	forfeit_win — opponent abandoned. Caller grants full rewards immediately without waiting.
-//	resolved — late arrival (opponent already set Resolved=true on their record). Participation-only.
-//	conflict — both claimed win. Both downgraded.
+// States:
+//   pending     : First submitter. Participation-only.
+//   ok          : Second submitter. Full rewards + deferred bonus to first submitter.
+//   forfeit_win : Opponent abandoned. Full rewards immediately.
+//   resolved    : Late arrival (opponent resolved). Participation-only.
+//   conflict    : Both claimed win. Both downgraded.
 func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, opponentID string, matchID string, claimedWin bool, score int, opponentForfeited bool) (string, error) {
 	if opponentID == "" {
 		return "ok", nil // Solo — no consensus needed, caller handles isSolo reward reduction
@@ -472,10 +458,8 @@ func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger 
 	}})
 
 	return "ok", nil
-	// TODO(ATOM-D1): After consensus resolves to "ok", compare both players' RoundRecord sets.
-	// For every round N: playerA.round[N].PlayerWon == !playerB.round[N].PlayerWon.
-	// Requires reading opponent storage with userID=opponentID (PermissionRead:0, valid from server context).
-	// OpponentID is available as activeMatch.OpponentID. Do NOT implement until ATOM-D1 is scoped.
+	// TODO(ATOM-D1): Cross-audit RoundRecords post-consensus.
+	// Validate playerA.round[N].PlayerWon == !playerB.round[N].PlayerWon.
 }
 
 func clearActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) {
@@ -490,18 +474,10 @@ func clearActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger runti
 	}
 }
 
-// Anti-farming: two gates.
-// 1. validateActiveMatch: 10s floor, waived when rounds_played >= 1 (server records take over in Phase 2).
-// 2. match_results_cache: idempotency key prevents double-reward on retries.
-
-// processMatchRewards handles reward generation atomically.
-//
-// Lootbox economy: dropsLeft is a daily pool of lootbox slots (3/day, max 5).
-// Round tokens are the key — 3 full tokens (6 half-units) exchange one slot for a lootbox.
-// No lootbox is granted per-match directly; tokens must accumulate across matches.
-//
-// Pre-read pattern: one AccountGetId at the top covers token read and drop availability.
-// isSolo: halves XP to prevent solo-match farming.
+// Idempotent via match_results_cache.
+// DropsLeft limits daily lootbox generation; 6 RoundTokens (half-units) exchange for 1 lootbox.
+// A single AccountGetId pre-read prevents wallet TOCTOU during reward generation.
+// Solo match XP is halved to prevent farming.
 func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool) (*notify.RewardPayload, error) {
 	cfg := GetEconomyConfig()
 	pending := NewPendingWrites()

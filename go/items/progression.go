@@ -66,8 +66,8 @@ func SaveItemProgression(ctx context.Context, nk runtime.NakamaModule, logger ru
 
 
 
-// PrepareProgressionUpdate reads progression, applies update function, and returns the write without committing.
-// Returns (updated progression, storage write, error). Caller should collect writes and commit via MultiUpdate.
+// Reads progression, applies update func, and returns a storage write.
+// Does not commit; caller must collect and execute via MultiUpdate.
 func PrepareProgressionUpdate(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger,
 	userID string, progressionKey string, itemID uint32, updateFunc func(*ItemProgression) error) (*ItemProgression, *runtime.StorageWrite, error) {
 
@@ -134,8 +134,8 @@ func InitializeProgression(ctx context.Context, nk runtime.NakamaModule, logger 
 	return prog, nil
 }
 
-// BatchInitializeProgression initializes multiple progression records in a single operation.
-// Precondition: caller has validated all item IDs exist via ValidateItemExists
+// Initializes multiple progression records atomically.
+// Precondition: Caller has verified all item IDs via ValidateItemExists.
 func BatchInitializeProgression(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, progressionRecords []struct {
 	ProgressionKey string
 	ItemID         uint32

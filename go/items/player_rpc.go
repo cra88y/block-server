@@ -731,7 +731,7 @@ func RpcClaimProgressionReward(ctx context.Context, logger runtime.Logger, db *s
 		"action":   "claim_progression_reward",
 	}).Info("Progression reward claimed successfully")
 
-	// Emit directly into the persistent analytics pipeline without network overhead
+	// Emit directly into analytics pipeline (no network overhead).
 	telemetryData, _ := json.Marshal(map[string]interface{}{
 		"itemType": req.ItemType,
 		"itemId":   req.ItemID,
@@ -851,7 +851,7 @@ func RpcClaimAllProgressionRewards(ctx context.Context, logger runtime.Logger, d
 
 	logger.Info("Claimed %d progression rewards for user=%s itemType=%s itemID=%d", len(levelsToClaim), userID, req.ItemType, req.ItemID)
 
-	// Emit directly into the persistent analytics pipeline without network overhead
+	// Emit directly into analytics pipeline (no network overhead).
 	telemetryData, _ := json.Marshal(map[string]interface{}{
 		"itemType":    req.ItemType,
 		"itemId":      req.ItemID,

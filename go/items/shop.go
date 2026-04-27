@@ -50,10 +50,7 @@ type DropTable struct {
 	ItemPools []PoolRef `json:"item_pools"`
 }
 
-// PoolRef defines a named item pool with its independent drop chance (0.0–1.0).
-// Each pool is evaluated independently, so a box can drop from multiple pools
-// on a single open if you configure it that way. Mutually exclusive designs
-// can be achieved by keeping chances low and non-overlapping.
+// PoolRef defines a named item pool with an independent drop chance (0.0–1.0).
 type PoolRef struct {
 	Pool   string  `json:"pool"`
 	Chance float64 `json:"chance"`
@@ -240,8 +237,8 @@ func RpcGetShopCatalog(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 	return string(respBytes), nil
 }
 
-// RpcPurchaseShopItem handles purchasing a shop item atomically with idempotency.
-// Uses PendingWrites for atomic commit, request_id for dedup, and purchase_log for audit.
+// Handles purchasing a shop item atomically.
+// Idempotent via request_id dedup and purchase_log.
 func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 	if !ok {
@@ -424,10 +421,8 @@ func RpcPurchaseLootbox(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 	return string(respBytes), nil
 }
 
-// RpcValidateIAPReceipt validates an Apple IAP purchase (JWS) via Nakama's built-in
-// Apple receipt validation. Server is the authority on gem payout — client does not
-// control reward amounts. Uses Nakama's PurchaseValidateApple which calls Apple's
-// App Store Server API under the hood. Idempotent via Nakama's seen_before flag.
+// Validates Apple IAP (JWS) via Nakama.
+// Idempotent via Nakama's seen_before flag. Server controls gem payout.
 func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	// 1. Extract user ID
 	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
@@ -738,8 +733,7 @@ func purchaseFail(requestId, userID string, nk runtime.NakamaModule, logger runt
 
 // ── Revocation RPC ───────────────────────────────────────────────────────────
 
-// RpcRevokeIAPPurchase handles server-side revocation of a previously validated IAP.
-// Called by Apple App Store Server Notifications or manual admin action.
+// Handles server-side IAP revocation from Apple App Store Server Notifications or admin action.
 func RpcRevokeIAPPurchase(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 	if !ok || userID == "" {

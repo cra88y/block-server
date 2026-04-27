@@ -72,8 +72,7 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 		return errors.ErrDropsAlreadyClaimed
 	}
 
-	// Prepare wallet changeset without committing Ã¢â‚¬â€ prevents free-drops exploit
-	// if the timestamp write were to fail after an immediate WalletUpdate.
+	// Atomic commit preparation. Prevents free-drops exploit if timestamp write fails.
 	changeset, newTotal, err := prepareCappedDrops(ctx, nk, logger, userID, dailyDropGrantCount)
 	if err != nil {
 		logger.Error("failed to prepare daily drops: %v", err)
