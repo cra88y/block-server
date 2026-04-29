@@ -11,9 +11,9 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-// Writes match result to leaderboards synchronously and returns the season rank.
+// Writes match result to leaderboards synchronously and returns the season rank, delta, and board ID.
 // Solo: BEST operator (writes always). 1v1: INCREMENT operator (writes on win only).
-func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool, actualWon bool) int {
+func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool, actualWon bool) (int, int, string) {
 	var globalBoard, weeklyBoard string
 	var score, subscore int64
 
@@ -24,7 +24,7 @@ func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logge
 		subscore = int64(req.MatchDurationSec)
 	} else {
 		if !actualWon {
-			return 0
+			return 0, 0, ""
 		}
 		globalBoard = Leaderboard1v1Season
 		weeklyBoard = Leaderboard1v1Weekly
@@ -45,6 +45,18 @@ func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logge
 		username = users[0].Username
 	}
 
+	// Query previous rank BEFORE writing so we can compute the delta
+	var prevRank int64
+	_, prevRecords, _, _, prevErr := nk.LeaderboardRecordsList(ctx, globalBoard, []string{userID}, 1, "", 0)
+	if prevErr == nil {
+		for _, r := range prevRecords {
+			if r.OwnerId == userID {
+				prevRank = r.Rank
+				break
+			}
+		}
+	}
+
 	// Write global board — capture rank from this record.
 	var rank int64
 	record, err := nk.LeaderboardRecordWrite(ctx, globalBoard, userID, username, score, subscore, metadata, nil)
@@ -59,7 +71,13 @@ func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logge
 		logger.Warn("[leaderboard] Failed to write %s for user %s: %v", weeklyBoard, userID, err)
 	}
 
-	return int(rank)
+	// Compute delta: negative = climbed (better rank, lower number), positive = dropped
+	delta := 0
+	if prevRank > 0 && rank > 0 {
+		delta = int(prevRank - rank) // positive = climbed
+	}
+
+	return int(rank), delta, globalBoard
 }
 
 func leaderboardEntryFromRecord(r *api.LeaderboardRecord) LeaderboardEntry {

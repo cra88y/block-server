@@ -48,6 +48,15 @@ type RewardPayload struct {
 	// 0 (omitted) means the write failed or the mode doesn't write a board (e.g. 1v1 loss).
 	LeaderboardRank int `json:"leaderboard_rank,omitempty"`
 
+	// LeaderboardRankDelta is the change in position on the season board.
+	// Negative = climbed (better rank). Positive = dropped. 0 = unchanged or first placement.
+	// Only set when LeaderboardRank > 0 and a previous rank existed.
+	LeaderboardRankDelta int `json:"leaderboard_rank_delta,omitempty"`
+
+	// BoardId is the canonical leaderboard ID this rank applies to
+	// (solo_season, solo_weekly, 1v1_season, 1v1_weekly).
+	BoardId string `json:"board_id,omitempty"`
+
 	// MECE Reward Domains
 	Inventory   *InventoryDelta   `json:"inventory,omitempty"`
 	Wallet      *WalletDelta      `json:"wallet,omitempty"`
@@ -110,9 +119,23 @@ type RewardMeta struct {
 	NextDropRefresh *int64 `json:"next_drop_refresh,omitempty"`
 	DailyMatches    *int   `json:"daily_matches,omitempty"`
 	// RoundTokens is the player's current half-unit token balance after this match.
-	// Display in UI as value / 2.0. Exchange threshold is 6 (= 3.0 tokens).
+	// Always reflects the real wallet state. Display in UI as value / 2.0.
+	// Exchange threshold is 6 (= 3.0 tokens).
+	// When an exchange occurs, ExchangesMade > 0 and CarryOverTokens contains the remainder.
+	// The client reads ExchangesMade to trigger the exchange animation.
 	RoundTokens  *int `json:"round_tokens,omitempty"`
 	TokensEarned *int `json:"tokens_earned,omitempty"`
+	// CarryOverTokens is the balance remaining AFTER exchange deduction.
+	// Only set when an exchange occurred (ExchangesMade > 0).
+	CarryOverTokens *int `json:"carry_over_tokens,omitempty"`
+	// ExchangesMade is the count of token→lootbox exchanges that occurred this match.
+	// > 0 means the player earned at least one lootbox from token exchange.
+	// The client uses this to trigger the exchange animation sequence.
+	ExchangesMade int `json:"exchanges_made,omitempty"`
+	// ErrorCode is set when the match result was rejected by a server validation gate.
+	// Non-empty means no rewards were processed. Known values: MATCH_TOO_SHORT.
+	// The client routes to distinct UI messages based on this code.
+	ErrorCode string `json:"error_code,omitempty"`
 }
 
 // NewRewardPayload creates a new RewardPayload with generated ID and timestamp.

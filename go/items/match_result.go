@@ -122,6 +122,43 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		roundsPlayed := req.RoundsWon + req.RoundsLost
 		if err == errors.ErrMatchTooShort && roundsPlayed >= 1 && activeMatch != nil {
 			logger.Info("Match %s: duration short but %d round(s) completed — proceeding", req.MatchID, roundsPlayed)
+		} else if err == errors.ErrMatchTooShort {
+			// Return HTTP 200 with error metadata so the client can route to a distinct UI message.
+			// Returning HTTP 400 would be swallowed by the client's CallRpcAsync, causing EndScreen to hang.
+			logger.Warn("Match too short for user %s: %v", userID, err)
+			errorPayload := notify.NewRewardPayload("match")
+			errorPayload.Meta = &notify.RewardMeta{ErrorCode: errorCodeMatchTooShort}
+			respBytes, marshalErr := json.Marshal(errorPayload)
+			if marshalErr != nil {
+				return "", marshalErr
+			}
+			return string(respBytes), nil
+		} else if err == errors.ErrStaleMatchExpired && activeMatch != nil {
+			// Match exceeded time limit. Notify opponent and return error to submitter.
+			logger.Warn("Stale match expired for user %s (match %s, opponent %s)", userID, req.MatchID, activeMatch.OpponentID)
+
+			// Notify opponent that the match was auto-resolved without them
+			if activeMatch.OpponentID != "" {
+				staleNote := notify.NewRewardPayload("match")
+				staleNote.Meta = &notify.RewardMeta{ErrorCode: errorCodeStaleMatch}
+				staleNote.ReasonKey = "reward.match.stale_resolved"
+				// Fire-and-forget: opponent may be offline — persistent notification replays on reconnect.
+				go func(oppID string) {
+					if sendErr := notify.SendReward(context.Background(), nk, oppID, staleNote); sendErr != nil {
+						logger.Warn("Failed to send stale-match notification to opponent %s: %v", oppID, sendErr)
+					}
+				}(activeMatch.OpponentID)
+			}
+
+			clearActiveMatch(ctx, nk, logger, userID)
+
+			errorPayload := notify.NewRewardPayload("match")
+			errorPayload.Meta = &notify.RewardMeta{ErrorCode: errorCodeStaleMatch}
+			respBytes, marshalErr := json.Marshal(errorPayload)
+			if marshalErr != nil {
+				return "", marshalErr
+			}
+			return string(respBytes), nil
 		} else {
 			logger.Warn("Match validation failed for user %s: %v", userID, err)
 			return "", err
@@ -144,6 +181,18 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	case "pending":
 		actualWon = false
 		logger.Info("Match %s: user %s is first submitter, granting participation rewards", req.MatchID, userID)
+
+		// Notify opponent that their match result is expected — this triggers
+		// match teardown on the opponent's client if P2P resolution failed.
+		if activeMatch.OpponentID != "" {
+			opponentNote := notify.NewRewardPayload("match")
+			opponentNote.Meta = &notify.RewardMeta{ErrorCode: errorCodeOpponentSubmitted}
+			go func(oppID string) {
+				if sendErr := notify.SendReward(context.Background(), nk, oppID, opponentNote); sendErr != nil {
+					logger.Warn("Failed to send opponent-submitted notification to %s: %v", oppID, sendErr)
+				}
+			}(activeMatch.OpponentID)
+		}
 
 	case "resolved":
 		actualWon = false
@@ -240,10 +289,12 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		}
 	}
 
-	// Synchronous: Write leaderboard records (sets LeaderboardRank in payload). Non-fatal on err.
-	leaderboardRank := writeLeaderboardRecords(ctx, nk, logger, userID, &req, isSolo, actualWon)
+	// Synchronous: Write leaderboard records (sets LeaderboardRank, delta, and BoardId in payload). Non-fatal on err.
+	leaderboardRank, leaderboardDelta, boardId := writeLeaderboardRecords(ctx, nk, logger, userID, &req, isSolo, actualWon)
 	if leaderboardRank > 0 {
 		result.LeaderboardRank = leaderboardRank
+		result.LeaderboardRankDelta = leaderboardDelta
+		result.BoardId = boardId
 	}
 
 	// Synchronous history write must precede cache write.
@@ -317,6 +368,12 @@ const (
 	maxSoloMatchDurationMs = 60 * 60 * 1000 // 1 hour
 
 	storageCollectionResults = "match_results"
+
+	// errorCode constants: set in RewardMeta.ErrorCode when a validation gate rejects the match.
+	// The client routes to distinct UI messages. Empty string = normal processing.
+	errorCodeMatchTooShort     = "MATCH_TOO_SHORT"
+	errorCodeStaleMatch        = "STALE_MATCH"
+	errorCodeOpponentSubmitted = "OPPONENT_SUBMITTED"
 )
 
 func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, matchID string) (*ActiveMatch, error) {
@@ -355,9 +412,8 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 		maxDuration = int64(maxSoloMatchDurationMs)
 	}
 	if time.Now().UnixMilli()-activeMatch.StartTime > maxDuration {
-		// Clear stale match state.
-		clearActiveMatch(ctx, nk, logger, userID)
-		return nil, errors.ErrStaleMatchExpired
+		// Return activeMatch alongside error so caller can notify opponent before cleanup.
+		return &activeMatch, errors.ErrStaleMatchExpired
 	}
 
 	return &activeMatch, nil
@@ -599,22 +655,26 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	clearActiveMatch(ctx, nk, logger, userID)
 
 	// --- Metadata: derived from final state — no second AccountGetId ---
-	// If an exchange happened, we "freeze" the display tokens at the threshold
-	// for the first exchange to ensure the client UI animates cleanly to 100%.
-	displayTokens := finalTokens
-	if exchangesMade > 0 {
-		displayTokens = thresh
-	}
+	// RoundTokens always reflects the real wallet balance. The client detects
+	// exchange via ExchangesMade > 0 and computes the animation path locally.
 
 	effectiveEarned := tokensEarned
 	if tokensBanked > 0 {
 		effectiveEarned = tokensBanked
 	}
 	result.Meta = &notify.RewardMeta{
-		DailyMatches:   notify.IntPtr(matchesToday),
-		DropsRemaining: notify.IntPtr(int(finalDrops)),
-		RoundTokens:    notify.IntPtr(int(displayTokens)),
-		TokensEarned:   notify.IntPtr(effectiveEarned),
+		DailyMatches:    notify.IntPtr(matchesToday),
+		DropsRemaining:  notify.IntPtr(int(finalDrops)),
+		RoundTokens:     notify.IntPtr(int(finalTokens)), // always real balance
+		TokensEarned:    notify.IntPtr(effectiveEarned),
+		ExchangesMade:   exchangesMade,
+		CarryOverTokens: nil,
+	}
+	// If an exchange occurred, expose carry-over so the client can snap to real balance
+	// after the exchange animation. The client uses ExchangesMade > 0 to detect
+	// the exchange event and CarryOverTokens for the post-snap value.
+	if exchangesMade > 0 {
+		result.Meta.CarryOverTokens = notify.IntPtr(int(finalTokens))
 	}
 
 	return result, nil
