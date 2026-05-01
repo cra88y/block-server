@@ -87,7 +87,7 @@ services:
       - '9090:9090'
 
   vector:
-    image: 'timberio/vector:0.38.0-debian'
+    image: 'timberio/vector:0.55.0-debian'
     command: ["--config", "/etc/vector/vector.toml"]
     restart: unless-stopped
     volumes:
