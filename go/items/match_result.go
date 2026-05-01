@@ -353,6 +353,18 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	logger.Info("Match result processed for user %s: won=%v, xp=%d",
 		userID, req.Won, xpAmount)
 
+	telemetryData, _ := json.Marshal(map[string]interface{}{
+		"match_id":  req.MatchID,
+		"won":       req.Won,
+		"xp_earned": xpAmount,
+	})
+	telemetryEvent := TelemetryEvent{
+		EventType: "match_result_verified",
+		Timestamp: float64(time.Now().Unix()),
+		Data:      string(telemetryData),
+	}
+	processTelemetryEvent(context.Background(), logger, db, nk, userID, telemetryEvent)
+
 	return string(respBytes), nil
 }
 

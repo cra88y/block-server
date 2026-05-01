@@ -1,0 +1,48 @@
+[sources.docker_logs]
+type = "docker_logs"
+include_containers = ["nakama"]
+
+[transforms.filter_telemetry]
+type = "filter"
+inputs = ["docker_logs"]
+condition = 'includes(string!(.message), "telemetry_event")'
+
+[transforms.parse_json]
+type = "remap"
+inputs = ["filter_telemetry"]
+source = '''
+  # Parse the outer log message
+  parsed = parse_json!(.message)
+  
+  # Extract our fields from the Zap log structure
+  .event_type = parsed.event_type
+  .timestamp = parsed.timestamp
+  .user_id = parsed.user_id
+  
+  # Parse the nested stringified payload into actual JSON columns for Parquet
+  .payload = parse_json!(parsed.payload)
+  
+  # Drop Docker metadata and keep only the analytics data
+  del(.container_created_at)
+  del(.container_id)
+  del(.container_name)
+  del(.image)
+  del(.label)
+  del(.source_type)
+  del(.stream)
+  del(.message)
+'''
+
+[sinks.r2_lakehouse]
+type = "aws_s3"
+inputs = ["parse_json"]
+bucket = "blockjitsu-telemetry"
+endpoint = "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+region = "us-east-1"
+auth.access_key_id = "${R2_ACCESS_KEY}"
+auth.secret_access_key = "${R2_SECRET_KEY}"
+compression = "none" # Let Parquet handle compression
+encoding.codec = "parquet"
+batch.max_bytes = 5000000 # 5MB batches
+batch.timeout_secs = 300 # Ship every 5 mins
+key_prefix = "year=%Y/month=%m/day=%d/"

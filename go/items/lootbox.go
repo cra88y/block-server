@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"time"
 
 	"block-server/errors"
 	"block-server/notify"
@@ -184,6 +185,20 @@ func RpcOpenLootbox(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 
 	logger.Info("Lootbox %s opened for user %s: gold=%d, gems=%d, treats=%d, items=%d",
 		lootbox.ID, userID, contents.Gold, contents.Gems, contents.Treats, len(contents.Items))
+
+	telemetryData, _ := json.Marshal(map[string]interface{}{
+		"action":        "open_lootbox",
+		"lootbox_tier":  lootbox.Tier,
+		"gold_granted":  contents.Gold,
+		"gems_granted":  contents.Gems,
+		"items_granted": len(contents.Items),
+	})
+	telemetryEvent := TelemetryEvent{
+		EventType: "economy_transaction",
+		Timestamp: float64(time.Now().Unix()),
+		Data:      string(telemetryData),
+	}
+	processTelemetryEvent(context.Background(), logger, db, nk, userID, telemetryEvent)
 
 	return string(respBytes), nil
 }

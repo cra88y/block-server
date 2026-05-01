@@ -357,6 +357,19 @@ func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB,
 
 	logger.Info("User %s purchased shop item %s", userID, item.ID)
 
+	telemetryData, _ := json.Marshal(map[string]interface{}{
+		"action":      "purchase",
+		"item_id":     item.ID,
+		"gems_spent":  item.Price.Gems,
+		"gold_spent":  item.Price.Gold,
+	})
+	telemetryEvent := TelemetryEvent{
+		EventType: "economy_transaction",
+		Timestamp: float64(time.Now().Unix()),
+		Data:      string(telemetryData),
+	}
+	processTelemetryEvent(context.Background(), logger, db, nk, userID, telemetryEvent)
+
 	resp := PurchaseResponse{Success: true, Wallet: updatedWallet}
 	respBytes, _ := json.Marshal(resp)
 	return string(respBytes), nil
@@ -416,6 +429,19 @@ func RpcPurchaseLootbox(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 	}
 
 	logger.Info("User %s purchased %s lootbox for %d gems", userID, req.Tier, price)
+
+	telemetryData, _ := json.Marshal(map[string]interface{}{
+		"action":      "purchase",
+		"item_id":     req.Tier + "_lootbox",
+		"gems_spent":  price,
+		"gold_spent":  0,
+	})
+	telemetryEvent := TelemetryEvent{
+		EventType: "economy_transaction",
+		Timestamp: float64(time.Now().Unix()),
+		Data:      string(telemetryData),
+	}
+	processTelemetryEvent(context.Background(), logger, db, nk, userID, telemetryEvent)
 
 	respBytes, _ := json.Marshal(lootbox)
 	return string(respBytes), nil

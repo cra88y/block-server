@@ -37,9 +37,9 @@ const retentionDays = 30
 // Timestamp is client-provided.
 // Data is a raw JSON string for AOT compatibility; do not change to map[string]interface{}.
 type TelemetryEvent struct {
-	EventType string `json:"event_type"`
+	EventType string  `json:"event_type"`
 	Timestamp float64 `json:"timestamp"`
-	Data      string `json:"data"`
+	Data      string  `json:"data"`
 }
 
 type TelemetryBatch struct {
@@ -89,8 +89,6 @@ func validateTelemetryEvent(event TelemetryEvent) error {
 	}
 
 	// Validate payload size (prevent abuse).
-	// Data is a raw JSON string — measure it directly, not via json.Marshal
-	// (which would add escaping and double-count the size).
 	if len(event.Data) > 10240 { // 10KB max
 		return fmt.Errorf("event data too large: %d bytes (max: 10240)", len(event.Data))
 	}
@@ -98,130 +96,12 @@ func validateTelemetryEvent(event TelemetryEvent) error {
 	return nil
 }
 
-// Persist event before aggregating.
 func processTelemetryEvent(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, userID string, event TelemetryEvent) error {
-	// Data is already a JSON string from the client — embed it directly.
-	// Do not re-marshal: mustMarshal(event.Data) would double-escape it.
-	storageWrite := &runtime.StorageWrite{
-		Collection:      "telemetry",
-		Key:             fmt.Sprintf("%s_%d", event.EventType, int64(event.Timestamp)),
-		UserID:          userID,
-		Value:           fmt.Sprintf(`{"event_type":"%s","timestamp":%f,"data":%s}`, event.EventType, event.Timestamp, event.Data),
-		PermissionRead:  0,
-		PermissionWrite: 0,
-	}
-
-	if _, err := nk.StorageWrite(ctx, []*runtime.StorageWrite{storageWrite}); err != nil {
-		return fmt.Errorf("failed to write telemetry event to storage: %w", err)
-	}
-
-	// Stats update failure is non-fatal; event is already persisted.
-	if err := updateAggregatedStats(ctx, logger, db, nk, userID, event); err != nil {
-		logger.Error("Failed to update aggregated stats: %v", err)
-	}
-
-	return nil
-}
-
-// Warning: Read-modify-write here lacks OCC; concurrent requests may lose aggregated updates.
-func updateAggregatedStats(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, userID string, event TelemetryEvent) error {
-	// Daily key format enables time-range queries without secondary indexing.
-	today := time.Now().Format("2006-01-02")
-
-	statsKey := fmt.Sprintf("daily_%s", today)
-
-	storageRead := &runtime.StorageRead{
-		Collection: "telemetry_stats",
-		Key:        statsKey,
-		UserID:     userID,
-	}
-
-	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{storageRead})
-	if err != nil {
-		return fmt.Errorf("failed to read existing stats: %w", err)
-	}
-
-	var stats map[string]interface{}
-	if len(objects) > 0 && objects[0].Value != "" {
-		if err := json.Unmarshal([]byte(objects[0].Value), &stats); err != nil {
-			logger.Error("Failed to unmarshal existing stats: %v", err)
-			stats = make(map[string]interface{})
-		}
-	} else {
-		stats = make(map[string]interface{})
-	}
-
-	// Nakama's JSON unmarshaler yields float64 for numbers.
-	eventCountKey := fmt.Sprintf("%s_count", event.EventType)
-	if count, ok := stats[eventCountKey].(float64); ok {
-		stats[eventCountKey] = count + 1
-	} else {
-		stats[eventCountKey] = 1
-	}
-
-	if total, ok := stats["total_events"].(float64); ok {
-		stats["total_events"] = total + 1
-	} else {
-		stats["total_events"] = 1
-	}
-
-	stats["last_updated"] = time.Now().Unix()
-
-	statsJSON, err := json.Marshal(stats)
-	if err != nil {
-		return fmt.Errorf("failed to marshal stats: %w", err)
-	}
-
-	storageWrite := &runtime.StorageWrite{
-		Collection:      "telemetry_stats",
-		Key:             statsKey,
-		UserID:          userID,
-		Value:           string(statsJSON),
-		PermissionRead:  0,
-		PermissionWrite: 0,
-	}
-
-	if _, err := nk.StorageWrite(ctx, []*runtime.StorageWrite{storageWrite}); err != nil {
-		return fmt.Errorf("failed to write updated stats: %w", err)
-	}
-
-	return nil
-}
-
-// Deletes telemetry events older than retention period. Best run during off-peak hours.
-func CleanupOldTelemetry(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule) error {
-	cutoffTime := time.Now().AddDate(0, 0, -retentionDays).Unix()
-
-	// TODO: Pagination required for large datasets.
-	objects, _, err := nk.StorageList(ctx, "", "", "telemetry", 1000, "")
-	if err != nil {
-		return fmt.Errorf("failed to list telemetry objects: %w", err)
-	}
-
-	var deletes []*runtime.StorageDelete
-	for _, obj := range objects {
-		var eventType string
-		var timestamp int64
-		if _, err := fmt.Sscanf(obj.Key, "%s_%d", &eventType, &timestamp); err != nil {
-			logger.Warn("Failed to parse telemetry key %s: %v", obj.Key, err)
-			continue
-		}
-
-		if timestamp < cutoffTime {
-			deletes = append(deletes, &runtime.StorageDelete{
-				Collection: "telemetry",
-				Key:        obj.Key,
-				UserID:     obj.UserId,
-			})
-		}
-	}
-
-	if len(deletes) > 0 {
-		if err := nk.StorageDelete(ctx, deletes); err != nil {
-			return fmt.Errorf("failed to delete old telemetry: %w", err)
-		}
-		logger.Info("Cleaned up %d telemetry events older than %d days", len(deletes), retentionDays)
-	}
-
+	// We format it as a structured log line that Vector can easily parse
+	logger.WithField("payload", event.Data).
+		WithField("event_type", event.EventType).
+		WithField("timestamp", event.Timestamp).
+		WithField("user_id", userID).
+		Info("telemetry_event")
 	return nil
 }

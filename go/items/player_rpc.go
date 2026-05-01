@@ -744,12 +744,9 @@ func RpcClaimProgressionReward(ctx context.Context, logger runtime.Logger, db *s
 		Data:      string(telemetryData),
 	}
 
-	// Fire and forget telemetry event via background context to unblock UI thread instantly
-	go func() {
-		if telErr := processTelemetryEvent(context.Background(), logger, db, nk, userID, telemetryEvent); telErr != nil {
-			logger.Warn("Failed to record progression telemetry: %v", telErr)
-		}
-	}()
+	if telErr := processTelemetryEvent(context.Background(), logger, db, nk, userID, telemetryEvent); telErr != nil {
+		logger.Warn("Failed to record progression telemetry: %v", telErr)
+	}
 
 	return string(respBytes), nil
 }
@@ -864,12 +861,9 @@ func RpcClaimAllProgressionRewards(ctx context.Context, logger runtime.Logger, d
 		Data:      string(telemetryData),
 	}
 
-	// Fire and forget telemetry event via background context to unblock UI thread instantly
-	go func() {
-		if telErr := processTelemetryEvent(context.Background(), logger, db, nk, userID, telemetryEvent); telErr != nil {
-			logger.Warn("Failed to record batch progression telemetry: %v", telErr)
-		}
-	}()
+	if telErr := processTelemetryEvent(context.Background(), logger, db, nk, userID, telemetryEvent); telErr != nil {
+		logger.Warn("Failed to record batch progression telemetry: %v", telErr)
+	}
 
 	return string(respBytes), nil
 }
@@ -989,8 +983,6 @@ func RpcDeleteAccount(ctx context.Context, logger runtime.Logger, db *sql.DB, nk
 		storageCollectionEquipment,
 		storageCollectionProgression,
 		storageCollectionShopHistory,
-		"telemetry",
-		"telemetry_stats",
 		"daily_drops",
 	}
 
