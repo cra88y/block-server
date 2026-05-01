@@ -42,7 +42,7 @@ region = "us-east-1"
 auth.access_key_id = "${R2_ACCESS_KEY}"
 auth.secret_access_key = "${R2_SECRET_KEY}"
 compression = "none"
-encoding.codec = "parquet"
+batch_encoding.codec = "parquet"
 batch.max_bytes = 5000000 # 5MB batches
 batch.timeout_secs = 300 # Ship every 5 mins
 key_prefix = "year=%Y/month=%m/day=%d/"
