@@ -38,11 +38,15 @@ type = "aws_s3"
 inputs = ["parse_json"]
 bucket = "block"
 endpoint = "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
-region = "us-east-1"
+region = "auto"
 auth.access_key_id = "${R2_ACCESS_KEY}"
 auth.secret_access_key = "${R2_SECRET_KEY}"
-compression = "none"
-batch_encoding.codec = "parquet"
-batch.max_bytes = 5000000 # 5MB batches
-batch.timeout_secs = 300 # Ship every 5 mins
+compression = "gzip"
 key_prefix = "year=%Y/month=%m/day=%d/"
+
+[sinks.r2_lakehouse.encoding]
+codec = "json"
+
+[sinks.r2_lakehouse.batch]
+max_bytes = 5000000
+timeout_secs = 300
