@@ -260,7 +260,7 @@ func generateLootboxContents(ctx context.Context, nk runtime.NakamaModule, userI
 	for _, poolRef := range dt.ItemPools {
 		if rand.Float64() < poolRef.Chance {
 			itemType, itemID := pickRandomItemFromPool(poolRef.Pool, ownedItems)
-			if itemID > 0 {
+			if itemType != "" {
 				contents.Items = append(contents.Items, itemID)
 				contents.ItemTypes = append(contents.ItemTypes, itemType)
 			}
