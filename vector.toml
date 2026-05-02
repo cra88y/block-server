@@ -1,11 +1,12 @@
 [sources.docker_logs]
 type = "docker_logs"
 include_containers = ["nakama"]
+auto_partial_merge = true
 
 [transforms.filter_telemetry]
 type = "filter"
 inputs = ["docker_logs"]
-condition = 'includes(string!(.message), "telemetry_event")'
+condition = 'contains(string!(.message), "telemetry_event")'
 
 [transforms.parse_json]
 type = "remap"
