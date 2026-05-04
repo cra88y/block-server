@@ -41,6 +41,14 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 
 	userID, _ := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 
+	metadata := map[string]interface{}{
+		"has_completed_onboarding": false,
+	}
+	if err := nk.AccountUpdateId(ctx, userID, "", metadata, "", "", "", "", ""); err != nil {
+		logger.Error("Failed to update account metadata during initialization: %v", err)
+		return err
+	}
+
 	// Collect all initialization writes
 	pending := NewPendingWrites()
 

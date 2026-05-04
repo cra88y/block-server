@@ -14,6 +14,7 @@ import (
 
 // Wire-protocol whitelist. Must match client-side TelemetryEventTypes.cs.
 var validEventTypes = map[string]bool{
+	"match_started":           true,
 	"match_completed":         true,
 	"match_abandoned":         true,
 	"network_quality":         true,

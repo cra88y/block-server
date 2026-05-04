@@ -14,6 +14,55 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
+func RpcCompleteOnboarding(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
+		return "", errors.ErrNoUserIdFound
+	}
+
+	account, err := nk.AccountGetId(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+
+	var metadata map[string]interface{}
+	if err := json.Unmarshal([]byte(account.User.Metadata), &metadata); err != nil {
+		metadata = make(map[string]interface{})
+	}
+
+	if val, ok := metadata["has_completed_onboarding"]; ok {
+		if completed, ok := val.(bool); ok && completed {
+			return `{"success": true, "message": "Already completed"}`, nil
+		}
+	}
+
+	metadata["has_completed_onboarding"] = true
+	if err := nk.AccountUpdateId(ctx, userID, "", metadata, "", "", "", "", ""); err != nil {
+		return "", err
+	}
+
+	pending := NewPendingWrites()
+	
+	lootbox, lootboxWrite, err := PrepareCreateLootbox(userID, "standard")
+	if err == nil {
+		pending.AddStorageWrite(lootboxWrite)
+		if pending.Payload == nil {
+			pending.Payload = notify.NewRewardPayload("onboarding")
+		}
+		pending.Payload.Lootboxes = append(pending.Payload.Lootboxes, notify.LootboxGrant{
+			LootboxID: lootbox.Id,
+			Tier:      lootbox.Tier,
+		})
+	}
+
+	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
+		return "", err
+	}
+
+	resp, _ := json.Marshal(pending.Payload)
+	return string(resp), nil
+}
+
 func RpcGetEquipment(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	userID, err := GetUserIDFromContext(ctx, logger)
 	if err != nil {

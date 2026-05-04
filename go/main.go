@@ -84,6 +84,10 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 			return next(ctx, logger, db, nk, payload)
 		}
 	}
+	if err := initializer.RegisterRpc("complete_onboarding", items.RpcCompleteOnboarding); err != nil {
+		logger.Error("Unable to register: %v", err)
+		return err
+	}
 	if err := initializer.RegisterRpc("get_inventory", items.RpcGetInventory); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
