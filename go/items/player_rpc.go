@@ -50,8 +50,8 @@ func RpcCompleteOnboarding(ctx context.Context, logger runtime.Logger, db *sql.D
 			pending.Payload = notify.NewRewardPayload("onboarding")
 		}
 		pending.Payload.Lootboxes = append(pending.Payload.Lootboxes, notify.LootboxGrant{
-			LootboxID: lootbox.Id,
-			Tier:      lootbox.Tier,
+			ID:   lootbox.ID,
+			Tier: lootbox.Tier,
 		})
 	}
 
