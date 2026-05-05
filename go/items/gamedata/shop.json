@@ -237,11 +237,73 @@
                 "type": "class",
                 "id": 3
             }
+        ],
+        "shop_piece_styles": [
+            {
+                "type": "piece_style",
+                "id": 50
+            },
+            {
+                "type": "piece_style",
+                "id": 7
+            },
+            {
+                "type": "piece_style",
+                "id": 1
+            },
+            {
+                "type": "piece_style",
+                "id": 19
+            },
+            {
+                "type": "piece_style",
+                "id": 17
+            },
+            {
+                "type": "piece_style",
+                "id": 16
+            },
+            {
+                "type": "piece_style",
+                "id": 8
+            },
+            {
+                "type": "piece_style",
+                "id": 6
+            },
+            {
+                "type": "piece_style",
+                "id": 42
+            },
+            {
+                "type": "piece_style",
+                "id": 5
+            },
+            {
+                "type": "piece_style",
+                "id": 32
+            },
+            {
+                "type": "piece_style",
+                "id": 2
+            },
+            {
+                "type": "piece_style",
+                "id": 56
+            },
+            {
+                "type": "piece_style",
+                "id": 45
+            },
+            {
+                "type": "piece_style",
+                "id": 15
+            }
         ]
     },
     "lootbox_tiers": {
         "standard": {
-            "price_gems": 0,
+            "price_gems": 25,
             "drop_table": {
                 "gold": {
                     "min": 200,
@@ -289,7 +351,7 @@
                     },
                     {
                         "pool": "piece_styles",
-                        "chance": 0.10
+                        "chance": 0.1
                     },
                     {
                         "pool": "premium_piece_styles",
@@ -309,44 +371,40 @@
     },
     "shop_items": [
         {
-            "type": "background",
-            "item_id": 2,
-            "price": {
-                "gems": 75
-            },
-            "rotation_slot": 1
-        },
-        {
-            "type": "background",
-            "item_id": 3,
-            "price": {
-                "gems": 100
-            },
-            "rotation_slot": 2
-        },
-        {
-            "type": "piece_style",
-            "item_id": 2,
-            "price": {
-                "gems": 125
-            },
-            "rotation_slot": 3
-        },
-        {
-            "type": "piece_style",
-            "item_id": 3,
-            "price": {
-                "gems": 100
-            },
-            "rotation_slot": 4
-        },
-        {
             "type": "lootbox",
             "tier": "premium",
             "price": {
                 "gems": 200
             },
             "rotation_slot": null
+        },
+        {
+            "pool": "shop_piece_styles",
+            "price": {
+                "gems": 100
+            },
+            "rotation_slot": 1
+        },
+        {
+            "pool": "shop_piece_styles",
+            "price": {
+                "gems": 100
+            },
+            "rotation_slot": 2
+        },
+        {
+            "pool": "shop_piece_styles",
+            "price": {
+                "gems": 100
+            },
+            "rotation_slot": 3
+        },
+        {
+            "pool": "shop_piece_styles",
+            "price": {
+                "gems": 100
+            },
+            "rotation_slot": 4
         }
     ],
     "rotation_config": {

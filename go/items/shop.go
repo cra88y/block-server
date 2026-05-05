@@ -66,6 +66,7 @@ type ShopItem struct {
 	Type         string `json:"type"`
 	ItemID       uint32 `json:"item_id,omitempty"`
 	Tier         string `json:"tier,omitempty"`
+	Pool         string `json:"pool,omitempty"`
 	Price        Price  `json:"price"`
 	RotationSlot *int   `json:"rotation_slot"`
 }
@@ -108,6 +109,9 @@ func LoadShopData() error {
 	// Lootbox items use their tier name as the identifier.
 	for i := range shopConfig.ShopItems {
 		item := &shopConfig.ShopItems[i]
+		if item.Pool != "" {
+			continue // ID generated dynamically at runtime
+		}
 		if item.Type == "lootbox" {
 			if item.ID == "" {
 				item.ID = fmt.Sprintf("lootbox_%s", item.Tier)
@@ -206,18 +210,21 @@ func RpcGetShopCatalog(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 	rotating := make([]ShopItemResponse, 0)
 	permanent := make([]ShopItemResponse, 0)
 
-	for _, item := range shopConfig.ShopItems {
+	for i := range shopConfig.ShopItems {
+		item := &shopConfig.ShopItems[i]
 		if item.Type == "lootbox" {
 			continue // Lootboxes handled separately
 		}
 
+		resolvedID, resolvedType, resolvedItemID := resolveShopItem(item)
+
 		resp := ShopItemResponse{
-			ID:        item.ID,
-			Type:      item.Type,
-			ItemID:    item.ItemID,
+			ID:        resolvedID,
+			Type:      resolvedType,
+			ItemID:    resolvedItemID,
 			PriceGems: item.Price.Gems,
 			PriceGold: item.Price.Gold,
-			Owned:     isItemOwned(ownedItems, item.Type, item.ItemID),
+			Owned:     isItemOwned(ownedItems, resolvedType, resolvedItemID),
 		}
 
 		if item.RotationSlot != nil {
@@ -276,9 +283,16 @@ func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB,
 
 	// Find the shop item
 	var item *ShopItem
+	var resolvedID, resolvedType string
+	var resolvedItemID uint32
+
 	for i := range shopConfig.ShopItems {
-		if shopConfig.ShopItems[i].ID == req.ShopItemID {
+		rID, rType, rItemID := resolveShopItem(&shopConfig.ShopItems[i])
+		if rID == req.ShopItemID {
 			item = &shopConfig.ShopItems[i]
+			resolvedID = rID
+			resolvedType = rType
+			resolvedItemID = rItemID
 			break
 		}
 	}
@@ -287,13 +301,13 @@ func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB,
 		return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrItemNotFound)
 	}
 
-	if item.Type == "lootbox" {
+	if resolvedType == "lootbox" {
 		return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrWrongItemType)
 	}
 
 	// Check ownership
 	ownedItems := getUserOwnedItems(ctx, nk, userID)
-	if isItemOwned(ownedItems, item.Type, item.ItemID) {
+	if isItemOwned(ownedItems, resolvedType, resolvedItemID) {
 		return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrItemAlreadyOwned)
 	}
 
@@ -338,11 +352,11 @@ func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB,
 		"pet":         storageKeyPet,
 		"class":       storageKeyClass,
 	}
-	storageKey, ok2 := typeToKey[item.Type]
+	storageKey, ok2 := typeToKey[resolvedType]
 	if !ok2 {
 		return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrInvalidItemType)
 	}
-	itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, storageKey, item.ItemID)
+	itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, storageKey, resolvedItemID)
 	if err != nil {
 		return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrInternalError)
 	}
@@ -350,7 +364,7 @@ func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB,
 
 	// Commit atomically
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
-		logger.Error("Purchase commit failed for user %s item %s: %v", userID, item.ID, err)
+		logger.Error("Purchase commit failed for user %s item %s: %v", userID, resolvedID, err)
 		return "", errors.ErrInternalError
 	}
 
@@ -367,14 +381,14 @@ func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB,
 
 	// Audit log
 	if req.RequestId != "" {
-		writePurchaseLog(ctx, nk, userID, req.RequestId, item.ID, item.Price.Gems, item.Price.Gold, true, updatedWallet)
+		writePurchaseLog(ctx, nk, userID, req.RequestId, resolvedID, item.Price.Gems, item.Price.Gold, true, updatedWallet)
 	}
 
-	logger.Info("User %s purchased shop item %s", userID, item.ID)
+	logger.Info("User %s purchased shop item %s", userID, resolvedID)
 
 	telemetryData, _ := json.Marshal(map[string]interface{}{
 		"action":      "purchase",
-		"item_id":     item.ID,
+		"item_id":     resolvedID,
 		"gems_spent":  item.Price.Gems,
 		"gold_spent":  item.Price.Gold,
 	})
@@ -651,14 +665,14 @@ func isItemOwned(owned map[string][]uint32, itemType string, itemID uint32) bool
 	return false
 }
 
-func getActiveRotationSlots() []int {
-	if shopConfig == nil || shopConfig.RotationConfig.Slots == 0 {
-		return []int{1, 2, 3, 4}
+func getRotationIndex() int {
+	if shopConfig == nil {
+		return 0
 	}
 
 	epoch, err := time.Parse(time.RFC3339, shopConfig.RotationConfig.EpochStart)
 	if err != nil {
-		return []int{1, 2, 3, 4}
+		return 0
 	}
 
 	hoursSinceEpoch := int(time.Since(epoch).Hours())
@@ -667,7 +681,15 @@ func getActiveRotationSlots() []int {
 		rotationPeriod = 24
 	}
 
-	currentRotation := (hoursSinceEpoch / rotationPeriod) % shopConfig.RotationConfig.Slots
+	return hoursSinceEpoch / rotationPeriod
+}
+
+func getActiveRotationSlots() []int {
+	if shopConfig == nil || shopConfig.RotationConfig.Slots == 0 {
+		return []int{1, 2, 3, 4}
+	}
+
+	currentRotation := getRotationIndex() % shopConfig.RotationConfig.Slots
 
 	// Return slots based on current rotation
 	slots := make([]int, shopConfig.RotationConfig.Slots)
@@ -676,6 +698,20 @@ func getActiveRotationSlots() []int {
 	}
 
 	return slots
+}
+
+func resolveShopItem(item *ShopItem) (string, string, uint32) {
+	if item.Pool != "" && item.RotationSlot != nil {
+		pool, exists := shopConfig.ItemPools[item.Pool]
+		if exists && len(pool) > 0 {
+			rotIdx := getRotationIndex()
+			// Deterministic pick based on rotation day and slot number to avoid overlap
+			idx := (rotIdx + *item.RotationSlot) % len(pool)
+			poolItem := pool[idx]
+			return fmt.Sprintf("%s_%d", poolItem.Type, poolItem.ID), poolItem.Type, poolItem.ID
+		}
+	}
+	return item.ID, item.Type, item.ItemID
 }
 
 func isSlotActive(slot int, activeSlots []int) bool {
