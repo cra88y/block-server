@@ -102,6 +102,21 @@ func LoadShopData() error {
 	if err := json.Unmarshal(shopdata, shopConfig); err != nil {
 		return fmt.Errorf("failed to parse shop.json: %w", err)
 	}
+
+	// Auto-generate deterministic shop item IDs from type + item_id.
+	// Eliminates stale manual slugs (e.g. "style_pixel" → "piece_style_3").
+	// Lootbox items use their tier name as the identifier.
+	for i := range shopConfig.ShopItems {
+		item := &shopConfig.ShopItems[i]
+		if item.Type == "lootbox" {
+			if item.ID == "" {
+				item.ID = fmt.Sprintf("lootbox_%s", item.Tier)
+			}
+		} else {
+			item.ID = fmt.Sprintf("%s_%d", item.Type, item.ItemID)
+		}
+	}
+
 	return nil
 }
 

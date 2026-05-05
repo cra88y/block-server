@@ -309,7 +309,6 @@
     },
     "shop_items": [
         {
-            "id": "bg_neon_city",
             "type": "background",
             "item_id": 2,
             "price": {
@@ -318,7 +317,6 @@
             "rotation_slot": 1
         },
         {
-            "id": "bg_sunset",
             "type": "background",
             "item_id": 3,
             "price": {
@@ -327,7 +325,6 @@
             "rotation_slot": 2
         },
         {
-            "id": "style_chrome",
             "type": "piece_style",
             "item_id": 2,
             "price": {
@@ -336,7 +333,6 @@
             "rotation_slot": 3
         },
         {
-            "id": "style_pixel",
             "type": "piece_style",
             "item_id": 3,
             "price": {
@@ -345,7 +341,6 @@
             "rotation_slot": 4
         },
         {
-            "id": "lootbox_premium",
             "type": "lootbox",
             "tier": "premium",
             "price": {
