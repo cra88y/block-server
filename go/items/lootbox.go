@@ -121,9 +121,21 @@ func RpcOpenLootbox(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 	}
 
 	// Item rewards - prepare inventory writes
+	typeToKey := map[string]string{
+		"background":  storageKeyBackground,
+		"piece_style": storageKeyPieceStyle,
+		"pet":         storageKeyPet,
+		"class":       storageKeyClass,
+	}
+
 	for i, itemID := range contents.Items {
 		itemType := contents.ItemTypes[i]
-		itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, itemType, itemID)
+		storageKey, ok := typeToKey[itemType]
+		if !ok {
+			logger.Warn("Unknown item type %s for item %d", itemType, itemID)
+			continue
+		}
+		itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, storageKey, itemID)
 		if err != nil {
 			logger.Warn("Failed to prepare item %d grant: %v", itemID, err)
 			continue
