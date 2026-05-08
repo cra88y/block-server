@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 
 	"block-server/errors"
@@ -32,10 +33,20 @@ func BuildRewardIndexMap(treeName string) map[int]RewardIndices {
 		return nil
 	}
 	
+	// Collect and sort all rewarded levels from the Rewards map
+	var levels []int
+	for k := range tree.Rewards {
+		level, err := strconv.Atoi(k)
+		if err == nil {
+			levels = append(levels, level)
+		}
+	}
+	sort.Ints(levels)
+
 	abilityPos, spritePos := 0, 0
 	result := make(map[int]RewardIndices)
 	
-	for _, level := range tree.RewardedLevels {
+	for _, level := range levels {
 		reward := tree.Rewards[strconv.Itoa(level)]
 		aIdx, sIdx := -1, -1
 		
@@ -77,12 +88,12 @@ func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	var maxAbilitiesAvailable int
 	var maxSpritesAvailable int
 	switch itemType {
-	case "pet":
+	case "pet", storageKeyPet:
 		if pet, exists := GetPet(itemID); exists {
 			maxAbilitiesAvailable = len(pet.AbilityIDs)
 			maxSpritesAvailable = pet.SpriteCount
 		}
-	case "class":
+	case "class", storageKeyClass:
 		if class, exists := GetClass(itemID); exists {
 			maxAbilitiesAvailable = len(class.AbilityIDs)
 			maxSpritesAvailable = class.SpriteCount
@@ -202,13 +213,13 @@ func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger run
 			var itemExists bool
 
 			switch itemType {
-			case CategoryPet:
+			case CategoryPet, storageKeyPet:
 				if pet, exists := GetPet(itemID); exists {
 					maxAbilitiesAvailable = len(pet.AbilityIDs)
 					maxSpritesAvailable = pet.SpriteCount
 					itemExists = true
 				}
-			case CategoryClass:
+			case CategoryClass, storageKeyClass:
 				if class, exists := GetClass(itemID); exists {
 					maxAbilitiesAvailable = len(class.AbilityIDs)
 					maxSpritesAvailable = class.SpriteCount
@@ -223,9 +234,9 @@ func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger run
 
 			var progressionKey string
 			switch itemType {
-			case CategoryPet:
+			case CategoryPet, storageKeyPet:
 				progressionKey = ProgressionKeyPet
-			case CategoryClass:
+			case CategoryClass, storageKeyClass:
 				progressionKey = ProgressionKeyClass
 			default:
 				return nil, errors.ErrInvalidItemType
@@ -516,7 +527,7 @@ func GetRewardItemIDs(itemType string, itemID uint32, rewardType string, amount 
 	var ids []uint32
 
 	switch itemType {
-	case CategoryPet:
+	case CategoryPet, storageKeyPet:
 		if pet, exists := GetPet(uint32(itemID)); exists {
 			switch rewardType {
 			case "backgrounds":
@@ -525,7 +536,7 @@ func GetRewardItemIDs(itemType string, itemID uint32, rewardType string, amount 
 				ids = pet.StyleIDs
 			}
 		}
-	case CategoryClass:
+	case CategoryClass, storageKeyClass:
 		if class, exists := GetClass(uint32(itemID)); exists {
 			switch rewardType {
 			case "backgrounds":
