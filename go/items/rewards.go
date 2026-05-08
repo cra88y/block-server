@@ -68,17 +68,24 @@ func BuildRewardIndexMap(treeName string) map[int]RewardIndices {
 
 // Prepares all rewards for a specific level without committing.
 // Returns *PendingWrites to be merged and committed via MultiUpdate.
-func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, treeName string, level int, itemType string, itemID uint32) (*PendingWrites, error) {
+func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, treeName string, level int, itemType string, itemID uint32) (*PendingWrites, RewardMutations, error) {
+	mutations := RewardMutations{
+		GrantedAbilities: make([]int32, 0),
+		GrantedSprites:   make([]uint32, 0),
+		WalletChanges:    make(map[string]int64),
+		InventoryChanges: make([]uint32, 0),
+	}
+
 	tree, exists := GetLevelTree(treeName)
 	if !exists {
-		return nil, errors.ErrInvalidLevelTree
+		return nil, mutations, errors.ErrInvalidLevelTree
 	}
 
 	levelStr := strconv.Itoa(level)
 	rewardData, exists := tree.Rewards[levelStr]
 	if !exists {
 		// No rewards for this level
-		return nil, nil
+		return nil, mutations, nil
 	}
 
 	// Build reward index map to get position-based indices for this level
@@ -86,18 +93,14 @@ func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	rewardIndices := indexMap[level]
 
 	// Get pool sizes for bounds checking
-	var maxAbilitiesAvailable int
-	var maxSpritesAvailable int
 	switch itemType {
 	case "pet", storageKeyPet:
-		if pet, exists := GetPet(itemID); exists {
-			maxAbilitiesAvailable = len(pet.AbilityIDs)
-			maxSpritesAvailable = pet.SpriteCount
+		if _, exists := GetPet(itemID); exists {
+			// Item exists
 		}
 	case "class", storageKeyClass:
-		if class, exists := GetClass(itemID); exists {
-			maxAbilitiesAvailable = len(class.AbilityIDs)
-			maxSpritesAvailable = class.SpriteCount
+		if _, exists := GetClass(itemID); exists {
+			// Item exists
 		}
 	}
 
@@ -107,14 +110,14 @@ func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	if rewardData.Gold != "" {
 		val, err := ParseUint32Safely(rewardData.Gold, logger)
 		if err != nil {
-			return nil, errors.ErrParse
+			return nil, mutations, errors.ErrParse
 		}
 		rewards["gold"] = val
 	}
 	if rewardData.Gems != "" {
 		val, err := ParseUint32Safely(rewardData.Gems, logger)
 		if err != nil {
-			return nil, errors.ErrParse
+			return nil, mutations, errors.ErrParse
 		}
 		rewards["gems"] = val
 	}
@@ -131,7 +134,7 @@ func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	if rewardData.Backgrounds != "" {
 		val, err := ParseUint32Safely(rewardData.Backgrounds, logger)
 		if err != nil {
-			return nil, errors.ErrParse
+			return nil, mutations, errors.ErrParse
 		}
 		if val > 0 {
 			rewards["backgrounds"] = val
@@ -140,60 +143,25 @@ func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	if rewardData.PieceStyles != "" {
 		val, err := ParseUint32Safely(rewardData.PieceStyles, logger)
 		if err != nil {
-			return nil, errors.ErrParse
+			return nil, mutations, errors.ErrParse
 		}
 		if val > 0 {
 			rewards["piece_styles"] = val
 		}
 	}
 
-	pending, err := PrepareRewardItems(ctx, nk, logger, userID, rewards, itemType, itemID)
+	pending, err := PrepareRewardItems(ctx, nk, logger, userID, rewards, itemType, itemID, &mutations)
 	if err != nil {
 		LogError(ctx, logger, "Reward prepare failed", err)
-		return nil, err
+		return nil, mutations, err
 	}
 
-	// Add progression unlocks to payload
-	if pending != nil && pending.Payload != nil {
-		var unlocks []notify.ProgressionUnlock
-
-		if abilityIndex, ok := rewards["abilities"]; ok && abilityIndex > 0 {
-			// Only add unlock if within pool bounds
-			if int(abilityIndex) < maxAbilitiesAvailable {
-				unlocks = append(unlocks, notify.ProgressionUnlock{
-					System:  itemType,
-					ItemID:  itemID,
-					Type:    "ability",
-					Indices: []uint32{abilityIndex},
-				})
-			}
-		}
-		if spriteIndex, ok := rewards["sprites"]; ok && spriteIndex > 0 {
-			// Only add unlock if within pool bounds
-			if int(spriteIndex) < maxSpritesAvailable {
-				unlocks = append(unlocks, notify.ProgressionUnlock{
-					System:  itemType,
-					ItemID:  itemID,
-					Type:    "sprite",
-					Indices: []uint32{spriteIndex},
-				})
-			}
-		}
-
-		if len(unlocks) > 0 {
-			if pending.Payload.Progression == nil {
-				pending.Payload.Progression = &notify.ProgressionDelta{}
-			}
-			pending.Payload.Progression.Unlocks = unlocks
-		}
-	}
-
-	return pending, nil
+	return pending, mutations, nil
 }
 
 // Prepares currency and item rewards without committing.
 // Returns *PendingWrites to be merged and committed via MultiUpdate.
-func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, rewards map[string]uint32, itemType string, itemID uint32) (*PendingWrites, error) {
+func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, rewards map[string]uint32, itemType string, itemID uint32, mutations *RewardMutations) (*PendingWrites, error) {
 	pending := NewPendingWrites()
 	walletChanges := make(map[string]int64)
 	grantedItems := make([]notify.ItemGrant, 0)
@@ -233,62 +201,25 @@ func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger run
 				continue
 			}
 
-			var progressionKey string
-			switch itemType {
-			case CategoryPet, storageKeyPet:
-				progressionKey = ProgressionKeyPet
-			case CategoryClass, storageKeyClass:
-				progressionKey = ProgressionKeyClass
-			default:
-				return nil, errors.ErrInvalidItemType
+			rewardIndex := int(amount) // amount is the position-based index
+
+			// Determine max available based on reward type
+			maxAvailable := maxAbilitiesAvailable
+			if rewardType == "sprites" {
+				maxAvailable = maxSpritesAvailable
 			}
 
-			// Prepare progression update without committing
-			_, progWrite, err := PrepareProgressionUpdate(ctx, nk, logger, userID,
-				progressionKey, itemID, func(prog *ItemProgression) error {
-					// Get the position-based index from the rewards map
-					rewardIndex := int(amount) // amount is the position-based index
-
-					// Determine max available based on reward type
-					maxAvailable := maxAbilitiesAvailable
-					if rewardType == "sprites" {
-						maxAvailable = maxSpritesAvailable
-					}
-
-					// Bounds check: index must be within pool size
-					if rewardIndex >= maxAvailable {
-						// Silently cap - reward is out of bounds
-						return nil
-					}
-
-					// Check if already unlocked
-					unlockedSet := make(map[int32]bool)
-					for _, idx := range prog.UnlockedAbilityIndices {
-						unlockedSet[idx] = true
-					}
-					if unlockedSet[int32(rewardIndex)] {
-						// Already unlocked
-						return nil
-					}
-
-					switch rewardType {
-					case "abilities":
-						// Append the position-based index
-						prog.UnlockedAbilityIndices = append(prog.UnlockedAbilityIndices, int32(rewardIndex))
-					case "sprites":
-						// Append the position-based index
-						prog.UnlockedSpriteIndices = append(prog.UnlockedSpriteIndices, uint32(rewardIndex))
-					}
-
-					return nil
-				})
-
-			if err != nil {
-				LogError(ctx, logger, "Failed to prepare item progression for rewards", err)
-				return nil, err
+			// Bounds check: index must be within pool size
+			if rewardIndex >= maxAvailable {
+				// Silently cap - reward is out of bounds
+				continue
 			}
-			if progWrite != nil {
-				pending.AddStorageWrite(progWrite)
+
+			switch rewardType {
+			case "abilities":
+				mutations.GrantedAbilities = append(mutations.GrantedAbilities, int32(rewardIndex))
+			case "sprites":
+				mutations.GrantedSprites = append(mutations.GrantedSprites, uint32(rewardIndex))
 			}
 
 		case "backgrounds", "piece_styles":

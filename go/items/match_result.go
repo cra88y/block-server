@@ -781,11 +781,15 @@ func preparePlayerXP(ctx context.Context, nk runtime.NakamaModule, logger runtim
 	// Level-up rewards
 	if resultLevel > oldLevel {
 		for lvl := oldLevel + 1; lvl <= resultLevel; lvl++ {
-			levelRewards, err := PrepareLevelRewards(ctx, nk, logger, userID, treeName, lvl, "player", playerItemID)
+			levelRewards, mutations, err := PrepareLevelRewards(ctx, nk, logger, userID, treeName, lvl, "player", playerItemID)
 			if err != nil {
 				logger.Warn("Failed to prepare player level %d rewards: %v", lvl, err)
 				continue
 			}
+
+			// Player progression has no abilities/sprites to grant, so we ignore mutations
+			_ = mutations
+
 			pending.Merge(levelRewards)
 		}
 	}

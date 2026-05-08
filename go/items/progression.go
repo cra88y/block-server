@@ -301,7 +301,7 @@ func verifyAndFixItemProgression(ctx context.Context, nk runtime.NakamaModule, l
 				ItemID:         itemID,
 			})
 		} else {
-			// Existing progression. Verify it's not missing claimed abilities due to historical mapping bug, and run JIT migration to TierStates.
+			// Existing progression. Run JIT migration to TierStates and verify historical mapping integrity.
 			prog := existingProgression[itemID]
 			treeName, err := GetLevelTreeName(itemType, itemID)
 			if err != nil {
@@ -315,7 +315,6 @@ func verifyAndFixItemProgression(ctx context.Context, nk runtime.NakamaModule, l
 			indexMap := BuildRewardIndexMap(treeName)
 			needsSave := false
 
-			// JIT Migration Atom 2
 			if len(prog.UnclaimedRewards) > 0 || prog.TierStates == nil {
 				if prog.TierStates == nil {
 					prog.TierStates = make(map[string]TierState)
@@ -345,7 +344,7 @@ func verifyAndFixItemProgression(ctx context.Context, nk runtime.NakamaModule, l
 				needsSave = true
 			}
 
-			// Bug fix audit: make sure "claimed" tiers actually have their abilities unlocked
+			// Validate "claimed" tiers actually have their abilities unlocked
 			unlockedAbilities := make(map[int32]bool)
 			for _, idx := range prog.UnlockedAbilityIndices {
 				unlockedAbilities[int32(idx)] = true

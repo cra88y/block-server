@@ -99,6 +99,13 @@ type TierState struct {
 	ClaimedAt  int64  `json:"ca,omitempty"`
 }
 
+type RewardMutations struct {
+	GrantedAbilities []int32
+	GrantedSprites   []uint32
+	WalletChanges    map[string]int64
+	InventoryChanges []uint32
+}
+
 type ItemProgression struct {
 	Level int `json:"level"`
 	Exp   int `json:"xp"`
