@@ -301,6 +301,75 @@ func verifyAndFixItemProgression(ctx context.Context, nk runtime.NakamaModule, l
 				ProgressionKey: progressionKey,
 				ItemID:         itemID,
 			})
+		} else {
+			// Existing progression. Verify it's not missing claimed abilities due to historical mapping bug.
+			prog := existingProgression[itemID]
+			treeName, err := GetLevelTreeName(itemType, itemID)
+			if err != nil {
+				continue
+			}
+			tree, exists := GetLevelTree(treeName)
+			if !exists {
+				continue
+			}
+
+			indexMap := BuildRewardIndexMap(treeName)
+			needsSave := false
+
+			unclaimedSet := make(map[int]bool)
+			for _, lvl := range prog.UnclaimedRewards {
+				unclaimedSet[lvl] = true
+			}
+
+			unlockedAbilities := make(map[int32]bool)
+			for _, idx := range prog.UnlockedAbilityIndices {
+				unlockedAbilities[int32(idx)] = true
+			}
+
+			unlockedSprites := make(map[uint32]bool)
+			for _, idx := range prog.UnlockedSpriteIndices {
+				unlockedSprites[uint32(idx)] = true
+			}
+
+			for lvl := 1; lvl <= prog.Level; lvl++ {
+				if unclaimedSet[lvl] {
+					continue // Not claimed yet
+				}
+
+				rewardData, hasReward := tree.Rewards[strconv.Itoa(lvl)]
+				if !hasReward {
+					continue
+				}
+
+				indices := indexMap[lvl]
+
+				if rewardData.Abilities != "" && indices.AbilityIndex >= 0 {
+					if !unlockedAbilities[int32(indices.AbilityIndex)] {
+						prog.UnlockedAbilityIndices = append(prog.UnlockedAbilityIndices, int32(indices.AbilityIndex))
+						unlockedAbilities[int32(indices.AbilityIndex)] = true
+						needsSave = true
+					}
+				}
+
+				if rewardData.Sprites != "" && indices.SpriteIndex >= 0 {
+					if !unlockedSprites[uint32(indices.SpriteIndex)] {
+						prog.UnlockedSpriteIndices = append(prog.UnlockedSpriteIndices, uint32(indices.SpriteIndex))
+						unlockedSprites[uint32(indices.SpriteIndex)] = true
+						needsSave = true
+					}
+				}
+			}
+
+			if needsSave {
+				if err := SaveItemProgression(ctx, nk, logger, userID, progressionKeyPrefix, itemID, &prog); err != nil {
+					repairs[itemID] = "failed_to_repair_missing_unlocks"
+				} else {
+					repairs[itemID] = "repaired_missing_unlocks"
+					logVerificationIssue(ctx, logger, "info",
+						fmt.Sprintf("Repaired missing ability/sprite unlocks for %s ID %d", itemType, itemID),
+						itemType, itemID, userID, "repaired_unlocks", nil)
+				}
+			}
 		}
 	}
 
