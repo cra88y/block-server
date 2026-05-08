@@ -31,10 +31,10 @@ type RoundRecord struct {
 // Sent by the client after each round. IsSolo is derived server-side.
 // Survived is the primary gate for earning tokens.
 type RoundResultRequest struct {
-	MatchID     string `json:"match_id"`
-	RoundNumber int    `json:"round_number"` // 1-indexed; rounds outside TokenRoundCap earn 0
-	PlayerWon   bool   `json:"player_won"`   // 1v1 only: true if player won the round
-	Survived    bool   `json:"survived"`     // true if player's health > 0 at round end
+	MatchID      string `json:"match_id"`
+	RoundNumber  int    `json:"round_number"`  // 1-indexed; rounds outside TokenRoundCap earn 0
+	PlayerWon    bool   `json:"player_won"`    // 1v1 only: true if player won the round
+	Survived     bool   `json:"survived"`      // true if player's health > 0 at round end
 	DurationMs   int64  `json:"duration_ms"`   // used for min duration check
 	Score        int    `json:"score"`         // height telemetry
 	PiecesPlaced int    `json:"pieces_placed"` // pieces telemetry

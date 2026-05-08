@@ -93,6 +93,12 @@ const (
 	ProgressionKeyPlayer = "player_"
 )
 
+type TierState struct {
+	Status     string `json:"s"`
+	UnlockedAt int64  `json:"ua,omitempty"`
+	ClaimedAt  int64  `json:"ca,omitempty"`
+}
+
 type ItemProgression struct {
 	Level int `json:"level"`
 	Exp   int `json:"xp"`
@@ -105,7 +111,8 @@ type ItemProgression struct {
 	BackgroundsUnlocked    int                  `json:"bu"`
 	PieceStylesUnlocked    int                  `json:"pu"`
 
-	UnclaimedRewards []int `json:"ur,omitempty"`
+	UnclaimedRewards []int                `json:"ur,omitempty"`
+	TierStates       map[string]TierState `json:"ts,omitempty"`
 
 	Version string `json:"-"`
 }

@@ -101,13 +101,13 @@ func PrepareMatchHistoryEntry(userID string, req *MatchResultRequest, isSolo boo
 	}
 
 	entry := MatchHistoryEntry{
-		Schema:      MatchHistoryEntrySchema,
-		MatchID:     req.MatchID,
-		Mode:         mode,
-		Score:        req.FinalScore,
-		OpponentID:   opponentID,
-		OpponentName: req.OpponentName,
-		Won:          won,
+		Schema:          MatchHistoryEntrySchema,
+		MatchID:         req.MatchID,
+		Mode:            mode,
+		Score:           req.FinalScore,
+		OpponentID:      opponentID,
+		OpponentName:    req.OpponentName,
+		Won:             won,
 		MyPetID:         req.EquippedPetID,
 		MyClassID:       req.EquippedClassID,
 		OpponentPetID:   req.OpponentPetID,
@@ -116,10 +116,10 @@ func PrepareMatchHistoryEntry(userID string, req *MatchResultRequest, isSolo boo
 		APM:             req.APM,
 		RoundsWon:       req.RoundsWon,
 		RoundsLost:      req.RoundsLost,
-		DurationSec:  req.MatchDurationSec,
-		PiecesPlaced: req.PiecesPlaced,
-		TowerHeight:  req.TowerHeight,
-		PlayedAt:     time.Now().UnixMilli(),
+		DurationSec:     req.MatchDurationSec,
+		PiecesPlaced:    req.PiecesPlaced,
+		TowerHeight:     req.TowerHeight,
+		PlayedAt:        time.Now().UnixMilli(),
 	}
 
 	value, err := json.Marshal(entry)
@@ -170,4 +170,3 @@ func UpdatePlayerStatsAndHistory(ctx context.Context, nk runtime.NakamaModule, l
 
 	return nil
 }
-

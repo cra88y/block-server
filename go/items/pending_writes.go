@@ -49,7 +49,7 @@ func (pw *PendingWrites) Merge(other *PendingWrites) {
 	}
 	pw.StorageWrites = append(pw.StorageWrites, other.StorageWrites...)
 	pw.WalletUpdates = append(pw.WalletUpdates, other.WalletUpdates...)
-	
+
 	// Merge payloads
 	if other.Payload != nil {
 		if pw.Payload == nil {
@@ -104,7 +104,7 @@ func BuildProgressionWrite(userID string, progressionKey string, itemID uint32, 
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &runtime.StorageWrite{
 		Collection:      storageCollectionProgression,
 		Key:             progressionKey + itoa(itemID),
@@ -123,7 +123,7 @@ func BuildInventoryWrite(userID string, storageKey string, items []uint32, versi
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &runtime.StorageWrite{
 		Collection:      storageCollectionInventory,
 		Key:             storageKey,

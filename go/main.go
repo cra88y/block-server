@@ -8,8 +8,8 @@ import (
 	"block-server/items"
 	"block-server/session"
 
-	"github.com/heroiclabs/nakama-common/runtime"
 	"github.com/heroiclabs/nakama-common/rtapi"
+	"github.com/heroiclabs/nakama-common/runtime"
 )
 
 func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, initializer runtime.Initializer) error {
@@ -251,4 +251,3 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 	logger.Info("Plugin loaded in '%d' msec.", time.Since(initStart).Milliseconds())
 	return nil
 }
-

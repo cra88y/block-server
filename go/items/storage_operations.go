@@ -129,13 +129,14 @@ func GetUserProgression(ctx context.Context, nk runtime.NakamaModule, logger run
 // DefaultProgression creates a default progression record
 func DefaultProgression() *ItemProgression {
 	return &ItemProgression{
-		Level:                 1,
-		Exp:                   0,
-		EquippedAbility:       0,
-		EquippedSprite:        0,
+		Level:                  1,
+		Exp:                    0,
+		EquippedAbility:        0,
+		EquippedSprite:         0,
 		UnlockedAbilityIndices: []int32{0},
-		UnlockedSpriteIndices: []uint32{0}, // First sprite unlocked (index 0)
-		BackgroundsUnlocked:   0,
-		PieceStylesUnlocked:   0,
+		UnlockedSpriteIndices:  []uint32{0}, // First sprite unlocked (index 0)
+		BackgroundsUnlocked:    0,
+		PieceStylesUnlocked:    0,
+		TierStates:             make(map[string]TierState),
 	}
 }

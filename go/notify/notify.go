@@ -64,8 +64,8 @@ type RewardPayload struct {
 	Lootboxes   []LootboxGrant    `json:"lootboxes,omitempty"`
 
 	// Meta (non-reward feedback)
-	Meta        *RewardMeta       `json:"meta,omitempty"`
-	DisplayTier string            `json:"display_tier,omitempty"`
+	Meta        *RewardMeta `json:"meta,omitempty"`
+	DisplayTier string      `json:"display_tier,omitempty"`
 }
 
 // Client-side inventory state must be add-only. No removals.
@@ -87,15 +87,23 @@ type WalletDelta struct {
 	Treats int `json:"treats,omitempty"`
 }
 
+// TierState represents the current state of a progression reward tier
+type TierState struct {
+	Status     string `json:"s"`
+	UnlockedAt int64  `json:"ua,omitempty"`
+	ClaimedAt  int64  `json:"ca,omitempty"`
+}
+
 // XP and level-ups. Driven strictly by the server.
 type ProgressionDelta struct {
-	XpGranted           *int                `json:"xp_granted,omitempty"`
-	XpBase              *int                `json:"xp_base,omitempty"` // Before diminishing
-	NewPlayerLevel      *int                `json:"new_player_level,omitempty"`
-	NewPetLevel         *int                `json:"new_pet_level,omitempty"`
-	NewClassLevel       *int                `json:"new_class_level,omitempty"`
-	NewUnclaimedRewards []int               `json:"new_unclaimed_rewards,omitempty"`
-	Unlocks             []ProgressionUnlock `json:"unlocks,omitempty"`
+	XpGranted           *int                 `json:"xp_granted,omitempty"`
+	XpBase              *int                 `json:"xp_base,omitempty"` // Before diminishing
+	NewPlayerLevel      *int                 `json:"new_player_level,omitempty"`
+	NewPetLevel         *int                 `json:"new_pet_level,omitempty"`
+	NewClassLevel       *int                 `json:"new_class_level,omitempty"`
+	NewUnclaimedRewards []int                `json:"new_unclaimed_rewards,omitempty"`
+	UpdatedTierStates   map[string]TierState `json:"updated_tier_states,omitempty"`
+	Unlocks             []ProgressionUnlock  `json:"unlocks,omitempty"`
 }
 
 // ProgressionUnlock represents an ability/sprite unlock from level-up.

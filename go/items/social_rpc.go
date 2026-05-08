@@ -140,8 +140,8 @@ func RpcSendGameInvite(
 		senderName+" challenged you!",
 		content,
 		notify.CodeSocial,
-		senderID,          // Distinguishes P2P invites from system toasts
-		true,              // Persistent in inbox
+		senderID, // Distinguishes P2P invites from system toasts
+		true,     // Persistent in inbox
 	); err != nil {
 		logger.WithFields(map[string]interface{}{
 			"sender":   senderID,

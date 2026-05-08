@@ -64,8 +64,6 @@ func SaveItemProgression(ctx context.Context, nk runtime.NakamaModule, logger ru
 	return err
 }
 
-
-
 // Reads progression, applies update func, and returns a storage write.
 // Does not commit; caller must collect and execute via MultiUpdate.
 func PrepareProgressionUpdate(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger,
@@ -119,14 +117,15 @@ func PrepareProgressionUpdate(ctx context.Context, nk runtime.NakamaModule, logg
 
 func InitializeProgression(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, progressionKey string, itemID uint32) (*ItemProgression, error) {
 	prog := &ItemProgression{
-		Level:                 1,
-		Exp:                   0,
-		EquippedAbility:       0,
-		EquippedSprite:        0,
-		UnlockedAbilityIndices: []int32{0}, // First ability (index 0) auto-claimed
-		UnlockedSpriteIndices: []uint32{0}, // First sprite unlocked (index 0)
-		BackgroundsUnlocked:   0,
-		PieceStylesUnlocked:   0,
+		Level:                  1,
+		Exp:                    0,
+		EquippedAbility:        0,
+		EquippedSprite:         0,
+		UnlockedAbilityIndices: []int32{0},  // First ability (index 0) auto-claimed
+		UnlockedSpriteIndices:  []uint32{0}, // First sprite unlocked (index 0)
+		BackgroundsUnlocked:    0,
+		PieceStylesUnlocked:    0,
+		TierStates:             make(map[string]TierState),
 	}
 	if err := SaveItemProgression(ctx, nk, logger, userID, progressionKey, itemID, prog); err != nil {
 		return nil, err
@@ -145,19 +144,19 @@ func BatchInitializeProgression(ctx context.Context, nk runtime.NakamaModule, lo
 	}
 
 	writes := make([]*runtime.StorageWrite, 0, len(progressionRecords))
-	
+
 	for _, record := range progressionRecords {
 		key := record.ProgressionKey + strconv.Itoa(int(record.ItemID))
 		defaultProg := DefaultProgression()
-		
+
 		value, err := json.Marshal(defaultProg)
 		if err != nil {
-			logVerificationIssue(ctx, logger, "error", 
+			logVerificationIssue(ctx, logger, "error",
 				fmt.Sprintf("Failed to marshal progression for batch initialization"),
 				"", record.ItemID, userID, "batch_marshal", err)
 			return fmt.Errorf("failed to marshal progression for item %d: %w", record.ItemID, err)
 		}
-		
+
 		writes = append(writes, &runtime.StorageWrite{
 			Collection:      storageCollectionProgression,
 			Key:             key,
@@ -171,7 +170,7 @@ func BatchInitializeProgression(ctx context.Context, nk runtime.NakamaModule, lo
 	// Single atomic batch write ensures all progression records are created consistently
 	_, err := nk.StorageWrite(ctx, writes)
 	if err != nil {
-		logVerificationIssue(ctx, logger, "error", 
+		logVerificationIssue(ctx, logger, "error",
 			fmt.Sprintf("Failed to write batch progression records"),
 			"", 0, userID, "batch_write", err)
 		return fmt.Errorf("batch progression write failed: %w", err)
@@ -191,7 +190,7 @@ type ProgressionVerificationReport struct {
 
 // Verification logging helpers
 
-func logVerificationIssue(ctx context.Context, logger runtime.Logger, level, message, itemType string, 
+func logVerificationIssue(ctx context.Context, logger runtime.Logger, level, message, itemType string,
 	itemID uint32, userID string, repairAction string, err error) {
 	fields := map[string]interface{}{
 		"user_id":   userID,
@@ -224,7 +223,7 @@ func VerifyAndFixUserProgression(ctx context.Context, nk runtime.NakamaModule, l
 
 	petFixes, err := verifyAndFixItemProgression(ctx, nk, logger, userID, storageKeyPet, inventory.Pets, existingProgression.Pets, ProgressionKeyPet)
 	if err != nil {
-		logVerificationIssue(ctx, logger, "error", "Failed to verify pet progression", 
+		logVerificationIssue(ctx, logger, "error", "Failed to verify pet progression",
 			"pet", 0, userID, "verify_pet_progression", err)
 	} else {
 		report.PetRepairs = petFixes
@@ -232,7 +231,7 @@ func VerifyAndFixUserProgression(ctx context.Context, nk runtime.NakamaModule, l
 
 	classFixes, err := verifyAndFixItemProgression(ctx, nk, logger, userID, storageKeyClass, inventory.Classes, existingProgression.Classes, ProgressionKeyClass)
 	if err != nil {
-		logVerificationIssue(ctx, logger, "error", "Failed to verify class progression", 
+		logVerificationIssue(ctx, logger, "error", "Failed to verify class progression",
 			"class", 0, userID, "verify_class_progression", err)
 	} else {
 		report.ClassRepairs = classFixes
@@ -302,7 +301,7 @@ func verifyAndFixItemProgression(ctx context.Context, nk runtime.NakamaModule, l
 				ItemID:         itemID,
 			})
 		} else {
-			// Existing progression. Verify it's not missing claimed abilities due to historical mapping bug.
+			// Existing progression. Verify it's not missing claimed abilities due to historical mapping bug, and run JIT migration to TierStates.
 			prog := existingProgression[itemID]
 			treeName, err := GetLevelTreeName(itemType, itemID)
 			if err != nil {
@@ -316,11 +315,37 @@ func verifyAndFixItemProgression(ctx context.Context, nk runtime.NakamaModule, l
 			indexMap := BuildRewardIndexMap(treeName)
 			needsSave := false
 
-			unclaimedSet := make(map[int]bool)
-			for _, lvl := range prog.UnclaimedRewards {
-				unclaimedSet[lvl] = true
+			// JIT Migration Atom 2
+			if len(prog.UnclaimedRewards) > 0 || prog.TierStates == nil {
+				if prog.TierStates == nil {
+					prog.TierStates = make(map[string]TierState)
+				}
+
+				unclaimedSet := make(map[int]bool)
+				for _, lvl := range prog.UnclaimedRewards {
+					unclaimedSet[lvl] = true
+				}
+
+				for lvl := 1; lvl <= prog.Level; lvl++ {
+					lvlStr := strconv.Itoa(lvl)
+					if _, hasReward := tree.Rewards[lvlStr]; !hasReward {
+						continue
+					}
+
+					if unclaimedSet[lvl] {
+						prog.TierStates[lvlStr] = TierState{Status: "unclaimed"}
+					} else {
+						if _, exists := prog.TierStates[lvlStr]; !exists {
+							prog.TierStates[lvlStr] = TierState{Status: "claimed"}
+						}
+					}
+				}
+
+				prog.UnclaimedRewards = nil
+				needsSave = true
 			}
 
+			// Bug fix audit: make sure "claimed" tiers actually have their abilities unlocked
 			unlockedAbilities := make(map[int32]bool)
 			for _, idx := range prog.UnlockedAbilityIndices {
 				unlockedAbilities[int32(idx)] = true
@@ -332,31 +357,36 @@ func verifyAndFixItemProgression(ctx context.Context, nk runtime.NakamaModule, l
 			}
 
 			for lvl := 1; lvl <= prog.Level; lvl++ {
-				if unclaimedSet[lvl] {
-					continue // Not claimed yet
+				lvlStr := strconv.Itoa(lvl)
+				state, hasState := prog.TierStates[lvlStr]
+				if !hasState || state.Status == "unclaimed" {
+					continue // Not claimed yet or no reward
 				}
 
-				rewardData, hasReward := tree.Rewards[strconv.Itoa(lvl)]
+				rewardData, hasReward := tree.Rewards[lvlStr]
 				if !hasReward {
 					continue
 				}
 
 				indices := indexMap[lvl]
+				missingReward := false
 
 				if rewardData.Abilities != "" && indices.AbilityIndex >= 0 {
 					if !unlockedAbilities[int32(indices.AbilityIndex)] {
-						prog.UnlockedAbilityIndices = append(prog.UnlockedAbilityIndices, int32(indices.AbilityIndex))
-						unlockedAbilities[int32(indices.AbilityIndex)] = true
-						needsSave = true
+						missingReward = true
 					}
 				}
 
 				if rewardData.Sprites != "" && indices.SpriteIndex >= 0 {
 					if !unlockedSprites[uint32(indices.SpriteIndex)] {
-						prog.UnlockedSpriteIndices = append(prog.UnlockedSpriteIndices, uint32(indices.SpriteIndex))
-						unlockedSprites[uint32(indices.SpriteIndex)] = true
-						needsSave = true
+						missingReward = true
 					}
+				}
+
+				if missingReward {
+					// We migrated this to claimed, but the user actually never got the reward. Revert to unclaimed.
+					prog.TierStates[lvlStr] = TierState{Status: "unclaimed"}
+					needsSave = true
 				}
 			}
 
@@ -364,10 +394,10 @@ func verifyAndFixItemProgression(ctx context.Context, nk runtime.NakamaModule, l
 				if err := SaveItemProgression(ctx, nk, logger, userID, progressionKeyPrefix, itemID, &prog); err != nil {
 					repairs[itemID] = "failed_to_repair_missing_unlocks"
 				} else {
-					repairs[itemID] = "repaired_missing_unlocks"
+					repairs[itemID] = "restored_missing_unclaimed_tiers"
 					logVerificationIssue(ctx, logger, "info",
-						fmt.Sprintf("Repaired missing ability/sprite unlocks for %s ID %d", itemType, itemID),
-						itemType, itemID, userID, "repaired_unlocks", nil)
+						fmt.Sprintf("Restored missing unclaimed tiers for %s ID %d", itemType, itemID),
+						itemType, itemID, userID, "restored_unclaimed_tiers", nil)
 				}
 			}
 		}
@@ -376,10 +406,10 @@ func verifyAndFixItemProgression(ctx context.Context, nk runtime.NakamaModule, l
 	// Use optimized batch operation to create all missing progression records efficiently
 	if len(progressionRecords) > 0 {
 		if err := BatchInitializeProgression(ctx, nk, logger, userID, progressionRecords); err != nil {
-			logVerificationIssue(ctx, logger, "error", 
+			logVerificationIssue(ctx, logger, "error",
 				fmt.Sprintf("Failed to initialize missing progression records for %s", itemType),
 				itemType, 0, userID, "batch_initialize_progression", err)
-			
+
 			// Mark all records as failed for verification tracking and error analysis
 			for _, record := range progressionRecords {
 				repairs[record.ItemID] = fmt.Sprintf("failed_to_initialize: %v", err)
@@ -388,7 +418,7 @@ func verifyAndFixItemProgression(ctx context.Context, nk runtime.NakamaModule, l
 			// Mark all records as successfully initialized for verification tracking
 			for _, record := range progressionRecords {
 				repairs[record.ItemID] = "initialized_missing_progression"
-				logVerificationIssue(ctx, logger, "info", 
+				logVerificationIssue(ctx, logger, "info",
 					fmt.Sprintf("Initialized missing progression record for %s ID %d", itemType, record.ItemID),
 					itemType, record.ItemID, userID, "progression_initialized", nil)
 			}

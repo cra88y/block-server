@@ -34,9 +34,9 @@ func LoadGameData() error {
 				PieceStyles map[string]PieceStyle `json:"piece_styles"`
 				LevelTrees  map[string]LevelTree  `json:"level_trees"`
 			} `json:"items"`
-			Economy          EconomyConfig `json:"economy"`
-			StarterPack      StarterPack   `json:"starter_pack"`
-			ConfigVersion    string        `json:"config_version"`
+			Economy             EconomyConfig `json:"economy"`
+			StarterPack         StarterPack   `json:"starter_pack"`
+			ConfigVersion       string        `json:"config_version"`
 			VersionRequirements struct {
 				MinClientVersion string `json:"min_client_version"`
 			} `json:"version_requirements"`

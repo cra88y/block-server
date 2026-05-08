@@ -435,11 +435,12 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 // Writing our claim before reading the opponent's claim collapses the TOCTOU window.
 //
 // States:
-//   pending     : First submitter. Participation-only.
-//   ok          : Second submitter. Full rewards + deferred bonus to first submitter.
-//   forfeit_win : Opponent abandoned. Full rewards immediately.
-//   resolved    : Late arrival (opponent resolved). Participation-only.
-//   conflict    : Both claimed win. Both downgraded.
+//
+//	pending     : First submitter. Participation-only.
+//	ok          : Second submitter. Full rewards + deferred bonus to first submitter.
+//	forfeit_win : Opponent abandoned. Full rewards immediately.
+//	resolved    : Late arrival (opponent resolved). Participation-only.
+//	conflict    : Both claimed win. Both downgraded.
 func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, opponentID string, matchID string, claimedWin bool, score int, opponentForfeited bool) (string, error) {
 	if opponentID == "" {
 		return "ok", nil // Solo — no consensus needed, caller handles isSolo reward reduction

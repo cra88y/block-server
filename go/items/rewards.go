@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"time"
 
 	"block-server/errors"
 	"block-server/notify"
@@ -32,7 +33,7 @@ func BuildRewardIndexMap(treeName string) map[int]RewardIndices {
 	if !exists {
 		return nil
 	}
-	
+
 	// Collect and sort all rewarded levels from the Rewards map
 	var levels []int
 	for k := range tree.Rewards {
@@ -45,11 +46,11 @@ func BuildRewardIndexMap(treeName string) map[int]RewardIndices {
 
 	abilityPos, spritePos := 0, 0
 	result := make(map[int]RewardIndices)
-	
+
 	for _, level := range levels {
 		reward := tree.Rewards[strconv.Itoa(level)]
 		aIdx, sIdx := -1, -1
-		
+
 		if reward.Abilities != "" {
 			aIdx = abilityPos + 1 // +1 because index 0 is pre-granted
 			abilityPos++
@@ -58,10 +59,10 @@ func BuildRewardIndexMap(treeName string) map[int]RewardIndices {
 			sIdx = spritePos + 1 // +1 because index 0 is pre-granted
 			spritePos++
 		}
-		
+
 		result[level] = RewardIndices{AbilityIndex: aIdx, SpriteIndex: sIdx}
 	}
-	
+
 	return result
 }
 
@@ -412,6 +413,7 @@ func PrepareExperience(ctx context.Context, nk runtime.NakamaModule, logger runt
 	}
 
 	var resultLevel int
+	var deltaMap map[string]notify.TierState
 
 	// Prepare progression update
 	prog, progWrite, err := PrepareProgressionUpdate(ctx, nk, logger, userID, progressionKey, itemID, func(prog *ItemProgression) error {
@@ -447,11 +449,16 @@ func PrepareExperience(ctx context.Context, nk runtime.NakamaModule, logger runt
 		}
 
 		if calculatedLevel > prog.Level {
-			// Record any unrewarded levels in the tree so the user can claim them later
+			deltaMap = make(map[string]notify.TierState)
 			for lvl := prog.Level + 1; lvl <= calculatedLevel; lvl++ {
-				// Only add to unclaimed if there's an actual reward for this level
-				if _, hasReward := tree.Rewards[strconv.Itoa(lvl)]; hasReward {
-					prog.UnclaimedRewards = append(prog.UnclaimedRewards, lvl)
+				lvlStr := strconv.Itoa(lvl)
+				if _, hasReward := tree.Rewards[lvlStr]; hasReward {
+					if prog.TierStates == nil {
+						prog.TierStates = make(map[string]TierState)
+					}
+					now := time.Now().UnixMilli()
+					prog.TierStates[lvlStr] = TierState{Status: "unclaimed", UnlockedAt: now}
+					deltaMap[lvlStr] = notify.TierState{Status: "unclaimed", UnlockedAt: now}
 				}
 			}
 
@@ -470,8 +477,6 @@ func PrepareExperience(ctx context.Context, nk runtime.NakamaModule, logger runt
 		pending.AddStorageWrite(progWrite)
 	}
 
-	// Level-up rewards are stored in UnclaimedRewards for manual client claim.
-
 	// Add final level to payload
 	if resultLevel > 0 {
 		if pending.Payload == nil {
@@ -489,8 +494,8 @@ func PrepareExperience(ctx context.Context, nk runtime.NakamaModule, logger runt
 			pending.Payload.Progression.NewClassLevel = notify.IntPtr(resultLevel)
 		}
 
-		if len(prog.UnclaimedRewards) > 0 {
-			pending.Payload.Progression.NewUnclaimedRewards = prog.UnclaimedRewards
+		if len(deltaMap) > 0 {
+			pending.Payload.Progression.UpdatedTierStates = deltaMap
 		}
 	} else if prog != nil {
 		// Even if no level-up, still report XP granted
@@ -520,8 +525,6 @@ func CommitPendingWrites(ctx context.Context, nk runtime.NakamaModule, logger ru
 
 	return nil
 }
-
-
 
 func GetRewardItemIDs(itemType string, itemID uint32, rewardType string, amount uint32) []uint32 {
 	var ids []uint32
@@ -555,4 +558,3 @@ func GetRewardItemIDs(itemType string, itemID uint32, rewardType string, amount 
 
 	return ids
 }
-

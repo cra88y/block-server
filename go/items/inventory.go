@@ -469,9 +469,6 @@ func GivePieceStyle(ctx context.Context, nk runtime.NakamaModule, logger runtime
 	return CommitPendingWrites(ctx, nk, logger, pending)
 }
 
-
-
-
 func RemoveItemFromInventory(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, itemType string, itemID uint32) error {
 	objs, err := nk.StorageRead(ctx, []*runtime.StorageRead{
 		{Collection: storageCollectionInventory, Key: itemType, UserID: userID},
@@ -535,4 +532,3 @@ func RemoveItemFromInventory(ctx context.Context, nk runtime.NakamaModule, logge
 
 	return nil
 }
-

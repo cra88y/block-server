@@ -65,7 +65,7 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 
 	canClaim := canUserClaimDailyDrops(dailyDropsState)
 	lastClaim := time.Unix(dailyDropsState.LastClaimUnix, 0).UTC()
-	logger.Info("[DailyDrops] User %s check: lastClaim=%s, midnight=%s, canClaim=%v", 
+	logger.Info("[DailyDrops] User %s check: lastClaim=%s, midnight=%s, canClaim=%v",
 		userID, lastClaim.Format(time.RFC3339), time.Now().UTC().Truncate(24*time.Hour).Format(time.RFC3339), canClaim)
 
 	if !canClaim {
@@ -103,8 +103,8 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 		pending.AddWalletUpdate(userID, changeset)
 	}
 	pending.AddStorageWrite(&runtime.StorageWrite{
-		Collection:      storageCollectionDrops,
-		Key:             storageKeyDaily,
+		Collection: storageCollectionDrops,
+		Key:        storageKeyDaily,
 		// PermissionRead: 1 Ã¢â‚¬â€ drops state is private (last claim time is PII-adjacent).
 		// Other game data uses 2 (public) for leaderboard/social features.
 		// daily_matches uses 0 (server-only) since it's a rate-limit counter.
@@ -199,8 +199,6 @@ func canUserClaimDailyDrops(d dailyDrops) bool {
 	lastClaimTime := time.Unix(d.LastClaimUnix, 0).UTC()
 	return lastClaimTime.Before(midnightUTC)
 }
-
-
 
 const storageKeyDailyMatches = "daily_matches"
 
