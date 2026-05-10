@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/heroiclabs/nakama-common/runtime"
@@ -92,9 +91,7 @@ func PreparePlayerStatsUpdate(ctx context.Context, nk runtime.NakamaModule, user
 	}, nil
 }
 
-// PrepareMatchHistoryEntry builds a storage write for match history without committing.
-// Returns the write operation to be batched into a PendingWrites collection.
-func PrepareMatchHistoryEntry(userID string, req *MatchResultRequest, isSolo bool, won bool, opponentID string) (*runtime.StorageWrite, error) {
+func PrepareMatchHistoryWrite(ctx context.Context, nk runtime.NakamaModule, userID string, req *MatchResultRequest, isSolo bool, won bool, opponentID string) (*runtime.StorageWrite, error) {
 	mode := "1v1"
 	if isSolo {
 		mode = "solo"
@@ -122,19 +119,43 @@ func PrepareMatchHistoryEntry(userID string, req *MatchResultRequest, isSolo boo
 		PlayedAt:        time.Now().UnixMilli(),
 	}
 
-	value, err := json.Marshal(entry)
+	var doc MatchHistoryDocument
+	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
+		Collection: storageCollectionMatchHistory,
+		Key:        "history",
+		UserID:     userID,
+	}})
+	if err == nil && len(objects) > 0 {
+		json.Unmarshal([]byte(objects[0].Value), &doc)
+		doc.Version = objects[0].Version
+	} else {
+		doc.Matches = make([]MatchHistoryEntry, 0)
+	}
+
+	doc.Matches = append([]MatchHistoryEntry{entry}, doc.Matches...)
+
+	const maxHistory = 200
+	if len(doc.Matches) > maxHistory {
+		doc.Matches = doc.Matches[:maxHistory]
+	}
+
+	value, err := json.Marshal(doc)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal match history for user %s match %s: %w", userID, req.MatchID, err)
 	}
 
-	return &runtime.StorageWrite{
+	write := &runtime.StorageWrite{
 		Collection:      storageCollectionMatchHistory,
-		Key:             fmt.Sprintf("%020d_%s_%s", math.MaxInt64-entry.PlayedAt, req.MatchID, userID),
+		Key:             "history",
 		UserID:          userID,
 		Value:           string(value),
-		PermissionRead:  1, // Owner-only: match history is personal data
+		PermissionRead:  1, // Owner-only
 		PermissionWrite: 0,
-	}, nil
+	}
+	if doc.Version != "" {
+		write.Version = doc.Version
+	}
+	return write, nil
 }
 
 // UpdatePlayerStatsAndHistory writes competitive stats and match history.
@@ -155,7 +176,7 @@ func UpdatePlayerStatsAndHistory(ctx context.Context, nk runtime.NakamaModule, l
 	}
 
 	// --- History write (independent commit; no version field — conflict-free) ---
-	historyWrite, err := PrepareMatchHistoryEntry(userID, req, isSolo, won, opponentID)
+	historyWrite, err := PrepareMatchHistoryWrite(ctx, nk, userID, req, isSolo, won, opponentID)
 	if err != nil {
 		logger.Warn("[competitive] history prepare failed for user %s match %s: %v", userID, req.MatchID, err)
 		return err

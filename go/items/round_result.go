@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"block-server/errors"
@@ -12,11 +11,7 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-// Permanent per-round records. Orphaned records reveal crashes/abandons.
-const storageCollectionRoundRecords = "round_records"
 
-// Permanent per-round commit.
-// Idempotent: replaying a round_number returns the original TokensGranted.
 type RoundRecord struct {
 	MatchID       string `json:"match_id"`
 	RoundNumber   int    `json:"round_number"`
@@ -48,9 +43,7 @@ type RoundResultResponse struct {
 	Acknowledged   bool `json:"acknowledged"`    // true = new record banked; false = idempotent replay
 }
 
-func roundRecordKey(matchID string, roundNumber int) string {
-	return fmt.Sprintf("%s_round_%d", matchID, roundNumber)
-}
+
 
 // Banks tokens for a completed round. Idempotent by (match_id, round_number).
 // Bank-only; token-to-lootbox exchange fires at match end.
@@ -79,26 +72,6 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		req.Survived = false
 	}
 
-	// --- Idempotency check: return existing grant if already recorded ---
-	recordKey := roundRecordKey(req.MatchID, req.RoundNumber)
-	existing, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
-		Collection: storageCollectionRoundRecords,
-		Key:        recordKey,
-		UserID:     userID,
-	}})
-	if err != nil {
-		logger.Error("[RoundResult] Storage read failed for user %s: %v", userID, err)
-		return "", errors.ErrCouldNotReadStorage
-	}
-	if len(existing) > 0 {
-		var record RoundRecord
-		if json.Unmarshal([]byte(existing[0].Value), &record) == nil {
-			logger.Info("[RoundResult] Idempotent replay for user %s match %s round %d (granted %d tokens previously)",
-				userID, req.MatchID, req.RoundNumber, record.TokensGranted)
-			return marshalRoundResponse(ctx, nk, logger, userID, record.TokensGranted, false)
-		}
-	}
-
 	// ErrMatchTooShort is acceptable here — a round can complete before minMatchDurationMs.
 	activeMatch, err := validateActiveMatch(ctx, nk, logger, userID, req.MatchID)
 	if err != nil && err != errors.ErrMatchTooShort {
@@ -107,6 +80,15 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	}
 	if activeMatch == nil {
 		return "", errors.ErrNoActiveMatch
+	}
+
+	// --- Idempotency check: return existing grant if already recorded ---
+	for _, round := range activeMatch.Rounds {
+		if round.RoundNumber == req.RoundNumber {
+			logger.Info("[RoundResult] Idempotent replay for user %s match %s round %d (granted %d tokens previously)",
+				userID, req.MatchID, req.RoundNumber, round.TokensGranted)
+			return marshalRoundResponse(ctx, nk, logger, userID, round.TokensGranted, false)
+		}
 	}
 
 	cfg := GetEconomyConfig()
@@ -153,17 +135,22 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		PiecesPlaced:  req.PiecesPlaced,
 		GrantedAt:     time.Now().UnixMilli(),
 	}
-	recordValue, err := json.Marshal(record)
+
+	activeMatch.Rounds = append(activeMatch.Rounds, record)
+	activeMatch.TokensBanked += tokensGranted
+
+	activeMatchBytes, err := json.Marshal(activeMatch)
 	if err != nil {
 		return "", errors.ErrMarshal
 	}
 
 	pending := NewPendingWrites()
 	pending.AddStorageWrite(&runtime.StorageWrite{
-		Collection:      storageCollectionRoundRecords,
-		Key:             recordKey,
+		Collection:      storageCollectionActiveMatch,
+		Key:             storageKeyCurrentMatch,
 		UserID:          userID,
-		Value:           string(recordValue),
+		Value:           string(activeMatchBytes),
+		Version:         activeMatch.Version, // OCC protection
 		PermissionRead:  0,
 		PermissionWrite: 0,
 	})
@@ -212,53 +199,4 @@ func marshalRoundResponse(ctx context.Context, nk runtime.NakamaModule, logger r
 	return string(b), nil
 }
 
-// Returns total tokens banked for this match.
-// Safe fallback to computeTokensEarned on error (returns 0).
-func ReadRoundRecordsTotal(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID, matchID string, maxRounds int) int {
-	if maxRounds < 1 {
-		return 0
-	}
 
-	// Build batch read for all possible round keys in one call.
-	reads := make([]*runtime.StorageRead, maxRounds)
-	for i := 0; i < maxRounds; i++ {
-		reads[i] = &runtime.StorageRead{
-			Collection: storageCollectionRoundRecords,
-			Key:        roundRecordKey(matchID, i+1),
-			UserID:     userID,
-		}
-	}
-
-	objects, err := nk.StorageRead(ctx, reads)
-	if err != nil {
-		logger.Warn("[RoundResult] ReadRoundRecordsTotal failed for user %s match %s: %v — falling back to computeTokensEarned", userID, matchID, err)
-		return 0
-	}
-
-	total := 0
-	for _, obj := range objects {
-		var record RoundRecord
-		if json.Unmarshal([]byte(obj.Value), &record) == nil {
-			total += record.TokensGranted
-		}
-	}
-
-	if total > 0 {
-		logger.Info("[RoundResult] ReadRoundRecordsTotal: %d rounds found, %d tokens already banked for user %s match %s",
-			len(objects), total, userID, matchID)
-	}
-	return total
-}
-
-// Constructs a batch-read slice for all round records up to maxRounds.
-func buildRoundRecordReads(matchID, userID string, maxRounds int) []*runtime.StorageRead {
-	reads := make([]*runtime.StorageRead, maxRounds)
-	for i := range reads {
-		reads[i] = &runtime.StorageRead{
-			Collection: storageCollectionRoundRecords,
-			Key:        roundRecordKey(matchID, i+1),
-			UserID:     userID,
-		}
-	}
-	return reads
-}

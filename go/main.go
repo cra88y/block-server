@@ -248,6 +248,58 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		return err
 	}
 
+	// Background cleanup of obsolete storage records
+	go func() {
+		time.Sleep(30 * time.Second)
+		logger.Info("Starting background cleanup of obsolete storage records...")
+
+		safeDeleteCollection := func(collection string, excludeKeys map[string]bool) {
+			cursor := ""
+			deletedCount := 0
+			for {
+				objects, nextCursor, err := nk.StorageList(context.Background(), "", "", collection, 100, cursor)
+				if err != nil {
+					logger.Error("Failed to list %s: %v", collection, err)
+					break
+				}
+				if len(objects) == 0 {
+					break
+				}
+				
+				deletes := make([]*runtime.StorageDelete, 0, len(objects))
+				for _, obj := range objects {
+					if excludeKeys != nil && excludeKeys[obj.Key] {
+						continue
+					}
+					deletes = append(deletes, &runtime.StorageDelete{
+						Collection: obj.Collection,
+						Key:        obj.Key,
+						UserID:     obj.UserId,
+					})
+				}
+				
+				if len(deletes) > 0 {
+					if err := nk.StorageDelete(context.Background(), deletes); err != nil {
+						logger.Error("Failed to delete batch from %s: %v", collection, err)
+						break
+					}
+					deletedCount += len(deletes)
+				}
+				
+				if nextCursor == "" {
+					break
+				}
+				cursor = nextCursor
+				time.Sleep(500 * time.Millisecond)
+			}
+			logger.Info("Safely pruned %d orphaned records from %s", deletedCount, collection)
+		}
+
+		safeDeleteCollection("round_records", nil)
+		safeDeleteCollection("match_results_cache", map[string]bool{"latest_match_result": true})
+		safeDeleteCollection("match_history", map[string]bool{"history": true})
+	}()
+
 	logger.Info("Plugin loaded in '%d' msec.", time.Since(initStart).Milliseconds())
 	return nil
 }

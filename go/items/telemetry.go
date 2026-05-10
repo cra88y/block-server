@@ -31,6 +31,7 @@ var validEventTypes = map[string]bool{
 	"latency":                 true, // LatencyMetric
 	"state_hash":              true, // StateHashMetric
 	"social_event":            true, // SocialEventMetric
+	"user_feedback":           true, // UserFeedbackMetric
 }
 
 const retentionDays = 30

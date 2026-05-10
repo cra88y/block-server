@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 
 	"block-server/errors"
 
@@ -255,20 +256,38 @@ func RpcGetMatchHistory(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 		limit = 20
 	}
 
-	objects, nextCursor, err := nk.StorageList(ctx, "", userID, storageCollectionMatchHistory, limit, req.Cursor)
+	offset := 0
+	if req.Cursor != "" {
+		fmt.Sscanf(req.Cursor, "%d", &offset)
+	}
+
+	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
+		Collection: storageCollectionMatchHistory,
+		Key:        "history",
+		UserID:     userID,
+	}})
 	if err != nil {
-		logger.Error("[competitive] Failed to list match history for %s: %v", userID, err)
+		logger.Error("[competitive] Failed to read match history for %s: %v", userID, err)
 		return "", errors.ErrCouldNotReadStorage
 	}
 
 	resp := MatchHistoryResponse{
-		NextCursor: nextCursor,
-		Entries:    make([]MatchHistoryEntry, 0, len(objects)),
+		Entries: make([]MatchHistoryEntry, 0),
 	}
-	for _, obj := range objects {
-		var entry MatchHistoryEntry
-		if json.Unmarshal([]byte(obj.Value), &entry) == nil {
-			resp.Entries = append(resp.Entries, entry)
+
+	if len(objects) > 0 {
+		var doc MatchHistoryDocument
+		if json.Unmarshal([]byte(objects[0].Value), &doc) == nil {
+			start := offset
+			end := offset + limit
+			if start < len(doc.Matches) {
+				if end > len(doc.Matches) {
+					end = len(doc.Matches)
+				} else {
+					resp.NextCursor = fmt.Sprintf("%d", end)
+				}
+				resp.Entries = doc.Matches[start:end]
+			}
 		}
 	}
 

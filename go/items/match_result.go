@@ -20,9 +20,12 @@ const (
 )
 
 type ActiveMatch struct {
-	MatchID    string `json:"match_id"`
-	StartTime  int64  `json:"start_time"`
-	OpponentID string `json:"opponent_id,omitempty"`
+	MatchID      string        `json:"match_id"`
+	StartTime    int64         `json:"start_time"`
+	OpponentID   string        `json:"opponent_id,omitempty"`
+	TokensBanked int           `json:"tokens_banked"`
+	Rounds       []RoundRecord `json:"rounds,omitempty"`
+	Version      string        `json:"-"`
 }
 
 // MatchResultRecord stores a player's claimed result for consensus
@@ -62,6 +65,7 @@ func RpcNotifyMatchStart(ctx context.Context, logger runtime.Logger, db *sql.DB,
 		MatchID:    req.MatchID,
 		StartTime:  time.Now().UnixMilli(),
 		OpponentID: req.OpponentID,
+		Rounds:     make([]RoundRecord, 0),
 	}
 
 	value, err := json.Marshal(activeMatch)
@@ -100,31 +104,26 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		return "", errors.ErrUnmarshal
 	}
 
-	// Bypass rate limits for duplicate submissions
+	// Idempotency check
 	cacheObj, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
 		Collection: "match_results_cache",
-		Key:        req.MatchID + "_" + userID,
+		Key:        "latest_match_result",
 		UserID:     userID,
 	}})
 	if err == nil && len(cacheObj) > 0 {
-		logger.Info("Returning cached reward payload for match %s user %s", req.MatchID, userID)
-		return cacheObj[0].Value, nil
+		var cacheEntry MatchResultCacheEntry
+		if err := json.Unmarshal([]byte(cacheObj[0].Value), &cacheEntry); err == nil && cacheEntry.MatchID == req.MatchID {
+			logger.Info("Returning cached reward payload for match %s user %s", req.MatchID, userID)
+			return string(cacheEntry.Payload), nil
+		}
 	}
 
-	// Validate round history (logging + self-healing only; not a hard rejection gate).
-	validateRounds(ctx, nk, &req, userID, logger)
-
-	// Validate against Active Match (Security)
 	activeMatch, err := validateActiveMatch(ctx, nk, logger, userID, req.MatchID)
 	if err != nil {
-		// Semantic override: a completed round proves meaningful play regardless of wall-clock time.
-		// BRIDGE: req.RoundsWon/Lost are client-provided. report_round_result replaces this with server records.
 		roundsPlayed := req.RoundsWon + req.RoundsLost
 		if err == errors.ErrMatchTooShort && roundsPlayed >= 1 && activeMatch != nil {
 			logger.Info("Match %s: duration short but %d round(s) completed — proceeding", req.MatchID, roundsPlayed)
 		} else if err == errors.ErrMatchTooShort {
-			// Return HTTP 200 with error metadata so the client can route to a distinct UI message.
-			// Returning HTTP 400 would be swallowed by the client's CallRpcAsync, causing EndScreen to hang.
 			logger.Warn("Match too short for user %s: %v", userID, err)
 			errorPayload := notify.NewRewardPayload("match")
 			errorPayload.Meta = &notify.RewardMeta{ErrorCode: errorCodeMatchTooShort}
@@ -134,15 +133,12 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 			}
 			return string(respBytes), nil
 		} else if err == errors.ErrStaleMatchExpired && activeMatch != nil {
-			// Match exceeded time limit. Notify opponent and return error to submitter.
 			logger.Warn("Stale match expired for user %s (match %s, opponent %s)", userID, req.MatchID, activeMatch.OpponentID)
 
-			// Notify opponent that the match was auto-resolved without them
 			if activeMatch.OpponentID != "" {
 				staleNote := notify.NewRewardPayload("match")
 				staleNote.Meta = &notify.RewardMeta{ErrorCode: errorCodeStaleMatch}
 				staleNote.ReasonKey = "reward.match.stale_resolved"
-				// Fire-and-forget: opponent may be offline — persistent notification replays on reconnect.
 				go func(oppID string) {
 					if sendErr := notify.SendReward(context.Background(), nk, oppID, staleNote); sendErr != nil {
 						logger.Warn("Failed to send stale-match notification to opponent %s: %v", oppID, sendErr)
@@ -164,6 +160,8 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 			return "", err
 		}
 	}
+
+	validateRounds(ctx, nk, &req, userID, logger, activeMatch)
 
 	// Consensus check (unified path: solo short-circuits in resolveMatchConsensus)
 	consensusResult, err := resolveMatchConsensus(ctx, nk, logger, userID, activeMatch.OpponentID, req.MatchID, req.Won, req.FinalScore, req.OpponentForfeited)
@@ -224,7 +222,7 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	req.Won = actualWon
 
 	// Process rewards atomically, then clean up active match
-	result, err := processMatchRewards(ctx, nk, logger, userID, &req, isSolo)
+	result, err := processMatchRewards(ctx, nk, logger, userID, &req, isSolo, activeMatch)
 	if err == nil {
 		// Emit authoritative telemetry metric (match_completed)
 		go func() {
@@ -299,7 +297,7 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 
 	// Synchronous history write must precede cache write.
 	// Prevents transient failures from being permanently masked by the idempotency cache.
-	historyWrite, historyPrepErr := PrepareMatchHistoryEntry(userID, &req, isSolo, actualWon, activeMatch.OpponentID)
+	historyWrite, historyPrepErr := PrepareMatchHistoryWrite(ctx, nk, userID, &req, isSolo, actualWon, activeMatch.OpponentID)
 	if historyPrepErr != nil {
 		logger.Warn("[competitive] history prepare failed for user %s match %s: %v — proceeding without history", userID, req.MatchID, historyPrepErr)
 	} else {
@@ -333,12 +331,17 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		return "", errors.ErrMarshal
 	}
 
-	// Cache the exact response so future identical requests don't double-process rewards
+	// Atomic idempotency commit
+	cacheEntry := MatchResultCacheEntry{
+		MatchID: req.MatchID,
+		Payload: respBytes,
+	}
+	cacheBytes, _ := json.Marshal(cacheEntry)
 	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{{
 		Collection:      "match_results_cache",
-		Key:             req.MatchID + "_" + userID,
+		Key:             "latest_match_result",
 		UserID:          userID,
-		Value:           string(respBytes),
+		Value:           string(cacheBytes),
 		PermissionRead:  0,
 		PermissionWrite: 0,
 	}})
@@ -406,6 +409,7 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 	if err := json.Unmarshal([]byte(objects[0].Value), &activeMatch); err != nil {
 		return nil, errors.ErrUnmarshal
 	}
+	activeMatch.Version = objects[0].Version
 
 	if activeMatch.MatchID != matchID {
 		return nil, errors.ErrMatchIDMismatch
@@ -547,7 +551,7 @@ func clearActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger runti
 // DropsLeft limits daily lootbox generation; 6 RoundTokens (half-units) exchange for 1 lootbox.
 // A single AccountGetId pre-read prevents wallet TOCTOU during reward generation.
 // Solo match XP is halved to prevent farming.
-func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool) (*notify.RewardPayload, error) {
+func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool, activeMatch *ActiveMatch) (*notify.RewardPayload, error) {
 	cfg := GetEconomyConfig()
 	pending := NewPendingWrites()
 
@@ -590,7 +594,10 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 
 	// If report_round_result banked tokens this match, preTokens already reflects them.
 	// Skip computeTokensEarned to avoid double-grant. Fallback runs if no records exist.
-	tokensBanked := ReadRoundRecordsTotal(ctx, nk, logger, userID, req.MatchID, cfg.TokenRoundCap)
+	tokensBanked := 0
+	if activeMatch != nil {
+		tokensBanked = activeMatch.TokensBanked
+	}
 
 	var tokensEarned int
 	var postTokens int64
@@ -922,7 +929,7 @@ func computeTokensEarned(req *MatchResultRequest, isSolo bool, cfg *EconomyConfi
 // Also performs a cross-stream audit: compares the client's self-report against server
 // RoundRecord objects written by report_round_result. Discrepancies are warn-only —
 // no rewards are withheld in this pass.
-func validateRounds(ctx context.Context, nk runtime.NakamaModule, req *MatchResultRequest, userID string, logger runtime.Logger) {
+func validateRounds(ctx context.Context, nk runtime.NakamaModule, req *MatchResultRequest, userID string, logger runtime.Logger, activeMatch *ActiveMatch) {
 	if len(req.Rounds) == 0 {
 		return // Legacy client or solo fallback — skip silently
 	}
@@ -940,18 +947,10 @@ func validateRounds(ctx context.Context, nk runtime.NakamaModule, req *MatchResu
 	}
 
 	// Cross-stream audit: compare client self-report against server RoundRecord objects.
-	// Discrepancy = client tampered with their batch report after rounds resolved.
-	// Read window must be maxRoundsPerMatch, NOT TokenRoundCap:
-	// report_round_result writes a record for every round (including cap-exceeded ones with 0 tokens).
-	// Using TokenRoundCap here causes false "possible fabrication" warnings for legitimate rounds 4+.
-	serverRecords, readErr := nk.StorageRead(ctx, buildRoundRecordReads(req.MatchID, userID, maxRoundsPerMatch))
-	if readErr == nil {
-		recordMap := make(map[int]RoundRecord, len(serverRecords))
-		for _, obj := range serverRecords {
-			var rec RoundRecord
-			if json.Unmarshal([]byte(obj.Value), &rec) == nil {
-				recordMap[rec.RoundNumber] = rec
-			}
+	if activeMatch != nil {
+		recordMap := make(map[int]RoundRecord, len(activeMatch.Rounds))
+		for _, rec := range activeMatch.Rounds {
+			recordMap[rec.RoundNumber] = rec
 		}
 		for _, r := range req.Rounds {
 			rec, exists := recordMap[r.RoundNumber]

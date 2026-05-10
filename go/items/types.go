@@ -310,12 +310,22 @@ type PlayerStats struct {
 	Version       string `json:"-"` // OCC version key from storage; not serialised to JSON
 }
 
+// Bounded match history buffer (200 entries).
+type MatchHistoryDocument struct {
+	Matches []MatchHistoryEntry `json:"matches"`
+	Version string              `json:"-"`
+}
+
+// MatchResultCacheEntry stores the latest match result payload for idempotency.
+type MatchResultCacheEntry struct {
+	MatchID string          `json:"match_id"`
+	Payload json.RawMessage `json:"payload"`
+}
+
 // MatchHistoryEntry is a single match record, written after each completed match.
-// Collection: match_history, Key: matchID+"_"+userID, UserID: playerID.
-// Append-only and idempotent (same key overwrites with equivalent data).
-// Rating and RatingDelta are nil until ELO is active â€” nil != 0.
+// Rating and RatingDelta are nil until ELO is active.
 type MatchHistoryEntry struct {
-	Schema          int    `json:"schema"` // always MatchHistoryEntrySchema
+	Schema          int    `json:"schema"`
 	MatchID         string `json:"match_id"`
 	Mode            string `json:"mode"`  // "solo" | "1v1"
 	Score           int    `json:"score"` // FinalScore
@@ -335,8 +345,8 @@ type MatchHistoryEntry struct {
 	DurationSec  int   `json:"duration_sec"`
 	PiecesPlaced int   `json:"pieces_placed"`
 	TowerHeight  int   `json:"tower_height"`
-	Rating       *int  `json:"rating,omitempty"`       // player rating at match time; nil until ELO
-	RatingDelta  *int  `json:"rating_delta,omitempty"` // ELO delta applied; nil until ELO
+	Rating       *int  `json:"rating,omitempty"`       // player rating at match time
+	RatingDelta  *int  `json:"rating_delta,omitempty"` // ELO delta applied
 	PlayedAt     int64 `json:"played_at"`
 }
 
