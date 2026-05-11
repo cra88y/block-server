@@ -87,6 +87,14 @@ func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtim
 			return
 		}
 
+		// Extract the ephemeral instance ID from the client's session vars.
+		// We broadcast this back to the client so it can differentiate between
+		// a genuine multi-device login and its own network reconnect echo.
+		instanceID := ""
+		if evt != nil && evt.Properties != nil {
+			instanceID = evt.Properties["instance_id"]
+		}
+
 		// Stream user's private notification channel so we can kick duplicate logins.
 		presences, err := nk.StreamUserList(streamModeNotification, userID, "", "", true, true)
 		if err != nil {
@@ -98,7 +106,8 @@ func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtim
 			{
 				Code: notify.CodeDevice,
 				Content: map[string]interface{}{
-					"kicked_by": sessionID,
+					"kicked_by":          sessionID,
+					"kicked_by_instance": instanceID,
 				},
 				Persistent: false,
 				Sender:     userID,
