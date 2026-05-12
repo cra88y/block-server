@@ -185,6 +185,9 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		if activeMatch.OpponentID != "" {
 			opponentNote := notify.NewRewardPayload("match")
 			opponentNote.Meta = &notify.RewardMeta{ErrorCode: errorCodeOpponentSubmitted}
+			opponentNote.ReasonArgs = map[string]string{
+				"opponent_claimed_win": fmt.Sprintf("%v", req.Won),
+			}
 			go func(oppID string) {
 				if sendErr := notify.SendReward(context.Background(), nk, oppID, opponentNote); sendErr != nil {
 					logger.Warn("Failed to send opponent-submitted notification to %s: %v", oppID, sendErr)
