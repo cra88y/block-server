@@ -137,6 +137,6 @@ func DefaultProgression() *ItemProgression {
 		UnlockedSpriteIndices:  []uint32{0}, // First sprite unlocked (index 0)
 		BackgroundsUnlocked:    0,
 		PieceStylesUnlocked:    0,
-		TierStates:             make(map[string]TierState),
+		TierStates:             map[string]TierState{"1": {Status: "unclaimed"}},
 	}
 }

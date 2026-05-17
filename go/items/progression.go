@@ -125,7 +125,7 @@ func InitializeProgression(ctx context.Context, nk runtime.NakamaModule, logger 
 		UnlockedSpriteIndices:  []uint32{0}, // First sprite unlocked (index 0)
 		BackgroundsUnlocked:    0,
 		PieceStylesUnlocked:    0,
-		TierStates:             make(map[string]TierState),
+		TierStates:             map[string]TierState{"1": {Status: "unclaimed"}},
 	}
 	if err := SaveItemProgression(ctx, nk, logger, userID, progressionKey, itemID, prog); err != nil {
 		return nil, err
@@ -335,7 +335,11 @@ func verifyAndFixItemProgression(ctx context.Context, nk runtime.NakamaModule, l
 						prog.TierStates[lvlStr] = TierState{Status: "unclaimed"}
 					} else {
 						if _, exists := prog.TierStates[lvlStr]; !exists {
-							prog.TierStates[lvlStr] = TierState{Status: "claimed"}
+							if lvl == 1 && prog.Exp == 0 {
+								prog.TierStates[lvlStr] = TierState{Status: "unclaimed"}
+							} else {
+								prog.TierStates[lvlStr] = TierState{Status: "claimed"}
+							}
 						}
 					}
 				}
