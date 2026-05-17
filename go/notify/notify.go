@@ -58,14 +58,23 @@ type RewardPayload struct {
 	BoardId string `json:"board_id,omitempty"`
 
 	// MECE Reward Domains
-	Inventory   *InventoryDelta   `json:"inventory,omitempty"`
-	Wallet      *WalletDelta      `json:"wallet,omitempty"`
-	Progression *ProgressionDelta `json:"progression,omitempty"`
-	Lootboxes   []LootboxGrant    `json:"lootboxes,omitempty"`
+	Inventory        *InventoryDelta   `json:"inventory,omitempty"`
+	Wallet           *WalletDelta      `json:"wallet,omitempty"`
+	Progression      *ProgressionDelta `json:"progression,omitempty"`
+	Lootboxes        []LootboxGrant    `json:"lootboxes,omitempty"`
+	DuplicateGrants  []DuplicateGrant  `json:"duplicate_grants,omitempty"`
 
 	// Meta (non-reward feedback)
 	Meta        *RewardMeta `json:"meta,omitempty"`
 	DisplayTier string      `json:"display_tier,omitempty"`
+}
+
+// DuplicateGrant represents an item that was rolled but already owned, converted to currency.
+type DuplicateGrant struct {
+	ItemID           uint32 `json:"item_id"`
+	Type             string `json:"type"` // pet, class, background, piece_style
+	FallbackCurrency string `json:"fallback_currency"` // gold, gems
+	FallbackAmount   int    `json:"fallback_amount"`
 }
 
 // Client-side inventory state must be add-only. No removals.

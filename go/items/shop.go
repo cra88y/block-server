@@ -20,12 +20,18 @@ var shopdata []byte
 
 // Shop configuration loaded from gamedata/shop.json
 type ShopConfig struct {
-	ExchangeRates  ExchangeRates             `json:"exchange_rates"`
-	LootboxTiers   map[string]LootboxTierDef `json:"lootbox_tiers"`
-	ShopItems      []ShopItem                `json:"shop_items"`
-	RotationConfig RotationConfig            `json:"rotation_config"`
-	IAPProducts    []IAPProduct              `json:"iap_products"`
-	ItemPools      map[string][]PoolItem     `json:"item_pools"`
+	ExchangeRates      ExchangeRates               `json:"exchange_rates"`
+	LootboxTiers       map[string]LootboxTierDef   `json:"lootbox_tiers"`
+	ShopItems          []ShopItem                  `json:"shop_items"`
+	RotationConfig     RotationConfig              `json:"rotation_config"`
+	IAPProducts        []IAPProduct                `json:"iap_products"`
+	ItemPools          map[string][]PoolItem       `json:"item_pools"`
+	DuplicateFallbacks map[string]DuplicateFallback `json:"duplicate_fallbacks"`
+}
+
+type DuplicateFallback struct {
+	Currency string `json:"currency"`
+	Amount   int    `json:"amount"`
 }
 
 type PoolItem struct {
@@ -130,11 +136,16 @@ func GetShopConfig() *ShopConfig {
 
 // Response types
 type ShopCatalogResponse struct {
-	RotatingItems  []ShopItemResponse `json:"rotating_items"`
-	PermanentItems []ShopItemResponse `json:"permanent_items"`
-	LootboxTiers   map[string]int     `json:"lootbox_tiers"`
-	NextRotationAt int64              `json:"next_rotation_at"`
-	IAPProducts    []IAPProduct       `json:"iap_products"`
+	RotatingItems  []ShopItemResponse             `json:"rotating_items"`
+	PermanentItems []ShopItemResponse             `json:"permanent_items"`
+	LootboxTiers   map[string]LootboxTierResponse `json:"lootbox_tiers"`
+	NextRotationAt int64                          `json:"next_rotation_at"`
+	IAPProducts    []IAPProduct                   `json:"iap_products"`
+}
+
+type LootboxTierResponse struct {
+	PriceGems int       `json:"price_gems"`
+	DropTable DropTable `json:"drop_table"`
 }
 
 type ShopItemResponse struct {
@@ -238,9 +249,12 @@ func RpcGetShopCatalog(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 	}
 
 	// Build lootbox tier prices for client
-	lootboxPrices := make(map[string]int)
+	lootboxPrices := make(map[string]LootboxTierResponse)
 	for tier, def := range shopConfig.LootboxTiers {
-		lootboxPrices[tier] = def.PriceGems
+		lootboxPrices[tier] = LootboxTierResponse{
+			PriceGems: def.PriceGems,
+			DropTable: def.DropTable,
+		}
 	}
 
 	response := ShopCatalogResponse{

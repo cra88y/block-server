@@ -28,11 +28,12 @@ type Lootbox struct {
 
 // LootboxContents represents the rewards from opening a lootbox (internal use)
 type LootboxContents struct {
-	Gold      int      `json:"gold"`
-	Gems      int      `json:"gems"`
-	Treats    int      `json:"treats"`
-	Items     []uint32 `json:"items"`
-	ItemTypes []string `json:"item_types"`
+	Gold       int                     `json:"gold"`
+	Gems       int                     `json:"gems"`
+	Treats     int                     `json:"treats"`
+	Items      []uint32                `json:"items"`
+	ItemTypes  []string                `json:"item_types"`
+	Duplicates []notify.DuplicateGrant `json:"duplicates"`
 }
 
 // RpcGetLootboxes returns all unopened lootboxes for a user
@@ -102,7 +103,7 @@ func RpcOpenLootbox(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 	}
 
 	// Generate contents based on tier, filtering owned items
-	contents, err := generateLootboxContents(ctx, nk, userID, lootbox.Tier)
+	contents, err := generateLootboxContents(ctx, nk, logger, userID, lootbox.Tier)
 	if err != nil {
 		return "", err
 	}
@@ -178,7 +179,11 @@ func RpcOpenLootbox(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		result.Inventory = &notify.InventoryDelta{Items: items}
 	}
 
-	// Wallet from currency
+	if len(contents.Duplicates) > 0 {
+		result.DuplicateGrants = contents.Duplicates
+	}
+
+	// Wallet from base currency ONLY (duplicates are kept separate for client presentation)
 	if contents.Gold > 0 || contents.Gems > 0 || contents.Treats > 0 {
 		result.Wallet = &notify.WalletDelta{
 			Gold:   contents.Gold,
@@ -241,7 +246,7 @@ func getOwnedItemsForLootbox(ctx context.Context, nk runtime.NakamaModule, userI
 	return owned
 }
 
-func generateLootboxContents(ctx context.Context, nk runtime.NakamaModule, userID string, tier string) (*LootboxContents, error) {
+func generateLootboxContents(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, tier string) (*LootboxContents, error) {
 	shopCfg := GetShopConfig()
 	if shopCfg == nil {
 		return nil, fmt.Errorf("shop config not loaded")
@@ -260,38 +265,12 @@ func generateLootboxContents(ctx context.Context, nk runtime.NakamaModule, userI
 
 	dt := tierDef.DropTable
 	contents := &LootboxContents{
-		Gold:      randomRange(dt.Gold.Min, dt.Gold.Max),
-		Gems:      randomRange(dt.Gems.Min, dt.Gems.Max),
-		Treats:    randomRange(dt.Treats.Min, dt.Treats.Max),
-		Items:     make([]uint32, 0),
-		ItemTypes: make([]string, 0),
-	}
-
-	// Each pool rolls independently — a single open can theoretically drop
-	// from multiple pools if configured that way.
-	for _, poolRef := range dt.ItemPools {
-		if rand.Float64() < poolRef.Chance {
-			itemType, itemID := pickRandomItemFromPool(poolRef.Pool, ownedItems)
-			if itemType != "" {
-				contents.Items = append(contents.Items, itemID)
-				contents.ItemTypes = append(contents.ItemTypes, itemType)
-			}
-		}
-	}
-
-	return contents, nil
-}
-
-// pickRandomItemFromPool picks a single unowned item from a single named pool.
-func pickRandomItemFromPool(poolName string, ownedItems map[string][]uint32) (string, uint32) {
-	shopCfg := GetShopConfig()
-	if shopCfg == nil || len(shopCfg.ItemPools) == 0 {
-		return "", 0
-	}
-
-	poolItems, ok := shopCfg.ItemPools[poolName]
-	if !ok || len(poolItems) == 0 {
-		return "", 0
+		Gold:       randomRange(dt.Gold.Min, dt.Gold.Max),
+		Gems:       randomRange(dt.Gems.Min, dt.Gems.Max),
+		Treats:     randomRange(dt.Treats.Min, dt.Treats.Max),
+		Items:      make([]uint32, 0),
+		ItemTypes:  make([]string, 0),
+		Duplicates: make([]notify.DuplicateGrant, 0),
 	}
 
 	typeToStorageKey := func(t string) string {
@@ -318,19 +297,53 @@ func pickRandomItemFromPool(poolName string, ownedItems map[string][]uint32) (st
 		return false
 	}
 
-	available := make([]PoolItem, 0, len(poolItems))
-	for _, item := range poolItems {
-		storageKey := typeToStorageKey(item.Type)
-		if storageKey != "" && !isOwned(storageKey, item.ID) {
-			available = append(available, item)
+	// Each pool rolls independently — a single open can theoretically drop
+	// from multiple pools if configured that way.
+	for _, poolRef := range dt.ItemPools {
+		if rand.Float64() < poolRef.Chance {
+			itemType, itemID := pickRandomItemFromPool(poolRef.Pool)
+			if itemType != "" {
+				sKey := typeToStorageKey(itemType)
+				if sKey != "" && isOwned(sKey, itemID) {
+					fallback := shopCfg.DuplicateFallbacks[poolRef.Pool]
+					if fallback.Amount > 0 {
+						contents.Duplicates = append(contents.Duplicates, notify.DuplicateGrant{
+							ItemID:           itemID,
+							Type:             itemType,
+							FallbackCurrency: fallback.Currency,
+							FallbackAmount:   fallback.Amount,
+						})
+					} else {
+						logger.Warn("Lootbox pool '%s' missing duplicate fallback configuration for item %d. Player granted nothing.", poolRef.Pool, itemID)
+					}
+				} else {
+					contents.Items = append(contents.Items, itemID)
+					contents.ItemTypes = append(contents.ItemTypes, itemType)
+					// Optimistically add to ownedItems so we don't grant the same item twice in one multi-pool roll
+					if sKey != "" {
+						ownedItems[sKey] = append(ownedItems[sKey], itemID)
+					}
+				}
+			}
 		}
 	}
 
-	if len(available) == 0 {
+	return contents, nil
+}
+
+// pickRandomItemFromPool picks a single item from a single named pool.
+func pickRandomItemFromPool(poolName string) (string, uint32) {
+	shopCfg := GetShopConfig()
+	if shopCfg == nil || len(shopCfg.ItemPools) == 0 {
 		return "", 0
 	}
 
-	picked := available[rand.Intn(len(available))]
+	poolItems, ok := shopCfg.ItemPools[poolName]
+	if !ok || len(poolItems) == 0 {
+		return "", 0
+	}
+
+	picked := poolItems[rand.Intn(len(poolItems))]
 	return picked.Type, picked.ID
 }
 
