@@ -61,10 +61,6 @@
             },
             {
                 "type": "piece_style",
-                "id": 11
-            },
-            {
-                "type": "piece_style",
                 "id": 12
             },
             {
@@ -126,10 +122,6 @@
             {
                 "type": "piece_style",
                 "id": 31
-            },
-            {
-                "type": "piece_style",
-                "id": 32
             },
             {
                 "type": "piece_style",
@@ -204,12 +196,6 @@
                 "id": 59
             }
         ],
-        "premium_piece_styles": [
-            {
-                "type": "piece_style",
-                "id": 4
-            }
-        ],
         "pets": [
             {
                 "type": "pet",
@@ -281,10 +267,6 @@
             },
             {
                 "type": "piece_style",
-                "id": 32
-            },
-            {
-                "type": "piece_style",
                 "id": 2
             },
             {
@@ -353,18 +335,6 @@
                         "pool": "piece_styles",
                         "chance": 0.1
                     },
-                    {
-                        "pool": "premium_piece_styles",
-                        "chance": 0.03
-                    },
-                    {
-                        "pool": "pets",
-                        "chance": 0.02
-                    },
-                    {
-                        "pool": "classes",
-                        "chance": 0.02
-                    }
                 ]
             }
         }
