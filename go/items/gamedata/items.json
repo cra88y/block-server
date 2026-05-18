@@ -1,6 +1,6 @@
 {
   "version": null,
-  "config_version": "20260518-0153",
+  "config_version": "20260518-0227",
   "items": {
     "pets": {
       "0": {
@@ -313,7 +313,146 @@
         "name": "YAMAZAKI"
       }
     },
-    "level_trees": {}
+    "level_trees": {
+      "pet_basic": {
+        "max_level": 10,
+        "level_thresholds": [
+          0,
+          2000,
+          7000,
+          15000,
+          30000,
+          55000,
+          95000,
+          150000,
+          220000,
+          305000,
+          405000
+        ],
+        "upgrade_cost_currency": "treats",
+        "cost_per_upgrade": 1,
+        "xp_per_upgrade": 1000,
+        "rewards": {
+          "1": {
+            "gems": "75",
+            "gold": "500"
+          },
+          "2": {
+            "backgrounds": "1",
+            "gold": "500"
+          },
+          "4": {
+            "abilities": "1"
+          },
+          "6": {
+            "gems": "150",
+            "gold": "500"
+          },
+          "8": {
+            "piece_styles": "1"
+          },
+          "10": {
+            "gems": "150",
+            "gold": "1500"
+          }
+        }
+      },
+      "class_basic": {
+        "max_level": 8,
+        "level_thresholds": [
+          0,
+          3000,
+          12000,
+          30000,
+          65000,
+          120000,
+          195000,
+          280000,
+          340000
+        ],
+        "upgrade_cost_currency": "gold",
+        "cost_per_upgrade": 500,
+        "xp_per_upgrade": 5000,
+        "rewards": {
+          "1": {
+            "gems": "75",
+            "treats": "5"
+          },
+          "2": {
+            "piece_styles": "1"
+          },
+          "3": {
+            "abilities": "1"
+          },
+          "4": {
+            "gems": "150",
+            "treats": "5"
+          },
+          "5": {
+            "backgrounds": "1"
+          },
+          "6": {
+            "gems": "150",
+            "treats": "10"
+          }
+        }
+      },
+      "player_level": {
+        "max_level": 25,
+        "level_thresholds": [
+          0,
+          250,
+          600,
+          1050,
+          1600,
+          2250,
+          3000,
+          3850,
+          4800,
+          5850,
+          7000,
+          8250,
+          9600,
+          11050,
+          12600,
+          14250,
+          16000,
+          17850,
+          19800,
+          21850,
+          24000,
+          26250,
+          28600,
+          31050,
+          33600,
+          36250
+        ],
+        "upgrade_cost_currency": null,
+        "cost_per_upgrade": 0,
+        "xp_per_upgrade": 0,
+        "rewards": {
+          "5": {
+            "gems": "10"
+          },
+          "10": {
+            "gems": "15",
+            "backgrounds": "1"
+          },
+          "15": {
+            "gems": "20"
+          },
+          "20": {
+            "gems": "25",
+            "piece_styles": "1"
+          },
+          "25": {
+            "gems": "50",
+            "backgrounds": "1",
+            "piece_styles": "1"
+          }
+        }
+      }
+    }
   },
   "economy": {
     "win_xp": 100,
