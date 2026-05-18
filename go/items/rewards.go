@@ -34,21 +34,11 @@ func BuildRewardIndexMap(treeName string) map[int]RewardIndices {
 		return nil
 	}
 
-	// Helper to check if level is in rewarded_levels array
-	isRewarded := func(lvl int) bool {
-		for _, r := range tree.RewardedLevels {
-			if r == lvl {
-				return true
-			}
-		}
-		return false
-	}
-
 	// Collect and sort all rewarded levels from the Rewards map
 	var levels []int
 	for k := range tree.Rewards {
 		level, err := strconv.Atoi(k)
-		if err == nil && isRewarded(level) {
+		if err == nil {
 			levels = append(levels, level)
 		}
 	}
@@ -89,19 +79,6 @@ func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	tree, exists := GetLevelTree(treeName)
 	if !exists {
 		return nil, mutations, errors.ErrInvalidLevelTree
-	}
-
-	isRewarded := false
-	for _, r := range tree.RewardedLevels {
-		if r == level {
-			isRewarded = true
-			break
-		}
-	}
-	
-	if !isRewarded {
-		// Not in rewarded_levels
-		return nil, mutations, nil
 	}
 
 	levelStr := strconv.Itoa(level)
