@@ -60,6 +60,7 @@ type PieceStyle struct {
 type LevelTree struct {
 	MaxLevel            int    `json:"max_level"`
 	BaseXP              int    `json:"base_xp"`
+	LevelThresholds     []int  `json:"level_thresholds"`
 	UpgradeCostCurrency string `json:"upgrade_cost_currency"`
 	CostPerUpgrade      int    `json:"cost_per_upgrade"`
 	XpPerUpgrade        int    `json:"xp_per_upgrade"`
