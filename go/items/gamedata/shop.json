@@ -334,7 +334,7 @@
                     {
                         "pool": "piece_styles",
                         "chance": 0.1
-                    },
+                    }
                 ]
             }
         }
@@ -383,11 +383,26 @@
         "epoch_start": "2026-01-01T00:00:00Z"
     },
     "duplicate_fallbacks": {
-        "pets": { "currency": "gems", "amount": 100 },
-        "classes": { "currency": "gems", "amount": 100 },
-        "premium_piece_styles": { "currency": "gems", "amount": 50 },
-        "backgrounds": { "currency": "gold", "amount": 500 },
-        "piece_styles": { "currency": "gold", "amount": 250 }
+        "pets": {
+            "currency": "gems",
+            "amount": 100
+        },
+        "classes": {
+            "currency": "gems",
+            "amount": 100
+        },
+        "premium_piece_styles": {
+            "currency": "gems",
+            "amount": 50
+        },
+        "backgrounds": {
+            "currency": "gold",
+            "amount": 500
+        },
+        "piece_styles": {
+            "currency": "gold",
+            "amount": 250
+        }
     },
     "iap_products": [
         {
