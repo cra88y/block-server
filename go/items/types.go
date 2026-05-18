@@ -11,6 +11,7 @@ type GameDataStruct struct {
 	Backgrounds map[uint32]Background `json:"backgrounds"`
 	PieceStyles map[uint32]PieceStyle `json:"piece_styles"`
 	LevelTrees  map[string]LevelTree  `json:"level_trees"`
+	StatCurves  map[string][]uint32   `json:"stat_curves"`
 	StarterPack *StarterPack          `json:"starter_pack,omitempty"`
 }
 
@@ -29,10 +30,8 @@ type Pet struct {
 	BackgroundIDs      []uint32 `json:"backgroundIds"`
 	StyleIDs           []uint32 `json:"styleIds"`
 	LevelTreeName      string   `json:"levelTreeName"`
-	BaseAttack         int      `json:"baseAttack"`
-	AttackScalePercent int      `json:"attackScalePercent"`
-	BaseHealth         int      `json:"baseHealth"`
-	HealthScalePercent int      `json:"healthScalePercent"`
+	HealthCurveID      string   `json:"healthCurveId"`
+	AttackCurveID      string   `json:"attackCurveId"`
 }
 
 type Class struct {
@@ -43,10 +42,8 @@ type Class struct {
 	BackgroundIDs      []uint32 `json:"backgroundIds"`
 	StyleIDs           []uint32 `json:"styleIds"`
 	LevelTreeName      string   `json:"levelTreeName"`
-	BaseAttack         int      `json:"baseAttack"`
-	AttackScalePercent int      `json:"attackScalePercent"`
-	BaseHealth         int      `json:"baseHealth"`
-	HealthScalePercent int      `json:"healthScalePercent"`
+	HealthCurveID      string   `json:"healthCurveId"`
+	AttackCurveID      string   `json:"attackCurveId"`
 }
 
 type Background struct {

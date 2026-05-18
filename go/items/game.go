@@ -33,6 +33,7 @@ func LoadGameData() error {
 				Backgrounds map[string]Background `json:"backgrounds"`
 				PieceStyles map[string]PieceStyle `json:"piece_styles"`
 				LevelTrees  map[string]LevelTree  `json:"level_trees"`
+				StatCurves  map[string][]uint32   `json:"stat_curves"`
 			} `json:"items"`
 			Economy             EconomyConfig `json:"economy"`
 			StarterPack         StarterPack   `json:"starter_pack"`
@@ -57,6 +58,7 @@ func LoadGameData() error {
 			Backgrounds: make(map[uint32]Background, len(raw.Items.Backgrounds)),
 			PieceStyles: make(map[uint32]PieceStyle, len(raw.Items.PieceStyles)),
 			LevelTrees:  make(map[string]LevelTree, len(raw.Items.LevelTrees)),
+			StatCurves:  make(map[string][]uint32, len(raw.Items.StatCurves)),
 		}
 
 		for name, tree := range raw.Items.LevelTrees {
@@ -92,10 +94,8 @@ func LoadGameData() error {
 				BackgroundIDs:      v.BackgroundIDs,
 				StyleIDs:           v.StyleIDs,
 				LevelTreeName:      v.LevelTreeName,
-				BaseAttack:         v.BaseAttack,
-				AttackScalePercent: v.AttackScalePercent,
-				BaseHealth:         v.BaseHealth,
-				HealthScalePercent: v.HealthScalePercent,
+				HealthCurveID:      v.HealthCurveID,
+				AttackCurveID:      v.AttackCurveID,
 			}
 		}
 
@@ -113,12 +113,12 @@ func LoadGameData() error {
 				BackgroundIDs:      v.BackgroundIDs,
 				StyleIDs:           v.StyleIDs,
 				LevelTreeName:      v.LevelTreeName,
-				BaseAttack:         v.BaseAttack,
-				AttackScalePercent: v.AttackScalePercent,
-				BaseHealth:         v.BaseHealth,
-				HealthScalePercent: v.HealthScalePercent,
+				HealthCurveID:      v.HealthCurveID,
+				AttackCurveID:      v.AttackCurveID,
 			}
 		}
+
+		GameData.StatCurves = raw.Items.StatCurves
 
 		for k, v := range raw.Items.Backgrounds {
 			id, err := strconv.ParseUint(k, 10, 32)

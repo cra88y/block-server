@@ -1,6 +1,6 @@
 {
   "version": null,
-  "config_version": "20260518-0227",
+  "config_version": "20260518-2222",
   "items": {
     "pets": {
       "0": {
@@ -17,10 +17,8 @@
           57
         ],
         "levelTreeName": "pet_basic",
-        "baseAttack": 15,
-        "attackScalePercent": 10,
-        "baseHealth": 90,
-        "healthScalePercent": 5
+        "healthCurveId": "basic_pet_health",
+        "attackCurveId": "zero_stats"
       },
       "1": {
         "name": "White Dragon",
@@ -36,10 +34,8 @@
           32
         ],
         "levelTreeName": "pet_basic",
-        "baseAttack": 15,
-        "attackScalePercent": 10,
-        "baseHealth": 90,
-        "healthScalePercent": 5
+        "healthCurveId": "basic_pet_health",
+        "attackCurveId": "zero_stats"
       },
       "2": {
         "name": "Froggie",
@@ -55,10 +51,8 @@
           11
         ],
         "levelTreeName": "pet_basic",
-        "baseAttack": 15,
-        "attackScalePercent": 9,
-        "baseHealth": 110,
-        "healthScalePercent": 6
+        "healthCurveId": "tank_pet_health",
+        "attackCurveId": "zero_stats"
       }
     },
     "classes": {
@@ -76,10 +70,8 @@
           29
         ],
         "levelTreeName": "class_basic",
-        "baseAttack": 0,
-        "attackScalePercent": 0,
-        "baseHealth": 0,
-        "healthScalePercent": 0
+        "healthCurveId": "zero_stats",
+        "attackCurveId": "basic_class_attack"
       },
       "0": {
         "name": "Knight",
@@ -95,10 +87,8 @@
           35
         ],
         "levelTreeName": "class_basic",
-        "baseAttack": 0,
-        "attackScalePercent": 0,
-        "baseHealth": 0,
-        "healthScalePercent": 0
+        "healthCurveId": "zero_stats",
+        "attackCurveId": "basic_class_attack"
       },
       "2": {
         "name": "Mage",
@@ -114,10 +104,8 @@
           31
         ],
         "levelTreeName": "class_basic",
-        "baseAttack": 0,
-        "attackScalePercent": 0,
-        "baseHealth": 0,
-        "healthScalePercent": 0
+        "healthCurveId": "zero_stats",
+        "attackCurveId": "basic_class_attack"
       }
     },
     "backgrounds": {
@@ -452,7 +440,8 @@
           }
         }
       }
-    }
+    },
+    "stat_curves": null
   },
   "economy": {
     "win_xp": 100,
