@@ -1,6 +1,6 @@
 {
   "version": null,
-  "config_version": "20260518-0008",
+  "config_version": "20260518-0107",
   "items": {
     "pets": {
       "0": {
@@ -319,7 +319,19 @@
     "level_trees": {
       "pet_basic": {
         "max_level": 10,
-        "base_xp": 3200,
+        "level_thresholds": [
+          0,
+          1000,
+          3000,
+          6000,
+          11000,
+          16000,
+          24000,
+          34000,
+          46000,
+          61000,
+          81000
+        ],
         "upgrade_cost_currency": "treats",
         "cost_per_upgrade": 1,
         "xp_per_upgrade": 1000,
@@ -350,7 +362,17 @@
       },
       "class_basic": {
         "max_level": 8,
-        "base_xp": 10000,
+        "level_thresholds": [
+          0,
+          2000,
+          7000,
+          15000,
+          26000,
+          40000,
+          57000,
+          78000,
+          105000
+        ],
         "upgrade_cost_currency": "gold",
         "cost_per_upgrade": 500,
         "xp_per_upgrade": 5000,
@@ -379,8 +401,35 @@
         }
       },
       "player_level": {
-        "max_level": 100,
-        "base_xp": 500,
+        "max_level": 25,
+        "level_thresholds": [
+          0,
+          500,
+          1500,
+          3000,
+          5000,
+          7500,
+          10500,
+          14000,
+          18000,
+          22500,
+          27500,
+          33000,
+          39000,
+          45500,
+          52500,
+          60000,
+          68000,
+          76500,
+          85500,
+          95000,
+          105000,
+          115500,
+          126500,
+          138000,
+          150000,
+          162500
+        ],
         "upgrade_cost_currency": null,
         "cost_per_upgrade": 0,
         "xp_per_upgrade": 0,
@@ -400,24 +449,7 @@
             "piece_styles": "1"
           },
           "25": {
-            "gems": "50"
-          },
-          "30": {
             "gems": "50",
-            "backgrounds": "1"
-          },
-          "40": {
-            "gems": "75"
-          },
-          "50": {
-            "gems": "100",
-            "piece_styles": "1"
-          },
-          "75": {
-            "gems": "150"
-          },
-          "100": {
-            "gems": "500",
             "backgrounds": "1",
             "piece_styles": "1"
           }

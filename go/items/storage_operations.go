@@ -127,8 +127,8 @@ func GetUserProgression(ctx context.Context, nk runtime.NakamaModule, logger run
 }
 
 // DefaultProgression creates a default progression record
-func DefaultProgression() *ItemProgression {
-	return &ItemProgression{
+func DefaultProgression(treeName string) *ItemProgression {
+	prog := &ItemProgression{
 		Level:                  1,
 		Exp:                    0,
 		EquippedAbility:        0,
@@ -137,6 +137,14 @@ func DefaultProgression() *ItemProgression {
 		UnlockedSpriteIndices:  []uint32{0}, // First sprite unlocked (index 0)
 		BackgroundsUnlocked:    0,
 		PieceStylesUnlocked:    0,
-		TierStates:             map[string]TierState{"1": {Status: "unclaimed"}},
+		TierStates:             make(map[string]TierState),
 	}
+	
+	if tree, exists := GetLevelTree(treeName); exists {
+		if _, hasReward := tree.Rewards["1"]; hasReward {
+			prog.TierStates["1"] = TierState{Status: "unclaimed"}
+		}
+	}
+	
+	return prog
 }

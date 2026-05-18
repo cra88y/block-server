@@ -116,17 +116,14 @@ func PrepareProgressionUpdate(ctx context.Context, nk runtime.NakamaModule, logg
 // Progression Initialization
 
 func InitializeProgression(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, progressionKey string, itemID uint32) (*ItemProgression, error) {
-	prog := &ItemProgression{
-		Level:                  1,
-		Exp:                    0,
-		EquippedAbility:        0,
-		EquippedSprite:         0,
-		UnlockedAbilityIndices: []int32{0},  // First ability (index 0) auto-claimed
-		UnlockedSpriteIndices:  []uint32{0}, // First sprite unlocked (index 0)
-		BackgroundsUnlocked:    0,
-		PieceStylesUnlocked:    0,
-		TierStates:             map[string]TierState{"1": {Status: "unclaimed"}},
+	category := storageKeyClass
+	if progressionKey == ProgressionKeyPet {
+		category = storageKeyPet
 	}
+	
+	treeName, _ := GetLevelTreeName(category, itemID)
+	
+	prog := DefaultProgression(treeName)
 	if err := SaveItemProgression(ctx, nk, logger, userID, progressionKey, itemID, prog); err != nil {
 		return nil, err
 	}
@@ -147,7 +144,14 @@ func BatchInitializeProgression(ctx context.Context, nk runtime.NakamaModule, lo
 
 	for _, record := range progressionRecords {
 		key := record.ProgressionKey + strconv.Itoa(int(record.ItemID))
-		defaultProg := DefaultProgression()
+		
+		category := storageKeyClass
+		if record.ProgressionKey == ProgressionKeyPet {
+			category = storageKeyPet
+		}
+		
+		treeName, _ := GetLevelTreeName(category, record.ItemID)
+		defaultProg := DefaultProgression(treeName)
 
 		value, err := json.Marshal(defaultProg)
 		if err != nil {

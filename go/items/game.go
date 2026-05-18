@@ -61,12 +61,20 @@ func LoadGameData() error {
 
 		for name, tree := range raw.Items.LevelTrees {
 			t := tree
-			t.LevelThresholds = make([]int, t.MaxLevel+1)
-			cumulative := 0
-			for level := 1; level <= t.MaxLevel; level++ {
-				cumulative += t.BaseXP * level * level
-				t.LevelThresholds[level] = cumulative
+			
+			// Validate level_thresholds array
+			if len(t.LevelThresholds) < t.MaxLevel+1 {
+				parseErrors = append(parseErrors, fmt.Errorf("level tree %q has invalid level_thresholds length (got %d, expected at least %d)", name, len(t.LevelThresholds), t.MaxLevel+1))
+			} else {
+				// Ensure strictly ascending order
+				for i := 1; i <= t.MaxLevel; i++ {
+					if t.LevelThresholds[i] < t.LevelThresholds[i-1] {
+						parseErrors = append(parseErrors, fmt.Errorf("level tree %q has non-ascending level_thresholds at index %d", name, i))
+						break
+					}
+				}
 			}
+			
 			GameData.LevelTrees[name] = t
 		}
 
@@ -233,6 +241,10 @@ func CalculateLevel(treeName string, exp int) (int, error) {
 		} else {
 			high = mid - 1
 		}
+	}
+
+	if high < 1 {
+		return 1, nil
 	}
 
 	return high, nil

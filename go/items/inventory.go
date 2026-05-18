@@ -416,7 +416,13 @@ func PrepareItemGrant(ctx context.Context, nk runtime.NakamaModule, logger runti
 
 // PrepareProgressionInit prepares a storage write to initialize progression for an item.
 func PrepareProgressionInit(userID string, progressionKey string, itemID uint32) (*runtime.StorageWrite, error) {
-	prog := DefaultProgression()
+	category := storageKeyClass
+	if progressionKey == ProgressionKeyPet {
+		category = storageKeyPet
+	}
+	
+	treeName, _ := GetLevelTreeName(category, itemID)
+	prog := DefaultProgression(treeName)
 	value, err := json.Marshal(prog)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal progression: %w", err)
