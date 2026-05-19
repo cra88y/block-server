@@ -723,7 +723,22 @@ func RpcClaimProgressionReward(ctx context.Context, logger runtime.Logger, db *s
 		lvlStr := strconv.Itoa(req.Level)
 
 		state, exists := prog.TierStates[lvlStr]
-		if !exists || state.Status != "unclaimed" {
+		if !exists {
+			return errors.ErrRewardAlreadyClaimed
+		}
+
+		// Idempotency: if already claimed, we succeed and return current state
+		if state.Status == "claimed" {
+			rewardFound = true
+			updatedTierState = notify.TierState{
+				Status:     state.Status,
+				UnlockedAt: state.UnlockedAt,
+				ClaimedAt:  state.ClaimedAt,
+			}
+			return nil
+		}
+
+		if state.Status != "unclaimed" {
 			return errors.ErrRewardAlreadyClaimed
 		}
 
@@ -910,7 +925,13 @@ func RpcClaimAllProgressionRewards(ctx context.Context, logger runtime.Logger, d
 	}
 
 	if len(levelsToClaim) == 0 {
-		return "", errors.ErrRewardAlreadyClaimed
+		// Idempotency: if no unclaimed rewards found, return success with empty payload
+		// so retries don't fail.
+		result := notify.NewRewardPayload("claim_all")
+		result.Source = "claim_all"
+		result.ReasonKey = "reward.claim_all.none_left"
+		respBytes, _ := json.Marshal(result)
+		return string(respBytes), nil
 	}
 
 	// Prepare rewards for all levels safely
