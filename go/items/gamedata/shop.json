@@ -25,10 +25,6 @@
             },
             {
                 "type": "piece_style",
-                "id": 1
-            },
-            {
-                "type": "piece_style",
                 "id": 2
             },
             {
@@ -37,15 +33,7 @@
             },
             {
                 "type": "piece_style",
-                "id": 4
-            },
-            {
-                "type": "piece_style",
                 "id": 5
-            },
-            {
-                "type": "piece_style",
-                "id": 6
             },
             {
                 "type": "piece_style",
@@ -235,10 +223,6 @@
             },
             {
                 "type": "piece_style",
-                "id": 1
-            },
-            {
-                "type": "piece_style",
                 "id": 19
             },
             {
@@ -252,10 +236,6 @@
             {
                 "type": "piece_style",
                 "id": 8
-            },
-            {
-                "type": "piece_style",
-                "id": 6
             },
             {
                 "type": "piece_style",
