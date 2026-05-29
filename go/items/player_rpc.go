@@ -728,7 +728,7 @@ func RpcClaimProgressionReward(ctx context.Context, logger runtime.Logger, db *s
 			return errors.ErrRewardAlreadyClaimed
 		}
 
-		// Idempotency: if already claimed, we succeed and return current state
+		// Idempotency: abort state mutation if already claimed. Return current state.
 		if state.Status == "claimed" {
 			rewardFound = true
 			alreadyClaimed = true
@@ -943,8 +943,7 @@ func RpcClaimAllProgressionRewards(ctx context.Context, logger runtime.Logger, d
 	}
 
 	if len(levelsToClaim) == 0 {
-		// Idempotency: if no unclaimed rewards found, return success with empty payload
-		// so retries don't fail.
+		// Idempotency: bypass if no unclaimed tiers exist, returning empty success payload.
 		result := notify.NewRewardPayload("claim_all")
 		result.Source = "claim_all"
 		result.ReasonKey = "reward.claim_all.none_left"
