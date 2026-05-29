@@ -247,7 +247,7 @@ func CalculateLevel(treeName string, exp int) (int, error) {
 		return 1, nil
 	}
 
-	return high, nil
+	return high + 1, nil
 }
 
 // Helper Functions
