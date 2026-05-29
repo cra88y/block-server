@@ -718,6 +718,7 @@ func RpcClaimProgressionReward(ctx context.Context, logger runtime.Logger, db *s
 
 	// Use a SINGLE PrepareProgressionUpdate to handle both the claim and the unlocks
 	var updatedTierState notify.TierState
+	var alreadyClaimed bool
 
 	_, progWrite, err := PrepareProgressionUpdate(ctx, nk, logger, userID, progressionKey, req.ItemID, func(prog *ItemProgression) error {
 		lvlStr := strconv.Itoa(req.Level)
@@ -730,6 +731,7 @@ func RpcClaimProgressionReward(ctx context.Context, logger runtime.Logger, db *s
 		// Idempotency: if already claimed, we succeed and return current state
 		if state.Status == "claimed" {
 			rewardFound = true
+			alreadyClaimed = true
 			updatedTierState = notify.TierState{
 				Status:     state.Status,
 				UnlockedAt: state.UnlockedAt,
@@ -768,6 +770,22 @@ func RpcClaimProgressionReward(ctx context.Context, logger runtime.Logger, db *s
 
 	if !rewardFound {
 		return "", errors.ErrRewardAlreadyClaimed
+	}
+
+	// Idempotency short-circuit: if already claimed, do not commit any writes.
+	// Just return the payload reflecting the claimed state.
+	if alreadyClaimed {
+		result := notify.NewRewardPayload("claim_reward")
+		result.Source = "claim_reward"
+		result.ReasonKey = "reward.progression.claimed"
+		result.Progression = &notify.ProgressionDelta{
+			UpdatedTierStates: map[string]notify.TierState{
+				strconv.Itoa(req.Level): updatedTierState,
+			},
+		}
+
+		respBytes, _ := json.Marshal(result)
+		return string(respBytes), nil
 	}
 
 	if progWrite != nil {

@@ -3,6 +3,7 @@ package items
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
@@ -142,7 +143,10 @@ func DefaultProgression(treeName string) *ItemProgression {
 	
 	if tree, exists := GetLevelTree(treeName); exists {
 		if _, hasReward := tree.Rewards["1"]; hasReward {
-			prog.TierStates["1"] = TierState{Status: "unclaimed"}
+			prog.TierStates["1"] = TierState{
+				Status:     "unclaimed",
+				UnlockedAt: time.Now().UnixMilli(),
+			}
 		}
 	}
 	
