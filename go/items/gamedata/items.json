@@ -1,6 +1,6 @@
 {
   "version": null,
-  "config_version": "20260525-2228",
+  "config_version": "20260602-0057",
   "items": {
     "pets": {
       "0": {
@@ -539,7 +539,7 @@
     ]
   },
   "version_requirements": {
-    "min_client_version": "0.72"
+    "min_client_version": "0.99"
   },
   "telemetry": {
     "sample_rates": {

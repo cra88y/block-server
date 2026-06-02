@@ -258,6 +258,9 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 				"GameMode":        gameMode,
 				"RoundsWon":       req.RoundsWon,
 				"RoundsLost":      req.RoundsLost,
+				"AbilitiesCast":   req.AbilitiesCast,
+				"APM":             req.APM,
+				"PiecesPlaced":    req.PiecesPlaced,
 			})
 
 			telemetryEvent := TelemetryEvent{

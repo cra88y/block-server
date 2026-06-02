@@ -260,9 +260,17 @@ func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger run
 				}
 				if !exists {
 					newItems = append(newItems, id)
+
+					singularType := rewardType
+					if rewardType == "backgrounds" {
+						singularType = "background"
+					} else if rewardType == "piece_styles" {
+						singularType = "piece_style"
+					}
+
 					grantedItems = append(grantedItems, notify.ItemGrant{
 						ID:   id,
-						Type: rewardType,
+						Type: singularType,
 					})
 				}
 			}

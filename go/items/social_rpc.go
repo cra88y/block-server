@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"time"
 
 	blockerrors "block-server/errors"
 	"block-server/notify"
@@ -267,6 +268,22 @@ func RpcCancelGameInvite(
 		"target":   req.TargetUserID,
 		"match_id": req.MatchID,
 	}).Info("cancel_game_invite: cancellation sent")
+
+	// Emit authoritative telemetry metric (social_event)
+	telemetryData, _ := json.Marshal(map[string]interface{}{
+		"action":       "cancel_invite",
+		"match_id":     req.MatchID,
+		"from_user_id": senderID,
+		"to_user_id":   req.TargetUserID,
+		"success":      true,
+	})
+
+	telemetryEvent := TelemetryEvent{
+		EventType: "social_event",
+		Timestamp: float64(time.Now().UnixMilli()) / 1000.0,
+		Data:      string(telemetryData),
+	}
+	processTelemetryEvent(ctx, logger, db, nk, senderID, telemetryEvent)
 
 	return `{"success": true}`, nil
 }
