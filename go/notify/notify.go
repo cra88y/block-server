@@ -67,6 +67,47 @@ type RewardPayload struct {
 	// Meta (non-reward feedback)
 	Meta        *RewardMeta `json:"meta,omitempty"`
 	DisplayTier string      `json:"display_tier,omitempty"`
+
+	// --- Modular Enterprise End Screen Fields ---
+	Economy     *EconomyState           `json:"economy,omitempty"`
+	Competitive []CompetitiveBoardState `json:"competitive,omitempty"`
+	Performance []PerformanceTag        `json:"performance_tags,omitempty"`
+}
+
+// EconomyState encapsulates post-match token generation and conversions.
+type EconomyState struct {
+	RoundTokens     *int `json:"round_tokens,omitempty"`
+	TokensEarned    *int `json:"tokens_earned,omitempty"`
+	CarryOverTokens *int `json:"carry_over_tokens,omitempty"`
+	ExchangesMade   int  `json:"exchanges_made,omitempty"`
+	DropsRemaining  *int `json:"drops_remaining,omitempty"`
+}
+
+// CompetitiveBoardState encapsulates rank data for a single leaderboard.
+type CompetitiveBoardState struct {
+	BoardID      string             `json:"board_id,omitempty"`
+	RankCurrent  int                `json:"rank_current,omitempty"`
+	RankDelta    int                `json:"rank_delta,omitempty"`
+	ScoreCurrent int64              `json:"score_current,omitempty"`
+	NextTarget   *CompetitiveTarget `json:"next_target,omitempty"`
+}
+
+// CompetitiveTarget encapsulates the Rival player for the End Screen chase UI.
+type CompetitiveTarget struct {
+	UserID       string `json:"user_id,omitempty"`
+	Username     string `json:"username,omitempty"`
+	Rank         int    `json:"rank,omitempty"`
+	Score        int64  `json:"score,omitempty"`
+	ScoreDelta   int64  `json:"score_delta_to_pass,omitempty"`
+	Relationship string `json:"relationship,omitempty"`
+}
+
+// PerformanceTag encapsulates contextual stat flexes (e.g. APM, Longest Match).
+type PerformanceTag struct {
+	TagID        string `json:"tag_id,omitempty"`
+	DisplayLabel string `json:"display_label,omitempty"`
+	DisplayValue string `json:"display_value,omitempty"`
+	IsRecord     bool   `json:"is_record,omitempty"`
 }
 
 // DuplicateGrant represents an item that was rolled but already owned, converted to currency.

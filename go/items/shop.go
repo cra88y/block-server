@@ -880,8 +880,26 @@ func RpcRevokeIAPPurchase(ctx context.Context, logger runtime.Logger, db *sql.DB
 		logger.Error("%s Failed to write revocation: %v", logPrefix, writeErr)
 	}
 
-	// TODO: Compute balance adjustment from grant.ProductId → gem mapping
-	// For now, just log the revocation event
+	var gemDeduction int
+	for _, p := range shopConfig.IAPProducts {
+		if p.ProductID == grant.ProductId {
+			gemDeduction = p.Gems
+			break
+		}
+	}
+
+	if gemDeduction > 0 {
+		pending := NewPendingWrites()
+		pending.AddWalletDeduction(userID, "gems", int64(gemDeduction))
+		if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
+			logger.Error("%s Failed to deduct gems: %v", logPrefix, err)
+		} else {
+			logger.Info("%s Deducted %d gems for revoked purchase", logPrefix, gemDeduction)
+		}
+	} else {
+		logger.Warn("%s Unknown product %s in revocation, no gems deducted", logPrefix, grant.ProductId)
+	}
+
 	logger.Info("%s Revoked: reason=%s", logPrefix, req.RevocationReason)
 	return `{"success":true}`, nil
 }

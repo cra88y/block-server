@@ -7,14 +7,15 @@ import (
 	"fmt"
 
 	"block-server/errors"
+	"block-server/notify"
 
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-// Writes match result to leaderboards synchronously and returns the season rank, delta, and board ID.
+// Writes match result to leaderboards synchronously and returns the season rank, delta, board ID, and the new array of CompetitiveBoardStates.
 // Solo: BEST operator (writes always). 1v1: INCREMENT operator (writes on win only).
-func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool, actualWon bool) (int, int, string) {
+func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool, actualWon bool) (int, int, string, []notify.CompetitiveBoardState) {
 	var globalBoard, weeklyBoard string
 	var score, subscore int64
 
@@ -25,7 +26,7 @@ func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logge
 		subscore = int64(req.MatchDurationSec)
 	} else {
 		if !actualWon {
-			return 0, 0, ""
+			return 0, 0, "", nil
 		}
 		globalBoard = Leaderboard1v1Season
 		weeklyBoard = Leaderboard1v1Weekly
@@ -46,9 +47,23 @@ func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logge
 		username = users[0].Username
 	}
 
+	boards := []notify.CompetitiveBoardState{}
+
+	// 1. Process Global Board
+	globalRank, globalDelta, globalState := processBoard(ctx, nk, logger, globalBoard, userID, username, score, subscore, metadata)
+	boards = append(boards, globalState)
+
+	// 2. Process Weekly Board
+	_, _, weeklyState := processBoard(ctx, nk, logger, weeklyBoard, userID, username, score, subscore, metadata)
+	boards = append(boards, weeklyState)
+
+	return globalRank, globalDelta, globalBoard, boards
+}
+
+func processBoard(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, boardId, userID, username string, score, subscore int64, metadata map[string]interface{}) (int, int, notify.CompetitiveBoardState) {
 	// Query previous rank BEFORE writing so we can compute the delta
 	var prevRank int64
-	_, prevRecords, _, _, prevErr := nk.LeaderboardRecordsList(ctx, globalBoard, []string{userID}, 1, "", 0)
+	_, prevRecords, _, _, prevErr := nk.LeaderboardRecordsList(ctx, boardId, []string{userID}, 1, "", 0)
 	if prevErr == nil {
 		for _, r := range prevRecords {
 			if r.OwnerId == userID {
@@ -58,27 +73,55 @@ func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logge
 		}
 	}
 
-	// Write global board — capture rank from this record.
 	var rank int64
-	record, err := nk.LeaderboardRecordWrite(ctx, globalBoard, userID, username, score, subscore, metadata, nil)
+	var actualScore int64
+	record, err := nk.LeaderboardRecordWrite(ctx, boardId, userID, username, score, subscore, metadata, nil)
 	if err != nil {
-		logger.Warn("[leaderboard] Failed to write %s for user %s: %v", globalBoard, userID, err)
+		logger.Warn("[leaderboard] Failed to write %s for user %s: %v", boardId, userID, err)
 	} else if record != nil {
 		rank = record.Rank
+		actualScore = record.Score
 	}
 
-	// Write weekly board — rank not captured (global is the canonical rank surface).
-	if _, err := nk.LeaderboardRecordWrite(ctx, weeklyBoard, userID, username, score, subscore, metadata, nil); err != nil {
-		logger.Warn("[leaderboard] Failed to write %s for user %s: %v", weeklyBoard, userID, err)
-	}
-
-	// Compute delta: negative = climbed (better rank, lower number), positive = dropped
 	delta := 0
 	if prevRank > 0 && rank > 0 {
 		delta = int(prevRank - rank) // positive = climbed
 	}
 
-	return int(rank), delta, globalBoard
+	state := notify.CompetitiveBoardState{
+		BoardID:      boardId,
+		RankCurrent:  int(rank),
+		RankDelta:    delta,
+		ScoreCurrent: actualScore,
+	}
+
+	// Rival Target Lookup
+	if rank > 1 {
+		// Haystack fetches records around the owner. If unavailable or fails, fallback is top 100.
+		haystack, err := nk.LeaderboardRecordsHaystack(ctx, boardId, userID, 10, "", 0)
+		if err == nil && haystack != nil {
+			// Find the best ranked player immediately preceding us (handles tied-rank skips)
+			// Nakama returns haystack records sorted by rank (e.g., 1, 2, 3...)
+			var closestRival *api.LeaderboardRecord
+			for _, r := range haystack.Records {
+				if r.Rank < rank && r.OwnerId != userID {
+					// Keep overwriting until we hit our rank; the last one seen is the closest rival
+					closestRival = r
+				}
+			}
+			if closestRival != nil {
+				state.NextTarget = &notify.CompetitiveTarget{
+					UserID:     closestRival.OwnerId,
+					Username:   closestRival.Username.GetValue(),
+					Rank:       int(closestRival.Rank),
+					Score:      closestRival.Score,
+					ScoreDelta: closestRival.Score - actualScore,
+				}
+			}
+		}
+	}
+
+	return int(rank), delta, state
 }
 
 func leaderboardEntryFromRecord(r *api.LeaderboardRecord) LeaderboardEntry {

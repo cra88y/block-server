@@ -294,12 +294,40 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	}
 
 	// Synchronous: Write leaderboard records (sets LeaderboardRank, delta, and BoardId in payload). Non-fatal on err.
-	leaderboardRank, leaderboardDelta, boardId := writeLeaderboardRecords(ctx, nk, logger, userID, &req, isSolo, actualWon)
+	leaderboardRank, leaderboardDelta, boardId, competitiveBoards := writeLeaderboardRecords(ctx, nk, logger, userID, &req, isSolo, actualWon)
 	if leaderboardRank > 0 {
 		result.LeaderboardRank = leaderboardRank
 		result.LeaderboardRankDelta = leaderboardDelta
 		result.BoardId = boardId
 	}
+	result.Competitive = competitiveBoards
+
+	// Populate Performance Tags
+	var tags []notify.PerformanceTag
+	if req.APM >= 80 {
+		tags = append(tags, notify.PerformanceTag{
+			TagID:        "HIGH_APM",
+			DisplayLabel: "Blocks Per Minute",
+			DisplayValue: fmt.Sprintf("%d", req.APM),
+			IsRecord:     true,
+		})
+	} else if req.APM > 0 {
+		tags = append(tags, notify.PerformanceTag{
+			TagID:        "APM",
+			DisplayLabel: "Blocks Per Minute",
+			DisplayValue: fmt.Sprintf("%d", req.APM),
+			IsRecord:     false,
+		})
+	}
+	if req.TowerHeight > 0 {
+		tags = append(tags, notify.PerformanceTag{
+			TagID:        "TOWER_HEIGHT",
+			DisplayLabel: "Tower Height",
+			DisplayValue: fmt.Sprintf("%dm", req.TowerHeight),
+			IsRecord:     false,
+		})
+	}
+	result.Performance = tags
 
 	// Synchronous history write must precede cache write.
 	// Prevents transient failures from being permanently masked by the idempotency cache.
@@ -696,11 +724,18 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		ExchangesMade:   exchangesMade,
 		CarryOverTokens: nil,
 	}
+	result.Economy = &notify.EconomyState{
+		DropsRemaining: notify.IntPtr(int(finalDrops)),
+		RoundTokens:    notify.IntPtr(int(finalTokens)),
+		TokensEarned:   notify.IntPtr(effectiveEarned),
+		ExchangesMade:  exchangesMade,
+	}
 	// If an exchange occurred, expose carry-over so the client can snap to real balance
 	// after the exchange animation. The client uses ExchangesMade > 0 to detect
 	// the exchange event and CarryOverTokens for the post-snap value.
 	if exchangesMade > 0 {
 		result.Meta.CarryOverTokens = notify.IntPtr(int(finalTokens))
+		result.Economy.CarryOverTokens = notify.IntPtr(int(finalTokens))
 	}
 
 	return result, nil
