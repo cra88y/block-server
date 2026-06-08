@@ -60,6 +60,11 @@ func RpcCompleteOnboarding(ctx context.Context, logger runtime.Logger, db *sql.D
 		return "", err
 	}
 
+	// Emit authoritative onboarding_completed telemetry
+	EmitServerTelemetry(logger, userID, "onboarding_completed", map[string]interface{}{
+		"source": "rpc",
+	})
+
 	resp, _ := json.Marshal(pending.Payload)
 	return string(resp), nil
 }

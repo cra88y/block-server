@@ -29,6 +29,7 @@ var validEventTypes = map[string]bool{
 	"round_lost":              true,
 	"progression_claimed":     true,
 	"progression_claimed_all": true,
+	"onboarding_completed":    true,
 	"latency":                 true, // LatencyMetric
 	"state_hash":              true, // StateHashMetric
 	"social_event":            true, // SocialEventMetric
