@@ -616,6 +616,16 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		}
 	}
 
+	// Emit telemetry for IAP purchase
+	EmitServerTelemetry(logger, userID, "iap_purchase", map[string]interface{}{
+		"currency": "usd", // App Store standardizes on USD for telemetry or we just record product id
+		"amount":   0,     // We don't know the exact fiat amount here without Apple API, so we record 0
+		"source":   "iap",
+		"sink":     "wallet",
+		"product_id": req.ProductID,
+		"gems_granted": gemAmount,
+	})
+
 	// 10. Send CodeReward notification (server controls the payout)
 	reward := notify.NewRewardPayload("iap")
 	reward.Wallet = &notify.WalletDelta{Gems: gemAmount}

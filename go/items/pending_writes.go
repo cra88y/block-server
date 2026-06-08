@@ -9,11 +9,21 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
+// PendingTelemetry captures an economy event to emit on commit
+type PendingTelemetry struct {
+	UserID   string
+	Currency string
+	Amount   int64
+	Source   string
+	Sink     string
+}
+
 // PendingWrites batches storage + wallet writes for a single atomic MultiUpdate commit.
 type PendingWrites struct {
 	StorageWrites []*runtime.StorageWrite
 	WalletUpdates []*runtime.WalletUpdate
 	Payload       *notify.RewardPayload
+	Telemetry     []PendingTelemetry
 }
 
 // NewPendingWrites creates a new PendingWrites collector
@@ -21,6 +31,7 @@ func NewPendingWrites() *PendingWrites {
 	return &PendingWrites{
 		StorageWrites: make([]*runtime.StorageWrite, 0),
 		WalletUpdates: make([]*runtime.WalletUpdate, 0),
+		Telemetry:     make([]PendingTelemetry, 0),
 	}
 }
 
@@ -35,6 +46,27 @@ func (pw *PendingWrites) AddWalletUpdate(userID string, changeset map[string]int
 		UserID:    userID,
 		Changeset: changeset,
 	})
+	
+	// Add telemetry for each currency
+	for currency, amount := range changeset {
+		if amount > 0 {
+			pw.Telemetry = append(pw.Telemetry, PendingTelemetry{
+				UserID:   userID,
+				Currency: currency,
+				Amount:   amount,
+				Source:   "system",
+				Sink:     "wallet",
+			})
+		} else if amount < 0 {
+			pw.Telemetry = append(pw.Telemetry, PendingTelemetry{
+				UserID:   userID,
+				Currency: currency,
+				Amount:   -amount,
+				Source:   "wallet",
+				Sink:     "system",
+			})
+		}
+	}
 }
 
 // AddWalletDeduction is a convenience method for deducting currency
@@ -49,6 +81,7 @@ func (pw *PendingWrites) Merge(other *PendingWrites) {
 	}
 	pw.StorageWrites = append(pw.StorageWrites, other.StorageWrites...)
 	pw.WalletUpdates = append(pw.WalletUpdates, other.WalletUpdates...)
+	pw.Telemetry = append(pw.Telemetry, other.Telemetry...)
 
 	// Merge payloads
 	if other.Payload != nil {

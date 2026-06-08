@@ -462,6 +462,24 @@ func CommitPendingWrites(ctx context.Context, nk runtime.NakamaModule, logger ru
 		return fmt.Errorf("atomic commit failed: %w", err)
 	}
 
+	for _, t := range pending.Telemetry {
+		if t.Amount > 0 {
+			EmitServerTelemetry(logger, t.UserID, "currency_gained", map[string]interface{}{
+				"currency": t.Currency,
+				"amount":   t.Amount,
+				"source":   t.Source,
+				"sink":     t.Sink,
+			})
+		} else {
+			EmitServerTelemetry(logger, t.UserID, "currency_spent", map[string]interface{}{
+				"currency": t.Currency,
+				"amount":   t.Amount,
+				"source":   t.Source,
+				"sink":     t.Sink,
+			})
+		}
+	}
+
 	return nil
 }
 

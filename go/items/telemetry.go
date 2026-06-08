@@ -22,6 +22,7 @@ var validEventTypes = map[string]bool{
 	"crash":                   true,
 	"session_start":           true,
 	"session_end":             true,
+	"account_created":         true,
 	"ability_used":            true,
 	"piece_placed":            true,
 	"round_won":               true,
@@ -41,6 +42,11 @@ var validEventTypes = map[string]bool{
 	"network_match_salvaged":          true,
 	"match_forfeit_grace_expired":     true,
 	"match_forfeit_grace_cancelled":   true,
+	
+	// Server-authoritative economy events
+	"currency_gained":                 true,
+	"currency_spent":                  true,
+	"iap_purchase":                    true,
 }
 
 const retentionDays = 30
@@ -55,6 +61,16 @@ type TelemetryEvent struct {
 
 type TelemetryBatch struct {
 	Events []TelemetryEvent `json:"events"`
+}
+
+// EmitServerTelemetry directly emits a telemetry event from the server side
+func EmitServerTelemetry(logger runtime.Logger, userID string, eventType string, payload interface{}) {
+	payloadBytes, _ := json.Marshal(payload)
+	logger.WithField("payload", string(payloadBytes)).
+		WithField("event_type", eventType).
+		WithField("timestamp", float64(time.Now().UnixMilli())/1000.0).
+		WithField("user_id", userID).
+		Info("telemetry_event")
 }
 
 // Batch processing is atomic per-request; individual event failures don't abort the batch.
