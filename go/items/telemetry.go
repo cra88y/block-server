@@ -34,6 +34,7 @@ var validEventTypes = map[string]bool{
 	"state_hash":              true, // StateHashMetric
 	"social_event":            true, // SocialEventMetric
 	"user_feedback":           true, // UserFeedbackMetric
+	"non_fatal_error":        true,
 
 	// Network Recovery & Resilience
 	"network_ghost_socket_detected":   true,
