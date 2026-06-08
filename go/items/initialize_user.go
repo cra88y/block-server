@@ -41,9 +41,11 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 
 	userID, _ := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 
+	username, _ := ctx.Value(runtime.RUNTIME_CTX_USERNAME).(string)
+
 	// Emit authoritative account_created telemetry
 	EmitServerTelemetry(logger, userID, "account_created", map[string]interface{}{
-		"provider": out.Handle, // or other identifying metadata
+		"provider": username, // or other identifying metadata
 	})
 
 	metadata := map[string]interface{}{
