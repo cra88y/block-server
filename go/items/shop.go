@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"block-server/errors"
@@ -88,10 +89,19 @@ type RotationConfig struct {
 	EpochStart           string `json:"epoch_start"`
 }
 
+type IAPBundleReward struct {
+	Type   string `json:"type"`             // "currency", "pet", "class", "lootbox"
+	ID     string `json:"id,omitempty"`     // e.g., "gems", "premium" (for lootboxes)
+	ItemID uint32 `json:"item_id,omitempty"`// e.g., 4 (for pets/classes)
+	Amount int    `json:"amount,omitempty"` // For currencies/lootboxes
+}
+
 type IAPProduct struct {
-	ProductID string `json:"product_id"`
-	Gems      int    `json:"gems"`
-	USDCents  int    `json:"usd_cents"`
+	ProductID     string            `json:"product_id"`
+	Gems          int               `json:"gems"`             // Base gems (legacy/simple support)
+	USDCents      int               `json:"usd_cents"`
+	RevokeGemDebt int               `json:"revoke_gem_debt"`  // Penalty applied if bundle is refunded
+	Rewards       []IAPBundleReward `json:"rewards,omitempty"`// Dynamic starter pack contents
 }
 
 // ValidateIAPPayload is the client request for IAP receipt validation.
@@ -513,22 +523,6 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 	logPrefix := fmt.Sprintf("[IAP] tx=%s origTx=%s user=%s product=%s",
 		req.TransactionId, req.OriginalTransactionId, userID, req.ProductID)
 
-	// 2b. Dedup: if originalTransactionId is present, check if already granted
-	if req.OriginalTransactionId != "" {
-		objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
-			Collection: StorageCollectionIAPPurchases,
-			Key:        req.OriginalTransactionId,
-			UserID:     userID,
-		}})
-		if err == nil && len(objects) > 0 {
-			var existing IAPPurchaseGrant
-			if jsonErr := json.Unmarshal([]byte(objects[0].Value), &existing); jsonErr == nil && existing.Status == "validated" {
-				logger.Info("%s Dedup hit — returning success", logPrefix)
-				return `{"success":true}`, nil
-			}
-		}
-	}
-
 	// 3. Validate receipt with Apple via Nakama
 	// persist=true — Nakama stores validated purchases in its DB for idempotency
 	resp, err := nk.PurchaseValidateApple(ctx, userID, req.JwsRepresentation, true)
@@ -555,11 +549,45 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		return "", errors.ErrInvalidInput
 	}
 
-	// 5. Idempotency — if Nakama already saw this transaction, skip grant
-	if purchase.SeenBefore {
-		logger.Info("%s Nakama seen_before — skipping grant", logPrefix)
-		return `{"success":true}`, nil
+	// 4b. Identity Binding & Cryptographic Extraction
+	// Nakama provides Apple's raw JSON decoded JWT payload in ProviderResponse
+	var providerPayload struct {
+		AppAccountToken       string `json:"appAccountToken"`
+		OriginalTransactionId string `json:"originalTransactionId"`
 	}
+	if err := json.Unmarshal([]byte(purchase.ProviderResponse), &providerPayload); err != nil {
+		logger.Error("%s Failed to decode Apple provider response: %v", logPrefix, err)
+		return "", errors.ErrInvalidInput
+	}
+	// Apple returns UUIDs in uppercase or lowercase. Compare case-insensitively.
+	if !strings.EqualFold(providerPayload.AppAccountToken, userID) {
+		logger.Error("%s CRITICAL: Identity Binding failure! appAccountToken (%s) != userID (%s)", logPrefix, providerPayload.AppAccountToken, userID)
+		return "", errors.ErrInvalidInput
+	}
+
+	verifiedOrigTxId := providerPayload.OriginalTransactionId
+	if verifiedOrigTxId == "" {
+		logger.Error("%s CRITICAL: No originalTransactionId in Apple payload", logPrefix)
+		return "", errors.ErrInvalidInput
+	}
+
+	// 5. Absolute Idempotency Check: Query Nakama Storage
+	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
+		Collection: StorageCollectionIAPPurchases,
+		Key:        verifiedOrigTxId,
+		UserID:     userID,
+	}})
+	if err == nil && len(objects) > 0 {
+		var existing IAPPurchaseGrant
+		if jsonErr := json.Unmarshal([]byte(objects[0].Value), &existing); jsonErr == nil && existing.Status == "validated" {
+			logger.Info("%s Dedup hit — returning success (Already granted)", logPrefix)
+			return `{"success":true}`, nil
+		}
+	}
+
+	// Note: If purchase.SeenBefore == true but the storage record DOES NOT exist, 
+	// it means the server crashed exactly between Apple validation and gem granting.
+	// We safely proceed to grant gems, fixing the 'Ghost Purchase' bug.
 
 	// 6. Check for refunds
 	if purchase.RefundTime != nil && !purchase.RefundTime.AsTime().IsZero() {
@@ -568,73 +596,99 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 	}
 
 	// 7. Look up product in server config to determine payout
-	var gemAmount int
-	productFound := false
+	var product *IAPProduct
 	for _, p := range shopConfig.IAPProducts {
 		if p.ProductID == req.ProductID {
-			gemAmount = p.Gems
-			productFound = true
+			product = &p
 			break
 		}
 	}
-	if !productFound || gemAmount <= 0 {
-		logger.Error("%s Unknown product or zero gems", logPrefix)
+	if product == nil {
+		logger.Error("%s Unknown product", logPrefix)
 		return "", errors.ErrInvalidInput
 	}
 
-	// 8. Grant gems via PendingWrites (atomic)
+	// 8. Grant items and persist record ATOMICALLY
 	pending := NewPendingWrites()
-	pending.AddWalletUpdate(userID, map[string]int64{"gems": int64(gemAmount)})
-
-	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
-		logger.Error("%s Failed to commit gem grant: %v", logPrefix, err)
-		return "", errors.ErrInternalError
+	
+	if product.Gems > 0 {
+		pending.AddWalletUpdate(userID, map[string]int64{"gems": int64(product.Gems)})
 	}
 
-	// 9. Persist grant record for dedup + revocation tracking
-	if req.OriginalTransactionId != "" {
-		grant := IAPPurchaseGrant{
-			OriginalTransactionId: req.OriginalTransactionId,
-			ProductId:             req.ProductID,
-			UserId:                userID,
-			Jws:                   req.JwsRepresentation,
-			Status:                "validated",
-			GrantedAt:             time.Now().UnixMilli(),
+	mutator := NewInventoryMutator()
+	for _, reward := range product.Rewards {
+		if reward.Type == "currency" {
+			pending.AddWalletUpdate(userID, map[string]int64{reward.ID: int64(reward.Amount)})
+		} else if reward.Type == "lootbox" {
+			for i := 0; i < reward.Amount; i++ {
+				_, boxWrite, err := PrepareCreateLootbox(userID, reward.ID)
+				if err == nil && boxWrite != nil {
+					pending.AddStorageWrite(boxWrite)
+				}
+			}
+		} else if reward.Type == "pet" || reward.Type == "class" || reward.Type == "piece_style" || reward.Type == "background" {
+			mutator.AddItem(reward.Type, reward.ItemID)
 		}
-		grantBytes, _ := json.Marshal(grant)
-		_, writeErr := nk.StorageWrite(ctx, []*runtime.StorageWrite{{
-			Collection:      StorageCollectionIAPPurchases,
-			Key:             req.OriginalTransactionId,
-			UserID:          userID,
-			Value:           string(grantBytes),
-			PermissionRead:  0,
-			PermissionWrite: 0,
-		}})
-		if writeErr != nil {
-			logger.Warn("%s Failed to persist grant record: %v", logPrefix, writeErr)
-			// Non-fatal — gems already granted
-		}
+	}
+
+	invPending, err := mutator.CompileWrites(ctx, nk, logger, userID)
+	if err == nil && invPending != nil {
+		pending.Merge(invPending)
+	}
+
+	grant := IAPPurchaseGrant{
+		OriginalTransactionId: verifiedOrigTxId,
+		ProductId:             req.ProductID,
+		UserId:                userID,
+		Jws:                   req.JwsRepresentation,
+		Status:                "validated",
+		GrantedAt:             time.Now().UnixMilli(),
+	}
+	grantBytes, _ := json.Marshal(grant)
+	pending.AddStorageWrite(&runtime.StorageWrite{
+		Collection:      StorageCollectionIAPPurchases,
+		Key:             verifiedOrigTxId,
+		UserID:          userID,
+		Value:           string(grantBytes),
+		PermissionRead:  0,
+		PermissionWrite: 0,
+		Version:         "*", // OCC insert lock (prevents concurrent replay grants)
+	})
+
+	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
+		logger.Error("%s Failed to commit atomic IAP grant: %v", logPrefix, err)
+		return "", errors.ErrInternalError
 	}
 
 	// Emit telemetry for IAP purchase
 	EmitServerTelemetry(logger, userID, "iap_purchase", map[string]interface{}{
-		"currency": "usd", // App Store standardizes on USD for telemetry or we just record product id
-		"amount":   0,     // We don't know the exact fiat amount here without Apple API, so we record 0
+		"currency": "usd", 
+		"amount":   float64(product.USDCents) / 100.0,
 		"source":   "iap",
 		"sink":     "wallet",
 		"product_id": req.ProductID,
-		"gems_granted": gemAmount,
+		"gems_granted": product.Gems,
 	})
 
-	// 10. Send CodeReward notification (server controls the payout)
-	reward := notify.NewRewardPayload("iap")
-	reward.Wallet = &notify.WalletDelta{Gems: gemAmount}
-	if err := notify.SendReward(ctx, nk, userID, reward); err != nil {
-		logger.Error("%s Failed to send reward notification: %v", logPrefix, err)
-		// Non-fatal — gems already granted
+	// 10. Send CodeReward notification
+	// We pass the full merged payload down to the client so UI responds instantly
+	rewardPayload := notify.NewRewardPayload("iap")
+	if pending.Payload != nil {
+		rewardPayload = pending.Payload // Contains the newly granted pets/classes
+	}
+	if product.Gems > 0 {
+		if rewardPayload.Wallet == nil {
+			rewardPayload.Wallet = &notify.WalletDelta{}
+		}
+		rewardPayload.Wallet.Gems += product.Gems
 	}
 
-	logger.Info("%s Validated: gems=%d txn=%s", logPrefix, gemAmount, purchase.TransactionId)
+	if err := notify.SendReward(ctx, nk, userID, rewardPayload); err != nil {
+		logger.Error("%s Failed to send reward notification: %v", logPrefix, err)
+		// Non-fatal — items already granted
+	}
+
+	logger.Info("%s Validated bundle %s txn=%s", logPrefix, product.ProductID, purchase.TransactionId)
 	return `{"success":true}`, nil
 }
 
@@ -836,17 +890,22 @@ func purchaseFail(requestId, userID string, nk runtime.NakamaModule, logger runt
 
 // Handles server-side IAP revocation from Apple App Store Server Notifications or admin action.
 func RpcRevokeIAPPurchase(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
-	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-	if !ok || userID == "" {
-		return "", errors.ErrNoUserIdFound
-	}
-
 	var req struct {
 		OriginalTransactionId string `json:"original_transaction_id"`
 		RevocationReason      string `json:"revocation_reason"`
+		UserId                string `json:"user_id,omitempty"` // Used for Server-to-Server webhooks
 	}
 	if err := json.Unmarshal([]byte(payload), &req); err != nil {
 		return "", errors.ErrUnmarshal
+	}
+
+	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
+	if !ok || userID == "" {
+		// S2S Execution: Webhook proxy must provide user_id (extracted from appAccountToken)
+		if req.UserId == "" {
+			return "", fmt.Errorf("missing user_id for server-to-server invocation")
+		}
+		userID = req.UserId
 	}
 
 	logPrefix := fmt.Sprintf("[IAP-REVOKE] origTx=%s user=%s", req.OriginalTransactionId, userID)
@@ -878,38 +937,66 @@ func RpcRevokeIAPPurchase(ctx context.Context, logger runtime.Logger, db *sql.DB
 	grant.RevokedAt = &now
 
 	grantBytes, _ := json.Marshal(grant)
-	_, writeErr := nk.StorageWrite(ctx, []*runtime.StorageWrite{{
+	
+	var product *IAPProduct
+	for _, p := range shopConfig.IAPProducts {
+		if p.ProductID == grant.ProductId {
+			product = &p
+			break
+		}
+	}
+
+	if product == nil {
+		logger.Warn("%s Unknown product %s in revocation", logPrefix, grant.ProductId)
+		return `{"success":true}`, nil
+	}
+
+	pending := NewPendingWrites()
+
+	// Add the grant status update to the atomic batch using OCC Version lock
+	pending.AddStorageWrite(&runtime.StorageWrite{
 		Collection:      StorageCollectionIAPPurchases,
 		Key:             req.OriginalTransactionId,
 		UserID:          userID,
 		Value:           string(grantBytes),
 		PermissionRead:  0,
 		PermissionWrite: 0,
-	}})
-	if writeErr != nil {
-		logger.Error("%s Failed to write revocation: %v", logPrefix, writeErr)
-	}
+		Version:         objects[0].Version, // OCC lock
+	})
 
-	var gemDeduction int
-	for _, p := range shopConfig.IAPProducts {
-		if p.ProductID == grant.ProductId {
-			gemDeduction = p.Gems
-			break
-		}
+	gemDeduction := product.Gems
+	if product.RevokeGemDebt > 0 {
+		gemDeduction = product.RevokeGemDebt
 	}
 
 	if gemDeduction > 0 {
-		pending := NewPendingWrites()
 		pending.AddWalletDeduction(userID, "gems", int64(gemDeduction))
-		if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
-			logger.Error("%s Failed to deduct gems: %v", logPrefix, err)
-		} else {
-			logger.Info("%s Deducted %d gems for revoked purchase", logPrefix, gemDeduction)
-		}
-	} else {
-		logger.Warn("%s Unknown product %s in revocation, no gems deducted", logPrefix, grant.ProductId)
 	}
 
-	logger.Info("%s Revoked: reason=%s", logPrefix, req.RevocationReason)
+	mutator := NewInventoryMutator()
+	for _, reward := range product.Rewards {
+		if reward.Type == "pet" || reward.Type == "class" || reward.Type == "piece_style" || reward.Type == "background" {
+			mutator.RemoveItem(reward.Type, reward.ItemID)
+		}
+	}
+
+	invPending, err := mutator.CompileWrites(ctx, nk, logger, userID)
+	if err == nil && invPending != nil {
+		pending.Merge(invPending)
+	}
+
+	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
+		logger.Error("%s Failed to process revocation: %v", logPrefix, err)
+		return "", errors.ErrInternalError // CRITICAL: Tell Apple to retry later
+	}
+
+	// Emit telemetry for IAP revocation
+	EmitServerTelemetry(logger, userID, "iap_revocation", map[string]interface{}{
+		"product_id":   grant.ProductId,
+		"gems_revoked": gemDeduction,
+		"reason":       req.RevocationReason,
+	})
+
+	logger.Info("%s Revoked: reason=%s (Deducted %d gems)", logPrefix, req.RevocationReason, gemDeduction)
 	return `{"success":true}`, nil
 }

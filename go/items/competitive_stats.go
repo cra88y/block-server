@@ -23,12 +23,14 @@ func GetOrCreatePlayerStats(ctx context.Context, nk runtime.NakamaModule, userID
 	}
 
 	if len(objects) == 0 {
-		// Empty Version → StorageWrite create-only semantics (no overwrite risk).
+		// Enforce Insert-Only semantics ("*") for new records.
+		// (Nakama uses "" for unconditional overwrite, which is unsafe here).
 		return &PlayerStats{
 			Schema:     PlayerStatsSchema,
 			Rating:     1000,
 			PeakRating: 1000,
 			UpdatedAt:  time.Now().UnixMilli(),
+			Version:    "*",
 		}, nil
 	}
 

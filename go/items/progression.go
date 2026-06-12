@@ -50,7 +50,7 @@ func SaveItemProgression(ctx context.Context, nk runtime.NakamaModule, logger ru
 		return errors.ErrMarshal
 	}
 
-	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{
+	acks, err := nk.StorageWrite(ctx, []*runtime.StorageWrite{
 		{
 			Collection:      storageCollectionProgression,
 			Key:             key,
@@ -61,6 +61,11 @@ func SaveItemProgression(ctx context.Context, nk runtime.NakamaModule, logger ru
 			PermissionWrite: 0,
 		},
 	})
+	
+	if err == nil && len(acks) > 0 {
+		prog.Version = acks[0].Version // Hydrate the struct with the real DB hash
+	}
+	
 	return err
 }
 
@@ -166,6 +171,7 @@ func BatchInitializeProgression(ctx context.Context, nk runtime.NakamaModule, lo
 			Key:             key,
 			UserID:          userID,
 			Value:           string(value),
+			Version:         "*", // OCC insert lock
 			PermissionRead:  2,
 			PermissionWrite: 0,
 		})

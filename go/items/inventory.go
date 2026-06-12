@@ -320,123 +320,17 @@ func IsItemOwned(ctx context.Context, nk runtime.NakamaModule, userID string, it
 	return false, nil
 }
 
-// PrepareInventoryAdd prepares a storage write to add an item to inventory without committing.
-// Returns the write and whether the item was already owned (no write needed).
-func PrepareInventoryAdd(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, itemType string, itemID uint32) (*runtime.StorageWrite, bool, error) {
-	objs, err := nk.StorageRead(ctx, []*runtime.StorageRead{
-		{Collection: storageCollectionInventory, Key: itemType, UserID: userID},
-	})
-	if err != nil {
-		LogError(ctx, logger, "Failed to read inventory for item addition", err)
-		return nil, false, fmt.Errorf("inventory read failed: %w", err)
-	}
-
-	var current InventoryData
-	var version string
-	if len(objs) > 0 {
-		inventoryData, err := UnmarshalJSON[InventoryData](objs[0].Value)
-		if err != nil {
-			LogError(ctx, logger, "Failed to unmarshal inventory data", err)
-			return nil, false, fmt.Errorf("inventory data: %w", err)
-		}
-		version = objs[0].Version
-		current = *inventoryData
-	}
-
-	// Check if already owned
-	for _, id := range current.Items {
-		if id == itemID {
-			return nil, true, nil // Already owned, no write needed
-		}
-	}
-
-	newItems := append(current.Items, itemID)
-	data := InventoryData{Items: newItems}
-	value, err := json.Marshal(data)
-	if err != nil {
-		LogError(ctx, logger, "Inventory marshal failed", err)
-		return nil, false, fmt.Errorf("inventory marshal error: %w", err)
-	}
-
-	write := &runtime.StorageWrite{
-		Collection:      storageCollectionInventory,
-		Key:             itemType,
-		UserID:          userID,
-		Value:           string(value),
-		PermissionRead:  2,
-		PermissionWrite: 0,
-		Version:         version,
-	}
-
-	return write, false, nil
-}
-
 // PrepareItemGrant prepares writes to grant an item (inventory + progression if needed).
-// For pets/classes, also prepares progression initialization.
+// Uses the centralized InventoryMutator to guarantee OCC safety and prevent array overwrites.
 func PrepareItemGrant(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, itemType string, itemID uint32) (*PendingWrites, error) {
-	pending := NewPendingWrites()
-
 	if !ValidateItemExists(itemType, itemID) {
 		return nil, errors.ErrInvalidItem
 	}
 
-	// Prepare inventory addition
-	invWrite, alreadyOwned, err := PrepareInventoryAdd(ctx, nk, logger, userID, itemType, itemID)
-	if err != nil {
-		return nil, err
-	}
-	if alreadyOwned {
-		return pending, nil // Nothing to do
-	}
-	if invWrite != nil {
-		pending.AddStorageWrite(invWrite)
-	}
-
-	// For pets and classes, also prepare progression initialization
-	if itemType == storageKeyPet || itemType == storageKeyClass {
-		var progressionKey string
-		switch itemType {
-		case storageKeyPet:
-			progressionKey = ProgressionKeyPet
-		case storageKeyClass:
-			progressionKey = ProgressionKeyClass
-		}
-
-		progWrite, err := PrepareProgressionInit(userID, progressionKey, itemID)
-		if err != nil {
-			return nil, err
-		}
-		if progWrite != nil {
-			pending.AddStorageWrite(progWrite)
-		}
-	}
-
-	return pending, nil
-}
-
-// PrepareProgressionInit prepares a storage write to initialize progression for an item.
-func PrepareProgressionInit(userID string, progressionKey string, itemID uint32) (*runtime.StorageWrite, error) {
-	category := storageKeyClass
-	if progressionKey == ProgressionKeyPet {
-		category = storageKeyPet
-	}
+	mutator := NewInventoryMutator()
+	mutator.AddItem(itemType, itemID)
 	
-	treeName, _ := GetLevelTreeName(category, itemID)
-	prog := DefaultProgression(treeName)
-	value, err := json.Marshal(prog)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal progression: %w", err)
-	}
-
-	key := progressionKey + fmt.Sprintf("%d", itemID)
-	return &runtime.StorageWrite{
-		Collection:      storageCollectionProgression,
-		Key:             key,
-		UserID:          userID,
-		Value:           string(value),
-		PermissionRead:  2,
-		PermissionWrite: 0,
-	}, nil
+	return mutator.CompileWrites(ctx, nk, logger, userID)
 }
 
 // GivePet grants a pet to a user atomically.

@@ -201,6 +201,12 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		return err
 	}
 
+	// S2S Webhooks
+	if err := initializer.RegisterRpc("apple_s2s_webhook", items.HandleAppleS2SWebhook); err != nil {
+		logger.Error("Unable to register apple_s2s_webhook: %v", err)
+		return err
+	}
+
 	// Competitive / Leaderboard RPCs
 	if err := initializer.RegisterRpc("get_leaderboard", items.RpcGetLeaderboard); err != nil {
 		logger.Error("Unable to register: %v", err)
