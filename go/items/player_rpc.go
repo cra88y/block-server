@@ -708,7 +708,8 @@ func RpcClaimProgressionReward(ctx context.Context, logger runtime.Logger, db *s
 	pending := NewPendingWrites()
 
 	// Actually prepare the rewards to be granted FIRST
-	levelRewards, mutations, err := PrepareLevelRewards(ctx, nk, logger, userID, treeName, req.Level, req.ItemType, req.ItemID)
+	mutator := NewInventoryMutator()
+	levelRewards, mutations, err := PrepareLevelRewards(ctx, nk, logger, userID, treeName, req.Level, req.ItemType, req.ItemID, mutator)
 	if err != nil {
 		logger.WithFields(map[string]interface{}{
 			"user":   userID,
@@ -717,6 +718,11 @@ func RpcClaimProgressionReward(ctx context.Context, logger runtime.Logger, db *s
 			"action": "claim_progression_reward",
 		}).Error("Failed to prepare level rewards")
 		return "", errors.ErrPrepareFailed
+	}
+
+	invPending, err := mutator.CompileWrites(ctx, nk, logger, userID)
+	if err == nil && invPending != nil {
+		pending.Merge(invPending)
 	}
 
 	rewardFound := false
@@ -958,9 +964,10 @@ func RpcClaimAllProgressionRewards(ctx context.Context, logger runtime.Logger, d
 
 	// Prepare rewards for all levels safely
 	var allMutations RewardMutations
+	mutator := NewInventoryMutator()
 
 	for _, level := range levelsToClaim {
-		levelRewards, mutations, err := PrepareLevelRewards(ctx, nk, logger, userID, treeName, level, req.ItemType, req.ItemID)
+		levelRewards, mutations, err := PrepareLevelRewards(ctx, nk, logger, userID, treeName, level, req.ItemType, req.ItemID, mutator)
 		if err != nil {
 			logger.Error("Failed to prepare level rewards: %v", err)
 			continue
@@ -972,6 +979,11 @@ func RpcClaimAllProgressionRewards(ctx context.Context, logger runtime.Logger, d
 		if levelRewards != nil {
 			pending.Merge(levelRewards)
 		}
+	}
+
+	invPending, err := mutator.CompileWrites(ctx, nk, logger, userID)
+	if err == nil && invPending != nil {
+		pending.Merge(invPending)
 	}
 
 	var updatedTierStates map[string]notify.TierState

@@ -828,8 +828,9 @@ func preparePlayerXP(ctx context.Context, nk runtime.NakamaModule, logger runtim
 
 	// Level-up rewards
 	if resultLevel > oldLevel {
+		mutator := NewInventoryMutator()
 		for lvl := oldLevel + 1; lvl <= resultLevel; lvl++ {
-			levelRewards, mutations, err := PrepareLevelRewards(ctx, nk, logger, userID, treeName, lvl, "player", playerItemID)
+			levelRewards, mutations, err := PrepareLevelRewards(ctx, nk, logger, userID, treeName, lvl, "player", playerItemID, mutator)
 			if err != nil {
 				logger.Warn("Failed to prepare player level %d rewards: %v", lvl, err)
 				continue
@@ -839,6 +840,10 @@ func preparePlayerXP(ctx context.Context, nk runtime.NakamaModule, logger runtim
 			_ = mutations
 
 			pending.Merge(levelRewards)
+		}
+		invPending, err := mutator.CompileWrites(ctx, nk, logger, userID)
+		if err == nil && invPending != nil {
+			pending.Merge(invPending)
 		}
 	}
 

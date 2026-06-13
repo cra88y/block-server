@@ -2,7 +2,6 @@ package items
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -68,7 +67,7 @@ func BuildRewardIndexMap(treeName string) map[int]RewardIndices {
 
 // Prepares all rewards for a specific level without committing.
 // Returns *PendingWrites to be merged and committed via MultiUpdate.
-func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, treeName string, level int, itemType string, itemID uint32) (*PendingWrites, RewardMutations, error) {
+func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, treeName string, level int, itemType string, itemID uint32, mutator *InventoryMutator) (*PendingWrites, RewardMutations, error) {
 	mutations := RewardMutations{
 		GrantedAbilities: make([]int32, 0),
 		GrantedSprites:   make([]uint32, 0),
@@ -150,7 +149,7 @@ func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		}
 	}
 
-	pending, err := PrepareRewardItems(ctx, nk, logger, userID, rewards, itemType, itemID, &mutations)
+	pending, err := PrepareRewardItems(ctx, nk, logger, userID, rewards, itemType, itemID, &mutations, mutator)
 	if err != nil {
 		LogError(ctx, logger, "Reward prepare failed", err)
 		return nil, mutations, err
@@ -161,7 +160,7 @@ func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 
 // Prepares currency and item rewards without committing.
 // Returns *PendingWrites to be merged and committed via MultiUpdate.
-func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, rewards map[string]uint32, itemType string, itemID uint32, mutations *RewardMutations) (*PendingWrites, error) {
+func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, rewards map[string]uint32, itemType string, itemID uint32, mutations *RewardMutations, mutator *InventoryMutator) (*PendingWrites, error) {
 	pending := NewPendingWrites()
 	walletChanges := make(map[string]int64)
 	grantedItems := make([]notify.ItemGrant, 0)
@@ -228,61 +227,21 @@ func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger run
 				storageKey = storageKeyPieceStyle
 			}
 
-			objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{
-				{Collection: storageCollectionInventory, Key: storageKey, UserID: userID},
-			})
-			if err != nil {
-				LogError(ctx, logger, "Failed to read inventory for rewards", err)
-				return nil, fmt.Errorf("inventory read failed: %w", err)
-			}
-
-			var ownedItems InventoryData
-			var version string
-
-			if len(objects) > 0 {
-				if err := json.Unmarshal([]byte(objects[0].Value), &ownedItems); err != nil {
-					LogError(ctx, logger, "Failed to unmarshal inventory data", err)
-					return nil, fmt.Errorf("inventory unmarshal failed: %w", err)
-				}
-				version = objects[0].Version
+			singularType := rewardType
+			if rewardType == "backgrounds" {
+				singularType = "background"
+			} else if rewardType == "piece_styles" {
+				singularType = "piece_style"
 			}
 
 			rewardIDs := GetRewardItemIDs(itemType, itemID, rewardType, amount)
-			newItems := make([]uint32, 0)
 
 			for _, id := range rewardIDs {
-				exists := false
-				for _, owned := range ownedItems.Items {
-					if owned == id {
-						exists = true
-						break
-					}
-				}
-				if !exists {
-					newItems = append(newItems, id)
-
-					singularType := rewardType
-					if rewardType == "backgrounds" {
-						singularType = "background"
-					} else if rewardType == "piece_styles" {
-						singularType = "piece_style"
-					}
-
-					grantedItems = append(grantedItems, notify.ItemGrant{
-						ID:   id,
-						Type: singularType,
-					})
-				}
-			}
-
-			if len(newItems) > 0 {
-				updatedItems := append(ownedItems.Items, newItems...)
-				write, err := BuildInventoryWrite(userID, storageKey, updatedItems, version)
-				if err != nil {
-					LogError(ctx, logger, "Failed to build inventory write", err)
-					return nil, err
-				}
-				pending.AddStorageWrite(write)
+				mutator.AddItem(storageKey, id)
+				grantedItems = append(grantedItems, notify.ItemGrant{
+					ID:   id,
+					Type: singularType,
+				})
 			}
 		}
 	}

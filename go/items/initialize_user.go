@@ -108,60 +108,34 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 
 // prepareAllItemGrants collects all item grant writes into pending.
 func prepareAllItemGrants(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, pending *PendingWrites) error {
+	mutator := NewInventoryMutator()
+
 	// Pets
 	for id := range GameData.Pets {
-		itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, storageKeyPet, id)
-		if err != nil {
-			logger.WithFields(map[string]interface{}{
-				"user": userID,
-				"pet":  id,
-				"err":  err.Error(),
-			}).Warn("Failed to prepare pet grant")
-			continue
-		}
-		pending.Merge(itemPending)
+		mutator.AddItem(storageKeyPet, id)
 	}
 
 	// Classes
 	for id := range GameData.Classes {
-		itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, storageKeyClass, id)
-		if err != nil {
-			logger.WithFields(map[string]interface{}{
-				"user":  userID,
-				"class": id,
-				"err":   err.Error(),
-			}).Warn("Failed to prepare class grant")
-			continue
-		}
-		pending.Merge(itemPending)
+		mutator.AddItem(storageKeyClass, id)
 	}
 
 	// Backgrounds
 	for id := range GameData.Backgrounds {
-		itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, storageKeyBackground, id)
-		if err != nil {
-			logger.WithFields(map[string]interface{}{
-				"user":       userID,
-				"background": id,
-				"err":        err.Error(),
-			}).Warn("Failed to prepare background grant")
-			continue
-		}
-		pending.Merge(itemPending)
+		mutator.AddItem(storageKeyBackground, id)
 	}
 
 	// PieceStyles
 	for id := range GameData.PieceStyles {
-		itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, storageKeyPieceStyle, id)
-		if err != nil {
-			logger.WithFields(map[string]interface{}{
-				"user":       userID,
-				"pieceStyle": id,
-				"err":        err.Error(),
-			}).Warn("Failed to prepare piece style grant")
-			continue
-		}
-		pending.Merge(itemPending)
+		mutator.AddItem(storageKeyPieceStyle, id)
+	}
+
+	invPending, err := mutator.CompileWrites(ctx, nk, logger, userID)
+	if err == nil && invPending != nil {
+		pending.Merge(invPending)
+	} else if err != nil {
+		logger.Error("Failed to compile batch item grants during user init: %v", err)
+		return err
 	}
 
 	return nil
@@ -173,24 +147,26 @@ func GiveStarterItemsToUser(ctx context.Context, nk runtime.NakamaModule, logger
 	pending := NewPendingWrites()
 	pack := GetStarterPack()
 
-	grants := []struct {
-		key string
-		ids []uint32
-	}{
-		{storageKeyPet, pack.Pets},
-		{storageKeyClass, pack.Classes},
-		{storageKeyBackground, pack.Backgrounds},
-		{storageKeyPieceStyle, pack.PieceStyles},
+	mutator := NewInventoryMutator()
+
+	for _, id := range pack.Pets {
+		mutator.AddItem(storageKeyPet, id)
+	}
+	for _, id := range pack.Classes {
+		mutator.AddItem(storageKeyClass, id)
+	}
+	for _, id := range pack.Backgrounds {
+		mutator.AddItem(storageKeyBackground, id)
+	}
+	for _, id := range pack.PieceStyles {
+		mutator.AddItem(storageKeyPieceStyle, id)
 	}
 
-	for _, g := range grants {
-		for _, id := range g.ids {
-			p, err := PrepareItemGrant(ctx, nk, logger, userID, g.key, id)
-			if err != nil {
-				return err
-			}
-			pending.Merge(p)
-		}
+	invPending, err := mutator.CompileWrites(ctx, nk, logger, userID)
+	if err == nil && invPending != nil {
+		pending.Merge(invPending)
+	} else if err != nil {
+		return err
 	}
 
 	return CommitPendingWrites(ctx, nk, logger, pending)

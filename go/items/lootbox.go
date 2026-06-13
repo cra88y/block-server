@@ -121,7 +121,9 @@ func RpcOpenLootbox(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		pending.AddWalletUpdate(userID, walletChanges)
 	}
 
-	// Item rewards - prepare inventory writes
+	// Item rewards - prepare inventory writes using the Centralized Fulfillment Engine
+	mutator := NewInventoryMutator()
+	
 	typeToKey := map[string]string{
 		"background":  storageKeyBackground,
 		"piece_style": storageKeyPieceStyle,
@@ -136,12 +138,12 @@ func RpcOpenLootbox(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 			logger.Warn("Unknown item type %s for item %d", itemType, itemID)
 			continue
 		}
-		itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, storageKey, itemID)
-		if err != nil {
-			logger.Warn("Failed to prepare item %d grant: %v", itemID, err)
-			continue
-		}
-		pending.Merge(itemPending)
+		mutator.AddItem(storageKey, itemID)
+	}
+
+	invPending, err := mutator.CompileWrites(ctx, nk, logger, userID)
+	if err == nil && invPending != nil {
+		pending.Merge(invPending)
 	}
 
 	// Mark lootbox as opened
