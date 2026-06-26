@@ -80,7 +80,7 @@ type EconomyState struct {
 	TokensEarned    *int `json:"tokens_earned,omitempty"`
 	CarryOverTokens *int `json:"carry_over_tokens,omitempty"`
 	ExchangesMade   int  `json:"exchanges_made,omitempty"`
-	DropsRemaining  *int `json:"drops_remaining,omitempty"`
+	ExchangesLeft   *int `json:"exchanges_left,omitempty"`
 }
 
 // CompetitiveBoardState encapsulates rank data for a single leaderboard.
@@ -173,7 +173,7 @@ type LootboxGrant struct {
 
 // RewardMeta contains non-reward feedback.
 type RewardMeta struct {
-	DropsRemaining  *int   `json:"drops_remaining,omitempty"`
+	ExchangesLeft   *int   `json:"exchanges_left,omitempty"`
 	NextDropRefresh *int64 `json:"next_drop_refresh,omitempty"`
 	DailyMatches    *int   `json:"daily_matches,omitempty"`
 	// RoundTokens is the player's current half-unit token balance after this match.

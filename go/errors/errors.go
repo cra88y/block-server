@@ -29,7 +29,7 @@ var (
 	ErrCouldNotWriteStorage   = runtime.NewError("could not write storage", CodeInternal)
 	ErrCouldNotUnmarshal      = runtime.NewError("could not unmarshal storage data", CodeInternal)
 	ErrCouldNotUpdateWallet   = runtime.NewError("could not update wallet", CodeInternal)
-	ErrDropsAlreadyClaimed    = runtime.NewError("drops already claimed for user", CodeInternal)
+
 	ErrEquipmentUnavailable   = runtime.NewError("equipment system unavailable", CodeInternal)
 	ErrInventoryUnavailable   = runtime.NewError("inventory system unavailable", CodeInternal)
 	ErrProgressionUnavailable = runtime.NewError("progression unavailable", CodeInternal)

@@ -58,7 +58,7 @@ WHERE
 	}
 }
 
-// eventSessionStartFunc claims daily drops, verifies progression, and kicks duplicate sessions.
+// eventSessionStartFunc verifies progression and kicks duplicate sessions.
 func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtime.Logger, *api.Event) {
 	return func(ctx context.Context, logger runtime.Logger, evt *api.Event) {
 
@@ -66,9 +66,6 @@ func eventSessionStartFunc(nk runtime.NakamaModule) func(context.Context, runtim
 		if err != nil {
 			logger.WithField("err", err).Error("Error getting UserID")
 			return
-		}
-		if err := items.TryClaimDailyDrops(ctx, logger, nk); err != nil {
-			logger.WithField("err", err).Warn("daily drops claim failed")
 		}
 
 		// DO NOT add GiveAllItemsToUser here. Dev convenience only.

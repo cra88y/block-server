@@ -1,8 +1,15 @@
 package items
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"time"
+
+	"block-server/errors"
+
+	"github.com/heroiclabs/nakama-common/api"
+	"github.com/heroiclabs/nakama-common/runtime"
 )
 
 type GameDataStruct struct {
@@ -87,6 +94,8 @@ const (
 	ProgressionKeyClass        = "class_"
 	ProgressionKeyPlayer       = "player_"
 	ProgressionKeyDailyJourney = "daily_journey"
+	
+	DailyExchangeCap           = 5
 )
 
 type TierState struct {
@@ -216,12 +225,53 @@ type InventoryResponse struct {
 type DailyJourneyResponse struct {
 	DailyMatches       int  `json:"dailyMatches"`
 	DailyWarmupClaimed bool `json:"dailyWarmupClaimed"`
+	ExchangesLeft      int  `json:"exchangesLeft"`
+	RoundTokens        int  `json:"roundTokens"`
 }
 
 type DailyJourney struct {
 	DailyMatches       int   `json:"dailyMatches"`
 	DailyWarmupClaimed bool  `json:"dailyWarmupClaimed"`
+	ExchangesLeft      int   `json:"exchangesLeft"`
+	RoundTokens        int   `json:"roundTokens"`
 	ResetUnix          int64 `json:"reset_unix"`
+}
+
+// getDailyJourneyState reads state from storage; returns initialized struct for new users.
+func getDailyJourneyState(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule) (DailyJourney, *api.StorageObject, error) {
+	var data DailyJourney
+	
+	userID, err := GetUserIDFromContext(ctx, logger)
+	if err != nil {
+		return data, nil, errors.ErrNoUserIdFound
+	}
+	
+	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
+		Collection: storageCollectionProgression,
+		Key:        ProgressionKeyDailyJourney,
+		UserID:     userID,
+	}})
+	if err != nil {
+		logger.Error("StorageRead error: %v", err)
+		return data, nil, errors.ErrCouldNotReadStorage
+	}
+
+	if len(objects) == 0 {
+		// New user case
+		nowUTC := time.Now().UTC()
+		data.ResetUnix = time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC).Unix()
+		data.ExchangesLeft = DailyExchangeCap
+		data.RoundTokens = 0
+		return data, nil, nil
+	}
+
+	storageObj := objects[0]
+	if err := json.Unmarshal([]byte(storageObj.GetValue()), &data); err != nil {
+		logger.Error("Unmarshal error: %v", err)
+		return data, nil, errors.ErrUnmarshal
+	}
+
+	return data, storageObj, nil
 }
 
 type ProgressionResponse struct {

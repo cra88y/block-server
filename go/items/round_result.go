@@ -8,6 +8,7 @@ import (
 
 	"block-server/errors"
 
+	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
@@ -37,9 +38,9 @@ type RoundResultRequest struct {
 
 // RoundResultResponse is returned to the client to enable display reconciliation.
 type RoundResultResponse struct {
-	TokensGranted  int  `json:"tokens_granted"`  // 0 on idempotent replay or if drops exhausted
-	RunningBalance int  `json:"running_balance"` // server's authoritative wallet token count
-	DropsRemaining int  `json:"drops_remaining"` // if 0, client should clamp future grant predictions
+	TokensGranted  int  `json:"tokens_granted"`
+	RunningBalance int  `json:"running_balance"` // Server-authoritative running balance of Tokens
+	ExchangesLeft  int  `json:"exchanges_left"`  // if 0, client should clamp future grant predictions
 	Acknowledged   bool `json:"acknowledged"`    // true = new record banked; false = idempotent replay
 }
 
@@ -111,16 +112,19 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		}
 	}
 
-	// Grant 0 if daily drops are exhausted.
+	// Grant 0 if daily exchanges are exhausted.
+	var dj DailyJourney
+	var djObj *api.StorageObject
+
 	if tokensGranted > 0 {
-		if account, err := nk.AccountGetId(ctx, userID); err == nil {
-			var wallet map[string]int64
-			if json.Unmarshal([]byte(account.Wallet), &wallet) == nil {
-				if wallet[walletKeyDropsLeft] <= 0 {
-					tokensGranted = 0
-					logger.Info("[RoundResult] User %s has no drops left — round %d grants 0 tokens", userID, req.RoundNumber)
-				}
+		dj, djObj, err = getDailyJourneyState(ctx, logger, nk)
+		if err == nil {
+			if dj.ExchangesLeft <= 0 {
+				tokensGranted = 0
+				logger.Info("[RoundResult] User %s has no exchanges left — round %d grants 0 tokens", userID, req.RoundNumber)
 			}
+		} else {
+			logger.Warn("[RoundResult] Could not read daily journey: %v", err)
 		}
 	}
 
@@ -154,9 +158,23 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		PermissionRead:  0,
 		PermissionWrite: 0,
 	})
-	if tokensGranted > 0 {
-		pending.AddWalletUpdate(userID, map[string]int64{
-			walletKeyRoundTokens: int64(tokensGranted),
+	if tokensGranted > 0 && err == nil {
+		dj.RoundTokens += tokensGranted
+		djBytes, _ := json.Marshal(dj)
+		
+		version := ""
+		if djObj != nil {
+			version = djObj.GetVersion()
+		}
+
+		pending.AddStorageWrite(&runtime.StorageWrite{
+			Collection:      storageCollectionProgression,
+			Key:             ProgressionKeyDailyJourney,
+			UserID:          userID,
+			Value:           string(djBytes),
+			Version:         version,
+			PermissionRead:  2,
+			PermissionWrite: 0,
 		})
 	}
 
@@ -171,25 +189,23 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	return marshalRoundResponse(ctx, nk, logger, userID, tokensGranted, true)
 }
 
-// Reads current wallet state and builds the response for both new and replayed grants.
+// Reads current token state and builds the response for both new and replayed grants.
 func marshalRoundResponse(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, tokensGranted int, acknowledged bool) (string, error) {
 	runningBalance := 0
-	dropsRemaining := 0
+	exchangesLeft := 0
 
-	if account, err := nk.AccountGetId(ctx, userID); err == nil {
-		var wallet map[string]int64
-		if json.Unmarshal([]byte(account.Wallet), &wallet) == nil {
-			runningBalance = int(wallet[walletKeyRoundTokens])
-			dropsRemaining = int(wallet[walletKeyDropsLeft])
-		}
+	dj, _, err := getDailyJourneyState(ctx, logger, nk)
+	if err == nil {
+		runningBalance = dj.RoundTokens
+		exchangesLeft = dj.ExchangesLeft
 	} else {
-		logger.Warn("[RoundResult] Could not read wallet for response: %v", err)
+		logger.Warn("[RoundResult] Could not read daily journey for response: %v", err)
 	}
 
 	resp := RoundResultResponse{
 		TokensGranted:  tokensGranted,
 		RunningBalance: runningBalance,
-		DropsRemaining: dropsRemaining,
+		ExchangesLeft:  exchangesLeft,
 		Acknowledged:   acknowledged,
 	}
 	b, err := json.Marshal(resp)

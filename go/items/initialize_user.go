@@ -64,7 +64,6 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		"gold":      500,
 		"gems":      100,
 		"treats":    1,
-		"dropsLeft": dailyDropGrantCount, // one day's allotment; maxDrops (5) is only reachable via rollover
 	}
 	pending.AddWalletUpdate(userID, walletChangeset)
 

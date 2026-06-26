@@ -621,6 +621,8 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	if time.Unix(dj.ResetUnix, 0).UTC().Before(midnightUTC) {
 		dj.DailyMatches = 0
 		dj.DailyWarmupClaimed = false
+		dj.ExchangesLeft = DailyExchangeCap
+		dj.RoundTokens = 0
 		dj.ResetUnix = midnightUTC.Unix()
 	}
 
@@ -651,27 +653,11 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		}
 	}
 
-	// Serialize and prepare write for daily journey
-	djBytes, _ := json.Marshal(dj)
-	pending.AddStorageWrite(&runtime.StorageWrite{
-		Collection:      storageCollectionProgression,
-		Key:             ProgressionKeyDailyJourney,
-		UserID:          userID,
-		Value:           string(djBytes),
-		Version:         djVersion,
-		PermissionRead:  2,
-		PermissionWrite: 0,
-	})
+	// Note: Serialization and AddStorageWrite for dj is moved to the end of the token exchange loop.
 
-	// --- Pre-read wallet: one AccountGetId covers drop check, token read, and metadata ---
-	var preTokens, preDrops int64
-	if account, err := nk.AccountGetId(ctx, userID); err == nil {
-		var wallet map[string]int64
-		if json.Unmarshal([]byte(account.Wallet), &wallet) == nil {
-			preTokens = wallet[walletKeyRoundTokens]
-			preDrops = wallet[walletKeyDropsLeft]
-		}
-	}
+	// --- Pre-read token state ---
+	var preTokens int64 = int64(dj.RoundTokens)
+	var preDrops int64 = int64(dj.ExchangesLeft)
 
 	// --- XP ---
 	xpAmount := cfg.LossXP
@@ -730,11 +716,8 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		finalTokens -= thresh
 		finalDrops--
 		exchangesMade++
-
-		pending.AddWalletUpdate(userID, map[string]int64{
-			walletKeyRoundTokens: -thresh,
-			walletKeyDropsLeft:   -1,
-		})
+		
+		dj.ExchangesLeft--
 
 		tier := GetLootboxConfig().MatchLossTier
 		if req.Won {
@@ -751,23 +734,22 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		}
 	}
 
-	// If no slots remain, clamp at threshold (no infinite banking).
+	// Serialize and prepare write for daily journey (includes match counts, warmup, tokens, and updated ExchangesLeft)
 	if finalDrops <= 0 && finalTokens > thresh {
 		finalTokens = thresh
 	}
+	dj.RoundTokens = int(finalTokens)
 
-	// If we haven't made any exchanges but earned new tokens, credit them now.
-	// (If we made exchanges, the thresh deductions are already in 'pending').
-	if exchangesMade == 0 && tokensEarned > 0 {
-		delta := postTokens - preTokens
-		if delta > 0 {
-			pending.AddWalletUpdate(userID, map[string]int64{walletKeyRoundTokens: delta})
-		}
-	} else if exchangesMade > 0 && tokensEarned > 0 {
-		// We made exchanges AND earned tokens. The loop only deducted 'thresh * exchanges'.
-		// We still need to credit the base 'tokensEarned'.
-		pending.AddWalletUpdate(userID, map[string]int64{walletKeyRoundTokens: int64(tokensEarned)})
-	}
+	djBytes, _ := json.Marshal(dj)
+	pending.AddStorageWrite(&runtime.StorageWrite{
+		Collection:      storageCollectionProgression,
+		Key:             ProgressionKeyDailyJourney,
+		UserID:          userID,
+		Value:           string(djBytes),
+		Version:         djVersion,
+		PermissionRead:  2,
+		PermissionWrite: 0,
+	})
 
 	// --- Phase 2: Atomic commit (XP + tokens + exchange + lootbox) ---
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
@@ -788,14 +770,14 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	}
 	result.Meta = &notify.RewardMeta{
 		DailyMatches:    notify.IntPtr(dj.DailyMatches),
-		DropsRemaining:  notify.IntPtr(int(finalDrops)),
+		ExchangesLeft:   notify.IntPtr(int(finalDrops)),
 		RoundTokens:     notify.IntPtr(int(finalTokens)), // always real balance
 		TokensEarned:    notify.IntPtr(effectiveEarned),
 		ExchangesMade:   exchangesMade,
 		CarryOverTokens: nil,
 	}
 	result.Economy = &notify.EconomyState{
-		DropsRemaining: notify.IntPtr(int(finalDrops)),
+		ExchangesLeft:  notify.IntPtr(int(finalDrops)),
 		RoundTokens:    notify.IntPtr(int(finalTokens)),
 		TokensEarned:   notify.IntPtr(effectiveEarned),
 		ExchangesMade:  exchangesMade,
@@ -912,26 +894,6 @@ func preparePlayerXP(ctx context.Context, nk runtime.NakamaModule, logger runtim
 	return resultLevel, pending, nil
 }
 
-// checkDropTicketAvailable checks wallet for available drops without modifying any state
-func checkDropTicketAvailable(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) (bool, error) {
-	account, err := nk.AccountGetId(ctx, userID)
-	if err != nil {
-		return false, err
-	}
-
-	var wallet map[string]int64
-	if err := json.Unmarshal([]byte(account.Wallet), &wallet); err != nil {
-		return false, err
-	}
-
-	dropsLeft := wallet[walletKeyDropsLeft]
-	if dropsLeft <= 0 {
-		return false, nil
-	}
-
-	logger.Info("User %s has %d drop tickets available", userID, dropsLeft)
-	return true, nil
-}
 
 // EconomyConfig holds match reward and token exchange configuration.
 type EconomyConfig struct {
