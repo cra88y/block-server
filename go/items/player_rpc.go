@@ -204,6 +204,8 @@ func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 					if time.Unix(dj.ResetUnix, 0).UTC().Before(midnightUTC) {
 						dj.DailyMatches = 0
 						dj.DailyWarmupClaimed = false
+						dj.ExchangesLeft = DailyExchangeCap
+						dj.RoundTokens = 0
 						dj.ResetUnix = midnightUTC.Unix()
 						
 						// Save reset state back asynchronously or inline
@@ -225,6 +227,8 @@ func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 					progression.DailyJourney = &DailyJourneyResponse{
 						DailyMatches:       dj.DailyMatches,
 						DailyWarmupClaimed: dj.DailyWarmupClaimed,
+						ExchangesLeft:      dj.ExchangesLeft,
+						RoundTokens:        dj.RoundTokens,
 					}
 					dailyJourneyFound = true
 				} else {
@@ -289,6 +293,8 @@ func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 		dj := DailyJourney{
 			DailyMatches:       0,
 			DailyWarmupClaimed: false,
+			ExchangesLeft:      DailyExchangeCap,
+			RoundTokens:        0,
 			ResetUnix:          midnightUTC.Unix(),
 		}
 		
@@ -308,6 +314,8 @@ func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 		progression.DailyJourney = &DailyJourneyResponse{
 			DailyMatches:       dj.DailyMatches,
 			DailyWarmupClaimed: dj.DailyWarmupClaimed,
+			ExchangesLeft:      dj.ExchangesLeft,
+			RoundTokens:        dj.RoundTokens,
 		}
 	}
 

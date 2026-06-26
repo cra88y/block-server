@@ -582,7 +582,7 @@ func clearActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger runti
 }
 
 // Idempotent via match_results_cache.
-// DropsLeft limits daily lootbox generation; 6 RoundTokens (half-units) exchange for 1 lootbox.
+// ExchangesLeft limits daily lootbox generation; 6 RoundTokens (half-units) exchange for 1 lootbox.
 // A single AccountGetId pre-read prevents wallet TOCTOU during reward generation.
 // Solo match XP is halved to prevent farming.
 func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool, activeMatch *ActiveMatch) (*notify.RewardPayload, error) {
@@ -657,7 +657,7 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 
 	// --- Pre-read token state ---
 	var preTokens int64 = int64(dj.RoundTokens)
-	var preDrops int64 = int64(dj.ExchangesLeft)
+	var preExchanges int64 = int64(dj.ExchangesLeft)
 
 	// --- XP ---
 	xpAmount := cfg.LossXP
@@ -697,7 +697,7 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	} else {
 		// Fallback: no round records — network failure, legacy client, or pre-Phase2 solo.
 		tokensEarned = computeTokensEarned(req, isSolo, cfg)
-		if preDrops <= 0 {
+		if preExchanges <= 0 {
 			tokensEarned = 0
 		}
 		postTokens = preTokens + int64(tokensEarned)
@@ -709,12 +709,12 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	// Token -> Lootbox Exchange Loop
 	thresh := int64(cfg.TokenExchangeThresh)
 	finalTokens := postTokens
-	finalDrops := preDrops
+	finalExchanges := preExchanges
 	exchangesMade := 0
 
-	for finalTokens >= thresh && finalDrops >= 1 {
+	for finalTokens >= thresh && finalExchanges >= 1 {
 		finalTokens -= thresh
-		finalDrops--
+		finalExchanges--
 		exchangesMade++
 		
 		dj.ExchangesLeft--
@@ -735,7 +735,7 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	}
 
 	// Serialize and prepare write for daily journey (includes match counts, warmup, tokens, and updated ExchangesLeft)
-	if finalDrops <= 0 && finalTokens > thresh {
+	if finalExchanges <= 0 && finalTokens > thresh {
 		finalTokens = thresh
 	}
 	dj.RoundTokens = int(finalTokens)
@@ -770,14 +770,14 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	}
 	result.Meta = &notify.RewardMeta{
 		DailyMatches:    notify.IntPtr(dj.DailyMatches),
-		ExchangesLeft:   notify.IntPtr(int(finalDrops)),
+		ExchangesLeft:   notify.IntPtr(int(finalExchanges)),
 		RoundTokens:     notify.IntPtr(int(finalTokens)), // always real balance
 		TokensEarned:    notify.IntPtr(effectiveEarned),
 		ExchangesMade:   exchangesMade,
 		CarryOverTokens: nil,
 	}
 	result.Economy = &notify.EconomyState{
-		ExchangesLeft:  notify.IntPtr(int(finalDrops)),
+		ExchangesLeft:  notify.IntPtr(int(finalExchanges)),
 		RoundTokens:    notify.IntPtr(int(finalTokens)),
 		TokensEarned:   notify.IntPtr(effectiveEarned),
 		ExchangesMade:  exchangesMade,
