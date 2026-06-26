@@ -83,9 +83,10 @@ const (
 )
 
 const (
-	ProgressionKeyPet    = "pet_"
-	ProgressionKeyClass  = "class_"
-	ProgressionKeyPlayer = "player_"
+	ProgressionKeyPet          = "pet_"
+	ProgressionKeyClass        = "class_"
+	ProgressionKeyPlayer       = "player_"
+	ProgressionKeyDailyJourney = "daily_journey"
 )
 
 type TierState struct {
@@ -212,9 +213,21 @@ type InventoryResponse struct {
 	PieceStyles []uint32 `json:"piece_styles"`
 }
 
+type DailyJourneyResponse struct {
+	DailyMatches       int  `json:"dailyMatches"`
+	DailyWarmupClaimed bool `json:"dailyWarmupClaimed"`
+}
+
+type DailyJourney struct {
+	DailyMatches       int   `json:"dailyMatches"`
+	DailyWarmupClaimed bool  `json:"dailyWarmupClaimed"`
+	ResetUnix          int64 `json:"reset_unix"`
+}
+
 type ProgressionResponse struct {
-	Pets    map[uint32]ItemProgression `json:"pets"`
-	Classes map[uint32]ItemProgression `json:"classes"`
+	Pets         map[uint32]ItemProgression `json:"pets"`
+	Classes      map[uint32]ItemProgression `json:"classes"`
+	DailyJourney *DailyJourneyResponse      `json:"dailyJourney"`
 }
 
 type InventoryData struct {

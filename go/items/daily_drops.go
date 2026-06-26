@@ -107,7 +107,6 @@ func TryClaimDailyDrops(ctx context.Context, logger runtime.Logger, nk runtime.N
 		Key:        storageKeyDaily,
 		// PermissionRead: 1 Ã¢â‚¬â€ drops state is private (last claim time is PII-adjacent).
 		// Other game data uses 2 (public) for leaderboard/social features.
-		// daily_matches uses 0 (server-only) since it's a rate-limit counter.
 		PermissionRead:  1,
 		PermissionWrite: 0, // no client writes
 		Value:           string(dailyDropsBytes),
@@ -198,52 +197,4 @@ func canUserClaimDailyDrops(d dailyDrops) bool {
 	midnightUTC := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC)
 	lastClaimTime := time.Unix(d.LastClaimUnix, 0).UTC()
 	return lastClaimTime.Before(midnightUTC)
-}
-
-const storageKeyDailyMatches = "daily_matches"
-
-type dailyMatches struct {
-	Count     int   `json:"count"`
-	ResetUnix int64 `json:"reset_unix"`
-}
-
-func incrementDailyMatchCount(ctx context.Context, nk runtime.NakamaModule, userID string) (int, error) {
-	nowUTC := time.Now().UTC()
-	midnightUTC := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC)
-
-	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
-		Collection: storageCollectionDrops,
-		Key:        storageKeyDailyMatches,
-		UserID:     userID,
-	}})
-
-	var data dailyMatches
-	var version string
-	if err == nil && len(objects) > 0 {
-		if err := json.Unmarshal([]byte(objects[0].Value), &data); err != nil {
-			return 0, fmt.Errorf("unmarshal daily matches: %w", err)
-		}
-		version = objects[0].Version
-	}
-
-	// Reset if last reset was before today's midnight
-	if time.Unix(data.ResetUnix, 0).UTC().Before(midnightUTC) {
-		data.Count = 0
-		data.ResetUnix = midnightUTC.Unix()
-	}
-
-	data.Count++
-
-	value, _ := json.Marshal(data)
-	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{{
-		Collection:      storageCollectionDrops,
-		Key:             storageKeyDailyMatches,
-		UserID:          userID,
-		Value:           string(value),
-		Version:         version,
-		PermissionRead:  0,
-		PermissionWrite: 0,
-	}})
-
-	return data.Count, err
 }

@@ -593,6 +593,76 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	result.ReasonKey = "reward.match.complete"
 	result.Progression = &notify.ProgressionDelta{}
 
+	// --- Daily Journey ---
+	var dj DailyJourney
+	var djVersion string
+	djObjects, err := nk.StorageRead(ctx, []*runtime.StorageRead{
+		{
+			Collection: storageCollectionProgression,
+			Key:        ProgressionKeyDailyJourney,
+			UserID:     userID,
+		},
+	})
+	nowUTC := time.Now().UTC()
+	midnightUTC := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC)
+	if err == nil && len(djObjects) > 0 {
+		if err := json.Unmarshal([]byte(djObjects[0].Value), &dj); err == nil {
+			djVersion = djObjects[0].Version
+		}
+	} else {
+		dj = DailyJourney{
+			DailyMatches:       0,
+			DailyWarmupClaimed: false,
+			ResetUnix:          midnightUTC.Unix(),
+		}
+	}
+
+	// Reset if reset_unix is before today's midnight
+	if time.Unix(dj.ResetUnix, 0).UTC().Before(midnightUTC) {
+		dj.DailyMatches = 0
+		dj.DailyWarmupClaimed = false
+		dj.ResetUnix = midnightUTC.Unix()
+	}
+
+	// Increment daily match count
+	dj.DailyMatches++
+
+	// Check daily warmup completion
+	warmupGoal := cfg.DailyMatchesWarmupGoal
+	if warmupGoal <= 0 {
+		warmupGoal = 1
+	}
+	if dj.DailyMatches >= warmupGoal && !dj.DailyWarmupClaimed {
+		dj.DailyWarmupClaimed = true
+		tier := cfg.DailyMatchesWarmupLootboxTier
+		if tier == "" {
+			tier = "standard"
+		}
+		if lootbox, lootboxWrite, lboxErr := PrepareCreateLootbox(userID, tier); lboxErr == nil {
+			pending.AddStorageWrite(lootboxWrite)
+			result.Lootboxes = append(result.Lootboxes, notify.LootboxGrant{
+				ID:     lootbox.ID,
+				Tier:   lootbox.Tier,
+				Source: "daily_warmup",
+			})
+			logger.Info("[DailyJourney] Granted warmup lootbox of tier %s to user %s", tier, userID)
+		} else {
+			logger.Error("[DailyJourney] Failed to prepare warmup lootbox for user %s: %v", userID, lboxErr)
+		}
+	}
+
+	// Serialize and prepare write for daily journey
+	djBytes, _ := json.Marshal(dj)
+	pending.AddStorageWrite(&runtime.StorageWrite{
+		Collection:      storageCollectionProgression,
+		Key:             ProgressionKeyDailyJourney,
+		UserID:          userID,
+		Value:           string(djBytes),
+		Version:         djVersion,
+		PermissionRead:  2,
+		PermissionWrite: 0,
+	})
+
 	// --- Pre-read wallet: one AccountGetId covers drop check, token read, and metadata ---
 	var preTokens, preDrops int64
 	if account, err := nk.AccountGetId(ctx, userID); err == nil {
@@ -616,7 +686,7 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	}
 	result.Progression.XpGranted = notify.IntPtr(xpAmount)
 
-	playerLevelUp, xpPending, matchesToday, err := preparePlayerXP(ctx, nk, logger, userID, xpAmount)
+	playerLevelUp, xpPending, err := preparePlayerXP(ctx, nk, logger, userID, xpAmount, dj.DailyMatches)
 	if err != nil {
 		logger.Warn("Failed to prepare player XP: %v", err)
 	} else {
@@ -717,7 +787,7 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 		effectiveEarned = tokensBanked
 	}
 	result.Meta = &notify.RewardMeta{
-		DailyMatches:    notify.IntPtr(matchesToday),
+		DailyMatches:    notify.IntPtr(dj.DailyMatches),
 		DropsRemaining:  notify.IntPtr(int(finalDrops)),
 		RoundTokens:     notify.IntPtr(int(finalTokens)), // always real balance
 		TokensEarned:    notify.IntPtr(effectiveEarned),
@@ -749,19 +819,11 @@ func processDeferredWinBonus(_ context.Context, _ runtime.NakamaModule, _ runtim
 
 // preparePlayerXP applies diminishing returns and returns deferred progression writes.
 // Note: PrepareExperience operates on pets and classes, whereas this handles player level directly.
-func preparePlayerXP(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, xpAmount int) (int, *PendingWrites, int, error) {
+func preparePlayerXP(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, xpAmount int, matchesToday int) (int, *PendingWrites, error) {
 	const treeName = "player_level"
 	const playerItemID = uint32(0)
 
 	pending := NewPendingWrites()
-
-	// Daily match count writes independently (OCC). It's a soft signal for XP scaling,
-	// not critical state. Worst case the multiplier is off by one match.
-	matchesToday, err := incrementDailyMatchCount(ctx, nk, userID)
-	if err != nil {
-		logger.Warn("Failed to get daily match count, using conservative default: %v", err)
-		matchesToday = 5 // worst case: >4 matches today → minimum multiplier (0.25)
-	}
 
 	// Diminishing XP curve: 100%, 80%, 60%, 40%, 25%...
 	xpMultiplier := 1.0
@@ -819,7 +881,7 @@ func preparePlayerXP(ctx context.Context, nk runtime.NakamaModule, logger runtim
 	})
 
 	if err != nil {
-		return 0, nil, matchesToday, err
+		return 0, nil, err
 	}
 
 	if progWrite != nil {
@@ -847,7 +909,7 @@ func preparePlayerXP(ctx context.Context, nk runtime.NakamaModule, logger runtim
 		}
 	}
 
-	return resultLevel, pending, matchesToday, nil
+	return resultLevel, pending, nil
 }
 
 // checkDropTicketAvailable checks wallet for available drops without modifying any state
@@ -873,13 +935,17 @@ func checkDropTicketAvailable(ctx context.Context, nk runtime.NakamaModule, logg
 
 // EconomyConfig holds match reward and token exchange configuration.
 type EconomyConfig struct {
-	WinXP               int `json:"win_xp"`
-	LossXP              int `json:"loss_xp"`
-	TokensPerRoundWin   int `json:"tokens_per_round_win"`  // Half-units; default 2 = 1.0 token
-	TokensPerRoundLoss  int `json:"tokens_per_round_loss"` // Half-units; default 1 = 0.5 token
-	TokensPerSoloRound  int `json:"tokens_per_solo_round"` // Half-units; default 1 = 0.5 token
-	TokenExchangeThresh int `json:"token_exchange_thresh"` // Default 6 = 3.0 tokens trigger
-	TokenRoundCap       int `json:"token_round_cap"`       // Only rounds 1..N earn tokens; default 3
+	WinXP                         int    `json:"win_xp"`
+	LossXP                        int    `json:"loss_xp"`
+	TokensPerRoundWin             int    `json:"tokens_per_round_win"`  // Half-units; default 2 = 1.0 token
+	TokensPerRoundLoss            int    `json:"tokens_per_round_loss"` // Half-units; default 1 = 0.5 token
+	TokensPerSoloRound            int    `json:"tokens_per_solo_round"` // Half-units; default 1 = 0.5 token
+	TokenExchangeThresh           int    `json:"token_exchange_thresh"` // Default 6 = 3.0 tokens trigger
+	TokenRoundCap                 int    `json:"token_round_cap"`       // Only rounds 1..N earn tokens; default 3
+	TokenExchangeLootboxTier      string `json:"token_exchange_lootbox_tier"`
+	TokenExchangesPerDay          int    `json:"token_exchanges_per_day"`
+	DailyMatchesWarmupGoal        int    `json:"daily_matches_warmup_goal"`
+	DailyMatchesWarmupLootboxTier string `json:"daily_matches_warmup_lootbox_tier"`
 }
 
 var economyConfig *EconomyConfig
@@ -887,13 +953,17 @@ var economyConfig *EconomyConfig
 func GetEconomyConfig() *EconomyConfig {
 	if economyConfig == nil {
 		economyConfig = &EconomyConfig{
-			WinXP:               100,
-			LossXP:              25,
-			TokensPerRoundWin:   2, // 1.0 token
-			TokensPerRoundLoss:  1, // 0.5 token
-			TokensPerSoloRound:  1, // 0.5 token per completed round
-			TokenExchangeThresh: 6, // 3.0 tokens
-			TokenRoundCap:       3, // rounds 4+ earn nothing
+			WinXP:                         100,
+			LossXP:                        25,
+			TokensPerRoundWin:             2, // 1.0 token
+			TokensPerRoundLoss:            1, // 0.5 token
+			TokensPerSoloRound:            1, // 0.5 token per completed round
+			TokenExchangeThresh:           6, // 3.0 tokens
+			TokenRoundCap:                 3, // rounds 4+ earn nothing
+			TokenExchangeLootboxTier:      "standard",
+			TokenExchangesPerDay:          2,
+			DailyMatchesWarmupGoal:        1,
+			DailyMatchesWarmupLootboxTier: "standard",
 		}
 	}
 	return economyConfig

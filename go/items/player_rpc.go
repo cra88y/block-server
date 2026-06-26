@@ -186,69 +186,128 @@ func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 		return "", errors.ErrProgressionUnavailable
 	}
 
-	if len(objects) == 0 {
-		resp, err := json.Marshal(progression)
-		if err != nil {
-			logger.WithFields(map[string]interface{}{
-				"user":  userID,
-				"error": err.Error(),
-			}).Error("Failed to marshal empty progression response")
-			return "", errors.ErrMarshal
+	dailyJourneyFound := false
+
+	if len(objects) > 0 {
+		for _, obj := range objects {
+			if obj == nil {
+				continue
+			}
+
+			if obj.Key == ProgressionKeyDailyJourney {
+				var dj DailyJourney
+				if err := json.Unmarshal([]byte(obj.Value), &dj); err == nil {
+					nowUTC := time.Now().UTC()
+					midnightUTC := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC)
+					
+					// Lazy Reset Check
+					if time.Unix(dj.ResetUnix, 0).UTC().Before(midnightUTC) {
+						dj.DailyMatches = 0
+						dj.DailyWarmupClaimed = false
+						dj.ResetUnix = midnightUTC.Unix()
+						
+						// Save reset state back asynchronously or inline
+						go func(uID string, dJourney DailyJourney) {
+							val, _ := json.Marshal(dJourney)
+							_, _ = nk.StorageWrite(context.Background(), []*runtime.StorageWrite{
+								{
+									Collection:      storageCollectionProgression,
+									Key:             ProgressionKeyDailyJourney,
+									UserID:          uID,
+									Value:           string(val),
+									PermissionRead:  2,
+									PermissionWrite: 0,
+								},
+							})
+						}(userID, dj)
+					}
+					
+					progression.DailyJourney = &DailyJourneyResponse{
+						DailyMatches:       dj.DailyMatches,
+						DailyWarmupClaimed: dj.DailyWarmupClaimed,
+					}
+					dailyJourneyFound = true
+				} else {
+					logger.Warn("Failed to unmarshal daily journey progression")
+				}
+				continue
+			}
+
+			var p ItemProgression
+			if err := json.Unmarshal([]byte(obj.Value), &p); err != nil {
+				logger.WithFields(map[string]interface{}{
+					"user":  userID,
+					"key":   obj.Key,
+					"error": err.Error(),
+				}).Warn("Failed to unmarshal progression data")
+				continue
+			}
+
+			if after, ok := strings.CutPrefix(obj.Key, ProgressionKeyPet); ok {
+				id, err := ParseUint32Safely(after, logger)
+				if err != nil {
+					logger.WithFields(map[string]interface{}{
+						"user":  userID,
+						"key":   obj.Key,
+						"error": err.Error(),
+					}).Warn("Invalid pet progression ID")
+					continue
+				}
+				if _, exists := GetPet(id); !exists {
+					logger.WithFields(map[string]interface{}{
+						"user":  userID,
+						"petID": id,
+					}).Warn("No pet found for progression ID")
+					continue
+				}
+				progression.Pets[id] = p
+			} else if after, ok := strings.CutPrefix(obj.Key, ProgressionKeyClass); ok {
+				id, err := ParseUint32Safely(after, logger)
+				if err != nil {
+					logger.WithFields(map[string]interface{}{
+						"user":  userID,
+						"key":   obj.Key,
+						"error": err.Error(),
+					}).Warn("Invalid class progression ID")
+					continue
+				}
+				if _, exists := GetClass(id); !exists {
+					logger.WithFields(map[string]interface{}{
+						"user":    userID,
+						"classID": id,
+					}).Warn("No class found for progression ID")
+					continue
+				}
+				progression.Classes[id] = p
+			}
 		}
-		return string(resp), nil
 	}
 
-	for _, obj := range objects {
-		if obj == nil {
-			continue
+	if !dailyJourneyFound {
+		nowUTC := time.Now().UTC()
+		midnightUTC := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC)
+		dj := DailyJourney{
+			DailyMatches:       0,
+			DailyWarmupClaimed: false,
+			ResetUnix:          midnightUTC.Unix(),
 		}
+		
+		// Write the default daily journey to storage
+		val, _ := json.Marshal(dj)
+		_, _ = nk.StorageWrite(ctx, []*runtime.StorageWrite{
+			{
+				Collection:      storageCollectionProgression,
+				Key:             ProgressionKeyDailyJourney,
+				UserID:          userID,
+				Value:           string(val),
+				PermissionRead:  2,
+				PermissionWrite: 0,
+			},
+		})
 
-		var p ItemProgression
-		if err := json.Unmarshal([]byte(obj.Value), &p); err != nil {
-			logger.WithFields(map[string]interface{}{
-				"user":  userID,
-				"key":   obj.Key,
-				"error": err.Error(),
-			}).Warn("Failed to unmarshal progression data")
-			continue
-		}
-
-		if after, ok := strings.CutPrefix(obj.Key, ProgressionKeyPet); ok {
-			id, err := ParseUint32Safely(after, logger)
-			if err != nil {
-				logger.WithFields(map[string]interface{}{
-					"user":  userID,
-					"key":   obj.Key,
-					"error": err.Error(),
-				}).Warn("Invalid pet progression ID")
-				continue
-			}
-			if _, exists := GetPet(id); !exists {
-				logger.WithFields(map[string]interface{}{
-					"user":  userID,
-					"petID": id,
-				}).Warn("No pet found for progression ID")
-				continue
-			}
-			progression.Pets[id] = p
-		} else if after, ok := strings.CutPrefix(obj.Key, ProgressionKeyClass); ok {
-			id, err := ParseUint32Safely(after, logger)
-			if err != nil {
-				logger.WithFields(map[string]interface{}{
-					"user":  userID,
-					"key":   obj.Key,
-					"error": err.Error(),
-				}).Warn("Invalid class progression ID")
-				continue
-			}
-			if _, exists := GetClass(id); !exists {
-				logger.WithFields(map[string]interface{}{
-					"user":    userID,
-					"classID": id,
-				}).Warn("No class found for progression ID")
-				continue
-			}
-			progression.Classes[id] = p
+		progression.DailyJourney = &DailyJourneyResponse{
+			DailyMatches:       dj.DailyMatches,
+			DailyWarmupClaimed: dj.DailyWarmupClaimed,
 		}
 	}
 
