@@ -1,6 +1,6 @@
 {
   "version": null,
-  "config_version": "20260602-0057",
+  "config_version": "20260626-2037",
   "items": {
     "pets": {
       "0": {
@@ -521,7 +521,11 @@
     "tokens_per_round_loss": 1,
     "tokens_per_solo_round": 2,
     "token_exchange_thresh": 6,
-    "token_round_cap": 5
+    "token_round_cap": 5,
+    "token_exchange_lootbox_tier": "standard",
+    "token_exchanges_per_day": 2,
+    "daily_matches_warmup_goal": 1,
+    "daily_matches_warmup_lootbox_tier": "standard"
   },
   "starter_pack": {
     "pets": [
@@ -545,12 +549,20 @@
     "sample_rates": {
       "default": 0.05,
       "crash": 1,
+      "non_fatal_error": 1,
+      "session_start": 1,
+      "session_end": 1,
+      "match_started": 1,
       "match_completed": 1,
       "match_abandoned": 1,
       "social_event": 1,
-      "performance": 0.05,
-      "latency": 0.01,
-      "state_hash": 0.1
+      "user_feedback": 1,
+      "performance": 1,
+      "latency": 1,
+      "ability_used": 1,
+      "match_forfeit_grace_expired": 1,
+      "match_forfeit_grace_cancelled": 1,
+      "state_hash": 0.05
     }
   }
 }
