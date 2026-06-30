@@ -1,6 +1,6 @@
 {
   "version": null,
-  "config_version": "20260626-2037",
+  "config_version": "20260630-0211",
   "items": {
     "pets": {
       "0": {
@@ -109,23 +109,125 @@
       }
     },
     "backgrounds": {
+      "27": {
+        "name": "After the Rain"
+      },
+      "33": {
+        "name": "Alpine Express"
+      },
+      "20": {
+        "name": "Bamboo Sanctuary"
+      },
       "5": {
         "name": "Blue Spheres"
+      },
+      "19": {
+        "name": "Dewy Meadow"
+      },
+      "24": {
+        "name": "Dreamscape"
+      },
+      "8": {
+        "name": "Dusk Migration"
+      },
+      "25": {
+        "name": "Azure Zenith"
+      },
+      "38": {
+        "name": "Glimmer Grotto"
+      },
+      "36": {
+        "name": "Golden Heights"
+      },
+      "6": {
+        "name": "Zenith Arena"
+      },
+      "21": {
+        "name": "Midnight Highway"
+      },
+      "23": {
+        "name": "Infernal Spire"
+      },
+      "39": {
+        "name": "Lotus Serene"
+      },
+      "13": {
+        "name": "Crescent Cradle"
+      },
+      "17": {
+        "name": "Lunar Forest"
+      },
+      "18": {
+        "name": "Lunar Horizon"
+      },
+      "22": {
+        "name": "Midnight Breeze"
+      },
+      "14": {
+        "name": "Moonlit Sakura"
+      },
+      "16": {
+        "name": "Neo Nihon"
       },
       "4": {
         "name": "Celestial Orange"
       },
+      "28": {
+        "name": "Orbital Night"
+      },
+      "12": {
+        "name": "Petal Drift"
+      },
       "3": {
         "name": "Golden Voyage"
+      },
+      "10": {
+        "name": "Radiant Bloom"
+      },
+      "34": {
+        "name": "Sakura Hill"
+      },
+      "11": {
+        "name": "Eternal Sakura"
       },
       "0": {
         "name": "Waterside"
       },
+      "32": {
+        "name": "Solar Canopy"
+      },
+      "7": {
+        "name": "Whispering Sands"
+      },
       "2": {
         "name": "Blue Earth"
       },
+      "29": {
+        "name": "Iron Grid"
+      },
+      "31": {
+        "name": "Steel Foundry"
+      },
+      "9": {
+        "name": "Summer Hydrangea"
+      },
+      "35": {
+        "name": "Sunset Pier"
+      },
       "1": {
         "name": "Sunset"
+      },
+      "30": {
+        "name": "Sylvan Day"
+      },
+      "15": {
+        "name": "Shadowed Dojo"
+      },
+      "26": {
+        "name": "Twilight Wires"
+      },
+      "37": {
+        "name": "Vibrant Dawn"
       }
     },
     "piece_styles": {
