@@ -16,6 +16,150 @@
             {
                 "type": "background",
                 "id": 3
+            },
+            {
+                "type": "background",
+                "id": 4
+            },
+            {
+                "type": "background",
+                "id": 5
+            },
+            {
+                "type": "background",
+                "id": 6
+            },
+            {
+                "type": "background",
+                "id": 7
+            },
+            {
+                "type": "background",
+                "id": 8
+            },
+            {
+                "type": "background",
+                "id": 9
+            },
+            {
+                "type": "background",
+                "id": 10
+            },
+            {
+                "type": "background",
+                "id": 11
+            },
+            {
+                "type": "background",
+                "id": 12
+            },
+            {
+                "type": "background",
+                "id": 13
+            },
+            {
+                "type": "background",
+                "id": 14
+            },
+            {
+                "type": "background",
+                "id": 15
+            },
+            {
+                "type": "background",
+                "id": 16
+            },
+            {
+                "type": "background",
+                "id": 17
+            },
+            {
+                "type": "background",
+                "id": 18
+            },
+            {
+                "type": "background",
+                "id": 19
+            },
+            {
+                "type": "background",
+                "id": 20
+            },
+            {
+                "type": "background",
+                "id": 21
+            },
+            {
+                "type": "background",
+                "id": 22
+            },
+            {
+                "type": "background",
+                "id": 23
+            },
+            {
+                "type": "background",
+                "id": 24
+            },
+            {
+                "type": "background",
+                "id": 25
+            },
+            {
+                "type": "background",
+                "id": 26
+            },
+            {
+                "type": "background",
+                "id": 27
+            },
+            {
+                "type": "background",
+                "id": 28
+            },
+            {
+                "type": "background",
+                "id": 29
+            },
+            {
+                "type": "background",
+                "id": 30
+            },
+            {
+                "type": "background",
+                "id": 31
+            },
+            {
+                "type": "background",
+                "id": 32
+            },
+            {
+                "type": "background",
+                "id": 33
+            },
+            {
+                "type": "background",
+                "id": 34
+            },
+            {
+                "type": "background",
+                "id": 35
+            },
+            {
+                "type": "background",
+                "id": 36
+            },
+            {
+                "type": "background",
+                "id": 37
+            },
+            {
+                "type": "background",
+                "id": 38
+            },
+            {
+                "type": "background",
+                "id": 39
             }
         ],
         "piece_styles": [
@@ -389,27 +533,56 @@
             "product_id": "com.blockjitsu.testpack1",
             "usd_cents": 199,
             "rewards": [
-                { "type": "piece_style", "item_id": 2 },
-                { "type": "piece_style", "item_id": 3 },
-                { "type": "piece_style", "item_id": 5 }
+                {
+                    "type": "piece_style",
+                    "item_id": 2
+                },
+                {
+                    "type": "piece_style",
+                    "item_id": 3
+                },
+                {
+                    "type": "piece_style",
+                    "item_id": 5
+                }
             ]
         },
         {
             "product_id": "com.blockjitsu.testpack2",
             "usd_cents": 999,
             "rewards": [
-                { "type": "pet", "item_id": 2 },
-                { "type": "class", "item_id": 2 },
-                { "type": "background", "item_id": 1 },
-                { "type": "piece_style", "item_id": 7 },
-                { "type": "currency", "id": "gems", "amount": 500 }
+                {
+                    "type": "pet",
+                    "item_id": 2
+                },
+                {
+                    "type": "class",
+                    "item_id": 2
+                },
+                {
+                    "type": "background",
+                    "item_id": 1
+                },
+                {
+                    "type": "piece_style",
+                    "item_id": 7
+                },
+                {
+                    "type": "currency",
+                    "id": "gems",
+                    "amount": 500
+                }
             ]
         },
         {
             "product_id": "com.blockjitsu.testpack3",
             "usd_cents": 499,
             "rewards": [
-                { "type": "currency", "id": "gems", "amount": 1000 }
+                {
+                    "type": "currency",
+                    "id": "gems",
+                    "amount": 1000
+                }
             ]
         }
     ]
