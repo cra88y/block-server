@@ -197,32 +197,7 @@ func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 			if obj.Key == ProgressionKeyDailyJourney {
 				var dj DailyJourney
 				if err := json.Unmarshal([]byte(obj.Value), &dj); err == nil {
-					nowUTC := time.Now().UTC()
-					midnightUTC := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC)
-					
-					// Lazy Reset Check
-					if time.Unix(dj.ResetUnix, 0).UTC().Before(midnightUTC) {
-						dj.DailyMatches = 0
-						dj.DailyWarmupClaimed = false
-						dj.ExchangesLeft = DailyExchangeCap
-						dj.RoundTokens = 0
-						dj.ResetUnix = midnightUTC.Unix()
-						
-						// Save reset state back asynchronously or inline
-						go func(uID string, dJourney DailyJourney) {
-							val, _ := json.Marshal(dJourney)
-							_, _ = nk.StorageWrite(context.Background(), []*runtime.StorageWrite{
-								{
-									Collection:      storageCollectionProgression,
-									Key:             ProgressionKeyDailyJourney,
-									UserID:          uID,
-									Value:           string(val),
-									PermissionRead:  2,
-									PermissionWrite: 0,
-								},
-							})
-						}(userID, dj)
-					}
+					CheckAndResetDailyJourney(&dj)
 					
 					progression.DailyJourney = &DailyJourneyResponse{
 						DailyMatches:       dj.DailyMatches,
@@ -293,7 +268,7 @@ func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 		dj := DailyJourney{
 			DailyMatches:       0,
 			DailyWarmupClaimed: false,
-			ExchangesLeft:      DailyExchangeCap,
+			ExchangesLeft:      GetEconomyConfig().TokenExchangesPerDay,
 			RoundTokens:        0,
 			ResetUnix:          midnightUTC.Unix(),
 		}

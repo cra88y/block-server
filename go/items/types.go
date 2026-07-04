@@ -94,8 +94,6 @@ const (
 	ProgressionKeyClass        = "class_"
 	ProgressionKeyPlayer       = "player_"
 	ProgressionKeyDailyJourney = "daily_journey"
-	
-	DailyExchangeCap           = 5
 )
 
 type TierState struct {
@@ -260,7 +258,7 @@ func getDailyJourneyState(ctx context.Context, logger runtime.Logger, nk runtime
 		// New user case
 		nowUTC := time.Now().UTC()
 		data.ResetUnix = time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC).Unix()
-		data.ExchangesLeft = DailyExchangeCap
+		data.ExchangesLeft = GetEconomyConfig().TokenExchangesPerDay
 		data.RoundTokens = 0
 		return data, nil, nil
 	}
@@ -272,6 +270,23 @@ func getDailyJourneyState(ctx context.Context, logger runtime.Logger, nk runtime
 	}
 
 	return data, storageObj, nil
+}
+
+// CheckAndResetDailyJourney applies the midnight UTC lazy reset if necessary.
+// Returns true if a reset was performed.
+func CheckAndResetDailyJourney(dj *DailyJourney) bool {
+	nowUTC := time.Now().UTC()
+	midnightUTC := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC)
+	
+	if time.Unix(dj.ResetUnix, 0).UTC().Before(midnightUTC) {
+		dj.DailyMatches = 0
+		dj.DailyWarmupClaimed = false
+		dj.ExchangesLeft = GetEconomyConfig().TokenExchangesPerDay
+		dj.RoundTokens = 0
+		dj.ResetUnix = midnightUTC.Unix()
+		return true
+	}
+	return false
 }
 
 type ProgressionResponse struct {

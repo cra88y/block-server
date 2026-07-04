@@ -618,13 +618,7 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	}
 
 	// Reset if reset_unix is before today's midnight
-	if time.Unix(dj.ResetUnix, 0).UTC().Before(midnightUTC) {
-		dj.DailyMatches = 0
-		dj.DailyWarmupClaimed = false
-		dj.ExchangesLeft = DailyExchangeCap
-		dj.RoundTokens = 0
-		dj.ResetUnix = midnightUTC.Unix()
-	}
+	CheckAndResetDailyJourney(&dj)
 
 	// Increment daily match count
 	dj.DailyMatches++
