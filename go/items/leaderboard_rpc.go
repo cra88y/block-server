@@ -52,9 +52,9 @@ func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logge
 // resolveCeremony is the single authoritative function that classifies a match outcome
 // into a ceremony context string. The client reads this directly — no client-side re-derivation.
 // All 10 MECE states are covered. Order of checks is significant (most specific first).
-func resolveCeremony(rank, prevRank, prevScore, actualScore int64, rival *notify.CompetitiveTarget, isSolo bool) string {
+func resolveCeremony(rank, prevRank, prevScore, matchScore int64, rival *notify.CompetitiveTarget, isSolo bool, actualWon bool) string {
 	isChampion := rank == 1
-	// New champion: just reached Rank 1 from a non-Rank-1 position (includes first placement at #1)
+	// New champion: just reached Rank 1 from a non-Rank-1 position
 	isNewChampion := isChampion && prevRank != 1
 
 	if isNewChampion {
@@ -62,14 +62,22 @@ func resolveCeremony(rank, prevRank, prevScore, actualScore int64, rival *notify
 	}
 
 	if isChampion {
-		if actualScore > prevScore {
-			return "rechamp_beat"
+		if isSolo {
+			if matchScore > prevScore {
+				return "rechamp_beat"
+			}
+			// Boiling point: within 10% of own record but didn't beat it (solo only)
+			if prevScore > 0 && float64(matchScore)/float64(prevScore) > 0.90 {
+				return "rechamp_boiling"
+			}
+			return "rechamp_idle"
+		} else {
+			// 1v1 Champion: won the match -> beat record (+1 win); lost the match -> idle
+			if actualWon {
+				return "rechamp_beat"
+			}
+			return "rechamp_idle"
 		}
-		// Boiling point: within 10% of own record but didn't beat it (solo only — wins are discrete)
-		if isSolo && prevScore > 0 && float64(actualScore)/float64(prevScore) > 0.90 {
-			return "rechamp_boiling"
-		}
-		return "rechamp_idle"
 	}
 
 	// Challenger branch — has a rival above them (or just passed one)
@@ -77,24 +85,38 @@ func resolveCeremony(rank, prevRank, prevScore, actualScore int64, rival *notify
 		if prevRank > 0 && rank > 0 && (prevRank - rank) > 0 {
 			return "overtake"
 		}
-		// Boiling point: within 10% of rival's score but didn't pass (solo only)
-		if isSolo && rival.Score > 0 && float64(actualScore)/float64(rival.Score) > 0.90 {
-			return "boiling_point"
+		if isSolo {
+			// Boiling point: within 10% of rival's score but didn't pass (solo only)
+			if rival.Score > 0 && float64(matchScore)/float64(rival.Score) > 0.90 {
+				return "boiling_point"
+			}
+			if prevScore == 0 && matchScore > 0 {
+				return "first_match"
+			}
+			if matchScore > prevScore {
+				return "personal_best"
+			}
+			return "normal_loss"
+		} else {
+			// 1v1 Challenger
+			if prevScore == 0 && actualWon {
+				return "first_match"
+			}
+			if actualWon {
+				return "personal_best"
+			}
+			return "normal_loss"
 		}
-		if prevScore == 0 {
-			return "first_match"
-		}
-		if isSolo && actualScore > prevScore {
-			return "personal_best"
-		}
-		return "normal_loss"
 	}
 
 	// No rival above them and not champion
-	if prevScore == 0 {
+	if prevScore == 0 && ((isSolo && matchScore > 0) || actualWon) {
 		return "first_match"
 	}
-	if isSolo && actualScore > prevScore {
+	if isSolo && matchScore > prevScore {
+		return "personal_best"
+	}
+	if !isSolo && actualWon {
 		return "personal_best"
 	}
 	return "unranked"
@@ -159,19 +181,27 @@ func processBoard(ctx context.Context, nk runtime.NakamaModule, logger runtime.L
 				}
 			}
 			if closestRival != nil {
+				scoreBaseline := actualScore
+				if isSolo {
+					scoreBaseline = score // Evaluate gap against this specific match run score
+				}
 				state.NextTarget = &notify.CompetitiveTarget{
 					UserID:     closestRival.OwnerId,
 					Username:   closestRival.Username.GetValue(),
 					Rank:       int(closestRival.Rank),
 					Score:      closestRival.Score,
-					ScoreDelta: closestRival.Score - actualScore,
+					ScoreDelta: closestRival.Score - scoreBaseline,
 				}
 			}
 		}
 	}
 
-	// Resolve after NextTarget is populated — ceremony needs the full picture.
-	state.CeremonyContext = resolveCeremony(rank, prevRank, prevScore, actualScore, state.NextTarget, isSolo)
+	// Resolve ceremony using the score from this match (score) rather than post-write board score
+	matchScore := score
+	if !isSolo && !shouldWrite {
+		matchScore = 0
+	}
+	state.CeremonyContext = resolveCeremony(rank, prevRank, prevScore, matchScore, state.NextTarget, isSolo, shouldWrite)
 
 	return state
 }
