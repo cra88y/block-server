@@ -83,7 +83,7 @@ const (
 	storageKeyClass            = "classes"      // [0,1,2]
 	storageKeyBackground       = "backgrounds"  // [0,1,2,3]
 	storageKeyPieceStyle       = "piece_styles" // [0]
-	storageKeyPlayer           = "player"       // Singleton â€” ID 0 is always the local player
+	storageKeyPlayer           = "player"       // Singleton — ID 0 is always the local player
 
 	storageCollectionEquipment   = "equipment"
 	storageCollectionProgression = "progression"
@@ -172,7 +172,7 @@ func (c *ClaimedIndices) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	// Try int (old format) â€” migrate
+	// Try int (old format) — migrate
 	var n int
 	if err := json.Unmarshal(data, &n); err != nil {
 		return fmt.Errorf("ClaimedIndices: expected int or array, got %s", string(data))
@@ -309,7 +309,7 @@ type PetTreatRequest struct {
 }
 
 // RoundResult is one player's self-reported round outcome, embedded in MatchResultRequest.Rounds[].
-// The server cross-validates this against RoundRecord (written by report_round_result) â€”
+// The server cross-validates this against RoundRecord (written by report_round_result) —
 // discrepancies between the two streams are the primary audit signal.
 type RoundResult struct {
 	RoundNumber int   `json:"round"`
@@ -340,12 +340,12 @@ type MatchResultRequest struct {
 	OpponentName      string        `json:"opponent_name,omitempty"`
 }
 
-// â”€â”€â”€ Leaderboard & Competitive System â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Leaderboard & Competitive System
 
 const (
-	// Leaderboard IDs â€” must match LeaderboardCreate calls in InitModule.
-	// solo_* : BEST operator â€” highest single-run score wins.
-	// 1v1_*  : INCREMENT operator â€” win count accumulates, resets per cadence.
+	// Leaderboard IDs — must match LeaderboardCreate calls in InitModule.
+	// solo_* : BEST operator — highest single-run score wins.
+	// 1v1_*  : INCREMENT operator — win count accumulates, resets per cadence.
 	//
 	// Season boards (no auto-reset): manually wiped at major balance patches / season boundaries.
 	// Weekly boards:                 auto-reset Monday midnight UTC.
@@ -361,7 +361,7 @@ const (
 	storageCollectionMatchHistory     = "match_history"
 	maxMatchHistoryPerUser            = 100
 
-	// Schema versions â€” bump on breaking struct changes.
+	// Schema versions — bump on breaking struct changes.
 	PlayerStatsSchema       = 1
 	MatchHistoryEntrySchema = 1
 )
@@ -423,7 +423,7 @@ type MatchHistoryEntry struct {
 	PlayedAt     int64 `json:"played_at"`
 }
 
-// â”€â”€â”€ RPC request/response types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// RPC request/response types
 
 // LeaderboardRequest fetches a board's top entries + the caller's own record.
 type LeaderboardRequest struct {

@@ -13,9 +13,8 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-// Writes match result to leaderboards synchronously and returns the season rank, delta, board ID, and the new array of CompetitiveBoardStates.
-// Solo: BEST operator (writes always). 1v1: INCREMENT operator (writes on win only).
-func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool, actualWon bool) (int, int, string, []notify.CompetitiveBoardState) {
+// Solo executes BEST operator writes. 1v1 executes INCREMENT operator on win only.
+func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, req *MatchResultRequest, isSolo bool, actualWon bool) []notify.CompetitiveBoardState {
 	var globalBoard, weeklyBoard string
 	var score, subscore int64
 
@@ -25,9 +24,6 @@ func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logge
 		score = int64(req.FinalScore)
 		subscore = int64(req.MatchDurationSec)
 	} else {
-		if !actualWon {
-			return 0, 0, "", nil
-		}
 		globalBoard = Leaderboard1v1Season
 		weeklyBoard = Leaderboard1v1Weekly
 		score = 1
@@ -41,46 +37,93 @@ func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logge
 		"pet_id":   req.EquippedPetID,
 	}
 
-	// Fetch username for leaderboard record
 	username := ""
 	if users, err := nk.UsersGetId(ctx, []string{userID}, nil); err == nil && len(users) > 0 {
 		username = users[0].Username
 	}
 
-	boards := []notify.CompetitiveBoardState{}
+	shouldWrite := isSolo || actualWon
+	globalState := processBoard(ctx, nk, logger, globalBoard, userID, username, score, subscore, metadata, isSolo, shouldWrite)
+	weeklyState := processBoard(ctx, nk, logger, weeklyBoard, userID, username, score, subscore, metadata, isSolo, shouldWrite)
 
-	// 1. Process Global Board
-	globalRank, globalDelta, globalState := processBoard(ctx, nk, logger, globalBoard, userID, username, score, subscore, metadata)
-	boards = append(boards, globalState)
-
-	// 2. Process Weekly Board
-	_, _, weeklyState := processBoard(ctx, nk, logger, weeklyBoard, userID, username, score, subscore, metadata)
-	boards = append(boards, weeklyState)
-
-	return globalRank, globalDelta, globalBoard, boards
+	return []notify.CompetitiveBoardState{globalState, weeklyState}
 }
 
-func processBoard(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, boardId, userID, username string, score, subscore int64, metadata map[string]interface{}) (int, int, notify.CompetitiveBoardState) {
-	// Query previous rank BEFORE writing so we can compute the delta
+// resolveCeremony is the single authoritative function that classifies a match outcome
+// into a ceremony context string. The client reads this directly — no client-side re-derivation.
+// All 10 MECE states are covered. Order of checks is significant (most specific first).
+func resolveCeremony(rank, prevRank, prevScore, actualScore int64, rival *notify.CompetitiveTarget, isSolo bool) string {
+	isChampion := rank == 1
+	// New champion: just reached Rank 1 from a non-Rank-1 position (includes first placement at #1)
+	isNewChampion := isChampion && prevRank != 1
+
+	if isNewChampion {
+		return "new_champion"
+	}
+
+	if isChampion {
+		if actualScore > prevScore {
+			return "rechamp_beat"
+		}
+		// Boiling point: within 10% of own record but didn't beat it (solo only — wins are discrete)
+		if isSolo && prevScore > 0 && float64(actualScore)/float64(prevScore) > 0.90 {
+			return "rechamp_boiling"
+		}
+		return "rechamp_idle"
+	}
+
+	// Challenger branch — has a rival above them (or just passed one)
+	if rival != nil {
+		if prevRank > 0 && rank > 0 && (prevRank - rank) > 0 {
+			return "overtake"
+		}
+		// Boiling point: within 10% of rival's score but didn't pass (solo only)
+		if isSolo && rival.Score > 0 && float64(actualScore)/float64(rival.Score) > 0.90 {
+			return "boiling_point"
+		}
+		if prevScore == 0 {
+			return "first_match"
+		}
+		if isSolo && actualScore > prevScore {
+			return "personal_best"
+		}
+		return "normal_loss"
+	}
+
+	// No rival above them and not champion
+	if prevScore == 0 {
+		return "first_match"
+	}
+	if isSolo && actualScore > prevScore {
+		return "personal_best"
+	}
+	return "unranked"
+}
+
+func processBoard(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, boardId, userID, username string, score, subscore int64, metadata map[string]interface{}, isSolo bool, shouldWrite bool) notify.CompetitiveBoardState {
 	var prevRank int64
+	var prevScore int64
 	_, prevRecords, _, _, prevErr := nk.LeaderboardRecordsList(ctx, boardId, []string{userID}, 1, "", 0)
 	if prevErr == nil {
 		for _, r := range prevRecords {
 			if r.OwnerId == userID {
 				prevRank = r.Rank
+				prevScore = r.Score
 				break
 			}
 		}
 	}
 
-	var rank int64
-	var actualScore int64
-	record, err := nk.LeaderboardRecordWrite(ctx, boardId, userID, username, score, subscore, metadata, nil)
-	if err != nil {
-		logger.Warn("[leaderboard] Failed to write %s for user %s: %v", boardId, userID, err)
-	} else if record != nil {
-		rank = record.Rank
-		actualScore = record.Score
+	rank := prevRank
+	actualScore := prevScore
+	if shouldWrite {
+		record, err := nk.LeaderboardRecordWrite(ctx, boardId, userID, username, score, subscore, metadata, nil)
+		if err != nil {
+			logger.Warn("Failed to write %s for user %s: %v", boardId, userID, err)
+		} else if record != nil {
+			rank = record.Rank
+			actualScore = record.Score
+		}
 	}
 
 	delta := 0
@@ -89,24 +132,30 @@ func processBoard(ctx context.Context, nk runtime.NakamaModule, logger runtime.L
 	}
 
 	state := notify.CompetitiveBoardState{
-		BoardID:      boardId,
-		RankCurrent:  int(rank),
-		RankDelta:    delta,
-		ScoreCurrent: actualScore,
+		BoardID:       boardId,
+		IsScoreBased:  isSolo,
+		RankCurrent:   int(rank),
+		RankDelta:     delta,
+		ScoreCurrent:  actualScore,
+		ScorePrevious: prevScore,
 	}
 
-	// Rival Target Lookup
 	if rank > 1 {
-		// Haystack fetches records around the owner. If unavailable or fails, fallback is top 100.
 		haystack, err := nk.LeaderboardRecordsHaystack(ctx, boardId, userID, 10, "", 0)
 		if err == nil && haystack != nil {
-			// Find the best ranked player immediately preceding us (handles tied-rank skips)
-			// Nakama returns haystack records sorted by rank (e.g., 1, 2, 3...)
 			var closestRival *api.LeaderboardRecord
-			for _, r := range haystack.Records {
-				if r.Rank < rank && r.OwnerId != userID {
-					// Keep overwriting until we hit our rank; the last one seen is the closest rival
-					closestRival = r
+			if delta > 0 { // Overtake: find the highest score now strictly below us
+				for _, r := range haystack.Records {
+					if r.Rank > rank && r.OwnerId != userID {
+						closestRival = r
+						break // Haystack is rank-ascending; first entry > rank is the immediate rival below
+					}
+				}
+			} else { // Normal chase: find the lowest rank strictly above us
+				for _, r := range haystack.Records {
+					if r.Rank < rank && r.OwnerId != userID {
+						closestRival = r
+					}
 				}
 			}
 			if closestRival != nil {
@@ -121,7 +170,10 @@ func processBoard(ctx context.Context, nk runtime.NakamaModule, logger runtime.L
 		}
 	}
 
-	return int(rank), delta, state
+	// Resolve after NextTarget is populated — ceremony needs the full picture.
+	state.CeremonyContext = resolveCeremony(rank, prevRank, prevScore, actualScore, state.NextTarget, isSolo)
+
+	return state
 }
 
 func leaderboardEntryFromRecord(r *api.LeaderboardRecord) LeaderboardEntry {
@@ -135,7 +187,6 @@ func leaderboardEntryFromRecord(r *api.LeaderboardRecord) LeaderboardEntry {
 	}
 }
 
-// Fetches top entries from a board and the caller's own record.
 func RpcGetLeaderboard(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	userID, err := GetUserIDFromContext(ctx, logger)
 	if err != nil {
@@ -155,13 +206,12 @@ func RpcGetLeaderboard(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 		limit = 20
 	}
 
-	// Always include the caller's own userID in ownerIDs so their record is
-	// returned in ownerRecords even if they aren't in the top-N window.
+	// Force inject caller ID to guarantee their localized record is returned regardless of top-N window boundary.
 	ownerIDs := []string{userID}
 
 	records, ownerRecords, nextCursor, prevCursor, err := nk.LeaderboardRecordsList(ctx, req.BoardID, ownerIDs, limit, req.Cursor, 0)
 	if err != nil {
-		logger.Error("[leaderboard] Failed to list %s: %v", req.BoardID, err)
+		logger.Error("Failed to list %s: %v", req.BoardID, err)
 		return "", errors.ErrCouldNotReadStorage
 	}
 
@@ -189,7 +239,6 @@ func RpcGetLeaderboard(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 	return string(b), nil
 }
 
-// Fetches a board filtered to the caller's mutual friends and self.
 func RpcGetFriendsLeaderboard(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	userID, err := GetUserIDFromContext(ctx, logger)
 	if err != nil {
@@ -209,12 +258,12 @@ func RpcGetFriendsLeaderboard(ctx context.Context, logger runtime.Logger, db *sq
 		limit = 50
 	}
 
-	// Fetch mutual friends (state = 0). Falls back to self-only on error.
+	// State 0 isolates mutual friends. Fallback to self-only guarantees UI population on Nakama API fault.
 	ownerIDs := []string{userID}
 	state := 0
 	friends, _, err := nk.FriendsList(ctx, userID, 1000, &state, "")
 	if err != nil {
-		logger.Warn("[leaderboard] Failed to fetch friends for %s, returning self-only: %v", userID, err)
+		logger.Warn("Failed to fetch friends for %s, returning self-only: %v", userID, err)
 	} else {
 		for _, f := range friends {
 			if f.User != nil && f.User.Id != "" {
@@ -223,19 +272,17 @@ func RpcGetFriendsLeaderboard(ctx context.Context, logger runtime.Logger, db *sq
 		}
 	}
 
-	// ownerRecords contains the friends-filtered records (Nakama filters by ownerIDs).
-	// records would be the global top-N — we do NOT want that here.
+	// List returns global top-N in `records` and owner-filtered in `ownerRecords`. Discard `records` to enforce mutual-friends boundary.
 	_, ownerRecords, _, _, err := nk.LeaderboardRecordsList(ctx, req.BoardID, ownerIDs, limit, "", 0)
 	if err != nil {
-		logger.Error("[leaderboard] Failed to list friends leaderboard %s: %v", req.BoardID, err)
+		logger.Error("Failed to list friends leaderboard %s: %v", req.BoardID, err)
 		return "", errors.ErrCouldNotReadStorage
 	}
 
 	resp := LeaderboardResponse{
 		Entries: make([]LeaderboardEntry, 0, len(ownerRecords)),
 	}
-	// Separate caller's own entry from friend entries.
-	// ownerRecords order is not guaranteed — client must sort by Rank.
+	// ownerRecords order is non-deterministic; client delegates sorting.
 	for _, r := range ownerRecords {
 		entry := leaderboardEntryFromRecord(r)
 		if r.OwnerId == userID {
@@ -253,7 +300,6 @@ func RpcGetFriendsLeaderboard(ctx context.Context, logger runtime.Logger, db *sq
 	return string(b), nil
 }
 
-// Fetches public competitive stats. Omitting user_id returns the caller's stats.
 func RpcGetPlayerStats(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	callerUserID, err := GetUserIDFromContext(ctx, logger)
 	if err != nil {
@@ -270,7 +316,7 @@ func RpcGetPlayerStats(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 
 	stats, err := GetOrCreatePlayerStats(ctx, nk, targetUserID)
 	if err != nil {
-		logger.Error("[competitive] Failed to read player stats for %s: %v", targetUserID, err)
+		logger.Error("Failed to read player stats for %s: %v", targetUserID, err)
 		return "", errors.ErrCouldNotReadStorage
 	}
 
@@ -281,7 +327,7 @@ func RpcGetPlayerStats(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 	return string(b), nil
 }
 
-// Fetches paginated match history for the caller. Ordered alphabetically; client sorts chronologically.
+// Storage API returns alphabetical keys; client assumes chronological sort responsibility.
 func RpcGetMatchHistory(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	userID, err := GetUserIDFromContext(ctx, logger)
 	if err != nil {
@@ -290,7 +336,7 @@ func RpcGetMatchHistory(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 
 	var req MatchHistoryRequest
 	if payload != "" && payload != "{}" && payload != "null" {
-		// Ignore unmarshal errors — use defaults on malformed input
+		// Ignore unmarshal faults to permit malformed payload fallback to defaults.
 		json.Unmarshal([]byte(payload), &req) //nolint:errcheck
 	}
 
@@ -310,7 +356,7 @@ func RpcGetMatchHistory(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 		UserID:     userID,
 	}})
 	if err != nil {
-		logger.Error("[competitive] Failed to read match history for %s: %v", userID, err)
+		logger.Error("Failed to read match history for %s: %v", userID, err)
 		return "", errors.ErrCouldNotReadStorage
 	}
 

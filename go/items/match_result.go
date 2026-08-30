@@ -60,7 +60,6 @@ func RpcNotifyMatchStart(ctx context.Context, logger runtime.Logger, db *sql.DB,
 	}
 
 	// Overwrite active match lock. Player must still satisfy minMatchDurationMs.
-
 	activeMatch := ActiveMatch{
 		MatchID:    req.MatchID,
 		StartTime:  time.Now().UnixMilli(),
@@ -121,8 +120,8 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	activeMatch, err := validateActiveMatch(ctx, nk, logger, userID, req.MatchID)
 	if err != nil {
 		roundsPlayed := req.RoundsWon + req.RoundsLost
-		if err == errors.ErrMatchTooShort && roundsPlayed >= 1 && activeMatch != nil {
-			logger.Info("Match %s: duration short but %d round(s) completed — proceeding", req.MatchID, roundsPlayed)
+		if err == errors.ErrMatchTooShort && (roundsPlayed >= 1 || req.OpponentForfeited) && activeMatch != nil {
+			logger.Info("Match %s: duration short but %d round(s) completed (or forfeit) — proceeding", req.MatchID, roundsPlayed)
 		} else if err == errors.ErrMatchTooShort {
 			logger.Warn("Match too short for user %s: %v", userID, err)
 			errorPayload := notify.NewRewardPayload("match")
@@ -293,52 +292,19 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		}
 	}
 
-	// Synchronous: Write leaderboard records (sets LeaderboardRank, delta, and BoardId in payload). Non-fatal on err.
-	leaderboardRank, leaderboardDelta, boardId, competitiveBoards := writeLeaderboardRecords(ctx, nk, logger, userID, &req, isSolo, actualWon)
-	if leaderboardRank > 0 {
-		result.LeaderboardRank = leaderboardRank
-		result.LeaderboardRankDelta = leaderboardDelta
-		result.BoardId = boardId
-	}
-	result.Competitive = competitiveBoards
-
-	// Populate Performance Tags
-	var tags []notify.PerformanceTag
-	if req.APM >= 80 {
-		tags = append(tags, notify.PerformanceTag{
-			TagID:        "HIGH_APM",
-			DisplayLabel: "Blocks Per Minute",
-			DisplayValue: fmt.Sprintf("%d", req.APM),
-			IsRecord:     true,
-		})
-	} else if req.APM > 0 {
-		tags = append(tags, notify.PerformanceTag{
-			TagID:        "APM",
-			DisplayLabel: "Blocks Per Minute",
-			DisplayValue: fmt.Sprintf("%d", req.APM),
-			IsRecord:     false,
-		})
-	}
-	if req.TowerHeight > 0 {
-		tags = append(tags, notify.PerformanceTag{
-			TagID:        "TOWER_HEIGHT",
-			DisplayLabel: "Tower Height",
-			DisplayValue: fmt.Sprintf("%dm", req.TowerHeight),
-			IsRecord:     false,
-		})
-	}
-	result.Performance = tags
+	// Synchronous: Write leaderboard records. Non-fatal on err.
+	result.Competitive = writeLeaderboardRecords(ctx, nk, logger, userID, &req, isSolo, actualWon)
 
 	// Synchronous history write must precede cache write.
 	// Prevents transient failures from being permanently masked by the idempotency cache.
 	historyWrite, historyPrepErr := PrepareMatchHistoryWrite(ctx, nk, userID, &req, isSolo, actualWon, activeMatch.OpponentID)
 	if historyPrepErr != nil {
-		logger.Warn("[competitive] history prepare failed for user %s match %s: %v — proceeding without history", userID, req.MatchID, historyPrepErr)
+		logger.Warn("Match history prepare failed for user %s match %s: %v — proceeding without history", userID, req.MatchID, historyPrepErr)
 	} else {
 		historyPending := NewPendingWrites()
 		historyPending.AddStorageWrite(historyWrite)
 		if commitErr := CommitPendingWrites(ctx, nk, logger, historyPending); commitErr != nil {
-			logger.Warn("[competitive] history commit failed for user %s match %s: %v — history may be missing", userID, req.MatchID, commitErr)
+			logger.Warn("Match history commit failed for user %s match %s: %v — history may be missing", userID, req.MatchID, commitErr)
 			// Non-fatal: proceed so rewards are returned. History loss is logged.
 		}
 	}
@@ -349,13 +315,13 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		bgCtx := context.Background()
 		statsWrite, err := PreparePlayerStatsUpdate(bgCtx, nk, userID, &reqCopy, isSolo, actualWon)
 		if err != nil {
-			logger.Warn("[competitive] stats prepare failed for user %s match %s: %v", userID, reqCopy.MatchID, err)
+			logger.Warn("Player stats prepare failed for user %s match %s: %v", userID, reqCopy.MatchID, err)
 			return
 		}
 		statsPending := NewPendingWrites()
 		statsPending.AddStorageWrite(statsWrite)
 		if err := CommitPendingWrites(bgCtx, nk, logger, statsPending); err != nil {
-			logger.Warn("[competitive] stats commit failed for user %s match %s (OCC or transient): %v", userID, reqCopy.MatchID, err)
+			logger.Warn("Player stats commit failed for user %s match %s (OCC or transient): %v", userID, reqCopy.MatchID, err)
 		}
 	}()
 

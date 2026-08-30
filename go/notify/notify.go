@@ -44,25 +44,12 @@ type RewardPayload struct {
 	Action        string `json:"action,omitempty"`
 	ActionPayload string `json:"action_payload,omitempty"`
 
-	// LeaderboardRank is the player's resulting rank after this match's leaderboard write.
-	// 0 (omitted) means the write failed or the mode doesn't write a board (e.g. 1v1 loss).
-	LeaderboardRank int `json:"leaderboard_rank,omitempty"`
-
-	// LeaderboardRankDelta is the change in position on the season board.
-	// Negative = climbed (better rank). Positive = dropped. 0 = unchanged or first placement.
-	// Only set when LeaderboardRank > 0 and a previous rank existed.
-	LeaderboardRankDelta int `json:"leaderboard_rank_delta,omitempty"`
-
-	// BoardId is the canonical leaderboard ID this rank applies to
-	// (solo_season, solo_weekly, 1v1_season, 1v1_weekly).
-	BoardId string `json:"board_id,omitempty"`
-
 	// MECE Reward Domains
-	Inventory        *InventoryDelta   `json:"inventory,omitempty"`
-	Wallet           *WalletDelta      `json:"wallet,omitempty"`
-	Progression      *ProgressionDelta `json:"progression,omitempty"`
-	Lootboxes        []LootboxGrant    `json:"lootboxes,omitempty"`
-	DuplicateGrants  []DuplicateGrant  `json:"duplicate_grants,omitempty"`
+	Inventory       *InventoryDelta   `json:"inventory,omitempty"`
+	Wallet          *WalletDelta      `json:"wallet,omitempty"`
+	Progression     *ProgressionDelta `json:"progression,omitempty"`
+	Lootboxes       []LootboxGrant    `json:"lootboxes,omitempty"`
+	DuplicateGrants []DuplicateGrant  `json:"duplicate_grants,omitempty"`
 
 	// Meta (non-reward feedback)
 	Meta        *RewardMeta `json:"meta,omitempty"`
@@ -71,7 +58,6 @@ type RewardPayload struct {
 	// --- Modular Enterprise End Screen Fields ---
 	Economy     *EconomyState           `json:"economy,omitempty"`
 	Competitive []CompetitiveBoardState `json:"competitive,omitempty"`
-	Performance []PerformanceTag        `json:"performance_tags,omitempty"`
 }
 
 // EconomyState encapsulates post-match token generation and conversions.
@@ -84,36 +70,33 @@ type EconomyState struct {
 }
 
 // CompetitiveBoardState encapsulates rank data for a single leaderboard.
+// CeremonyContext values: new_champion, rechamp_beat,
+// rechamp_boiling, rechamp_idle, overtake, personal_best, boiling_point,
+// first_match, normal_loss, unranked.
 type CompetitiveBoardState struct {
-	BoardID      string             `json:"board_id,omitempty"`
-	RankCurrent  int                `json:"rank_current,omitempty"`
-	RankDelta    int                `json:"rank_delta,omitempty"`
-	ScoreCurrent int64              `json:"score_current,omitempty"`
-	NextTarget   *CompetitiveTarget `json:"next_target,omitempty"`
+	BoardID         string             `json:"board_id,omitempty"`
+	IsScoreBased    bool               `json:"is_score_based"`
+	RankCurrent     int                `json:"rank_current,omitempty"`
+	RankDelta       int                `json:"rank_delta,omitempty"`
+	ScoreCurrent    int64              `json:"score_current,omitempty"`
+	ScorePrevious   int64              `json:"score_previous,omitempty"`
+	NextTarget      *CompetitiveTarget `json:"next_target,omitempty"`
+	CeremonyContext string             `json:"ceremony_context,omitempty"`
 }
 
 // CompetitiveTarget encapsulates the Rival player for the End Screen chase UI.
 type CompetitiveTarget struct {
-	UserID       string `json:"user_id,omitempty"`
-	Username     string `json:"username,omitempty"`
-	Rank         int    `json:"rank,omitempty"`
-	Score        int64  `json:"score,omitempty"`
-	ScoreDelta   int64  `json:"score_delta_to_pass,omitempty"`
-	Relationship string `json:"relationship,omitempty"`
-}
-
-// PerformanceTag encapsulates contextual stat flexes (e.g. APM, Longest Match).
-type PerformanceTag struct {
-	TagID        string `json:"tag_id,omitempty"`
-	DisplayLabel string `json:"display_label,omitempty"`
-	DisplayValue string `json:"display_value,omitempty"`
-	IsRecord     bool   `json:"is_record,omitempty"`
+	UserID     string `json:"user_id,omitempty"`
+	Username   string `json:"username,omitempty"`
+	Rank       int    `json:"rank,omitempty"`
+	Score      int64  `json:"score,omitempty"`
+	ScoreDelta int64  `json:"score_delta_to_pass,omitempty"`
 }
 
 // DuplicateGrant represents an item that was rolled but already owned, converted to currency.
 type DuplicateGrant struct {
 	ItemID           uint32 `json:"item_id"`
-	Type             string `json:"type"` // pet, class, background, piece_style
+	Type             string `json:"type"`              // pet, class, background, piece_style
 	FallbackCurrency string `json:"fallback_currency"` // gold, gems
 	FallbackAmount   int    `json:"fallback_amount"`
 }

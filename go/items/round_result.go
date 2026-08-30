@@ -12,7 +12,6 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-
 type RoundRecord struct {
 	MatchID       string `json:"match_id"`
 	RoundNumber   int    `json:"round_number"`
@@ -44,8 +43,6 @@ type RoundResultResponse struct {
 	Acknowledged   bool `json:"acknowledged"`    // true = new record banked; false = idempotent replay
 }
 
-
-
 // Banks tokens for a completed round. Idempotent by (match_id, round_number).
 // Bank-only; token-to-lootbox exchange fires at match end.
 func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
@@ -56,7 +53,7 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 
 	var req RoundResultRequest
 	if err := json.Unmarshal([]byte(payload), &req); err != nil {
-		logger.Error("[RoundResult] Failed to unmarshal: %v", err)
+		logger.Error("Failed to unmarshal round result: %v", err)
 		return "", errors.ErrUnmarshal
 	}
 
@@ -67,7 +64,7 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	// Reject rounds that are too short to be legitimate gameplay.
 	const minRoundDurationMs = 15000 // 15 seconds
 	if req.DurationMs > 0 && req.DurationMs < minRoundDurationMs {
-		logger.Info("[RoundResult] Round %d too short (%dms) for user %s — tokens set to 0",
+		logger.Info("Round %d too short (%dms) for user %s — tokens set to 0",
 			req.RoundNumber, req.DurationMs, userID)
 		// Still record the round for cross-validation, but don't bank tokens
 		req.Survived = false
@@ -76,7 +73,7 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	// ErrMatchTooShort is acceptable here — a round can complete before minMatchDurationMs.
 	activeMatch, err := validateActiveMatch(ctx, nk, logger, userID, req.MatchID)
 	if err != nil && err != errors.ErrMatchTooShort {
-		logger.Warn("[RoundResult] Session validation failed for user %s: %v", userID, err)
+		logger.Warn("Session validation failed for user %s: %v", userID, err)
 		return "", err
 	}
 	if activeMatch == nil {
@@ -86,7 +83,7 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	// --- Idempotency check: return existing grant if already recorded ---
 	for _, round := range activeMatch.Rounds {
 		if round.RoundNumber == req.RoundNumber {
-			logger.Info("[RoundResult] Idempotent replay for user %s match %s round %d (granted %d tokens previously)",
+			logger.Info("Idempotent replay for user %s match %s round %d (granted %d tokens previously)",
 				userID, req.MatchID, req.RoundNumber, round.TokensGranted)
 			return marshalRoundResponse(ctx, nk, logger, userID, round.TokensGranted, false)
 		}
@@ -121,10 +118,10 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		if err == nil {
 			if dj.ExchangesLeft <= 0 {
 				tokensGranted = 0
-				logger.Info("[RoundResult] User %s has no exchanges left — round %d grants 0 tokens", userID, req.RoundNumber)
+				logger.Info("User %s has no exchanges left — round %d grants 0 tokens", userID, req.RoundNumber)
 			}
 		} else {
-			logger.Warn("[RoundResult] Could not read daily journey: %v", err)
+			logger.Warn("Could not read daily journey: %v", err)
 		}
 	}
 
@@ -179,11 +176,11 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	}
 
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
-		logger.Error("[RoundResult] Commit failed for user %s round %d: %v", userID, req.RoundNumber, err)
+		logger.Error("Commit failed for user %s round %d: %v", userID, req.RoundNumber, err)
 		return "", errors.ErrRoundCommit
 	}
 
-	logger.Info("[RoundResult] Banked %d tokens for user %s match %s round %d (won=%v, solo=%v)",
+	logger.Info("Banked %d tokens for user %s match %s round %d (won=%v, solo=%v)",
 		tokensGranted, userID, req.MatchID, req.RoundNumber, req.PlayerWon, isSolo)
 
 	return marshalRoundResponse(ctx, nk, logger, userID, tokensGranted, true)
@@ -199,7 +196,7 @@ func marshalRoundResponse(ctx context.Context, nk runtime.NakamaModule, logger r
 		runningBalance = dj.RoundTokens
 		exchangesLeft = dj.ExchangesLeft
 	} else {
-		logger.Warn("[RoundResult] Could not read daily journey for response: %v", err)
+		logger.Warn("Could not read daily journey for response: %v", err)
 	}
 
 	resp := RoundResultResponse{
@@ -214,5 +211,3 @@ func marshalRoundResponse(ctx context.Context, nk runtime.NakamaModule, logger r
 	}
 	return string(b), nil
 }
-
-
