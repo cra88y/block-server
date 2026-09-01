@@ -49,77 +49,49 @@ func writeLeaderboardRecords(ctx context.Context, nk runtime.NakamaModule, logge
 	return []notify.CompetitiveBoardState{globalState, weeklyState}
 }
 
-// resolveCeremony is the single authoritative function that classifies a match outcome
-// into a ceremony context string. The client reads this directly — no client-side re-derivation.
-// All 10 MECE states are covered. Order of checks is significant (most specific first).
-func resolveCeremony(rank, prevRank, prevScore, matchScore int64, rival *notify.CompetitiveTarget, isSolo bool, actualWon bool) string {
-	isChampion := rank == 1
-	// New champion: just reached Rank 1 from a non-Rank-1 position
-	isNewChampion := isChampion && prevRank != 1
-
-	if isNewChampion {
-		return "new_champion"
-	}
-
-	if isChampion {
-		if isSolo {
-			if matchScore > prevScore {
-				return "rechamp_beat"
-			}
-			// Boiling point: within 10% of own record but didn't beat it (solo only)
-			if prevScore > 0 && float64(matchScore)/float64(prevScore) > 0.90 {
-				return "rechamp_boiling"
-			}
-			return "rechamp_idle"
-		} else {
-			// 1v1 Champion: won the match -> beat record (+1 win); lost the match -> idle
-			if actualWon {
-				return "rechamp_beat"
-			}
-			return "rechamp_idle"
-		}
-	}
-
-	// Challenger branch — has a rival above them (or just passed one)
-	if rival != nil {
-		if prevRank > 0 && rank > 0 && (prevRank - rank) > 0 {
-			return "overtake"
-		}
-		if isSolo {
-			// Boiling point: within 10% of rival's score but didn't pass (solo only)
-			if rival.Score > 0 && float64(matchScore)/float64(rival.Score) > 0.90 {
-				return "boiling_point"
-			}
-			if prevScore == 0 && matchScore > 0 {
-				return "first_match"
-			}
-			if matchScore > prevScore {
-				return "personal_best"
-			}
-			return "normal_loss"
-		} else {
-			// 1v1 Challenger
-			if prevScore == 0 && actualWon {
-				return "first_match"
-			}
-			if actualWon {
-				return "personal_best"
-			}
-			return "normal_loss"
-		}
-	}
-
-	// No rival above them and not champion
+// resolveOutcomeTier returns the Mutually Exclusive Positional state.
+func resolveOutcomeTier(rank, prevRank, prevScore, matchScore int64, isSolo bool, actualWon bool) string {
 	if prevScore == 0 && ((isSolo && matchScore > 0) || actualWon) {
 		return "first_match"
 	}
-	if isSolo && matchScore > prevScore {
-		return "personal_best"
+	
+	isChampion := rank == 1
+	if isChampion {
+		if prevRank != 1 {
+			return "champion_new"
+		}
+		return "champion_defend"
 	}
-	if !isSolo && actualWon {
-		return "personal_best"
+	
+	if prevRank > 0 && rank > 0 && (prevRank - rank) > 0 {
+		return "overtake"
 	}
-	return "unranked"
+	
+	return "normal"
+}
+
+// resolveBoilingPoint returns the orthogonal Proximity state.
+func resolveBoilingPoint(rank, prevRank, prevScore, matchScore int64, rival *notify.CompetitiveTarget, isSolo bool) bool {
+	if !isSolo {
+		return false
+	}
+	
+	// If you are defending champion, boiling point is 90% of your own record
+	if rank == 1 && prevRank == 1 {
+		if prevScore > 0 && float64(matchScore)/float64(prevScore) > 0.90 && matchScore <= prevScore {
+			return true
+		}
+		return false
+	}
+	
+	// If you have a rival, boiling point is 90% of rival's score
+	if rival != nil && rival.Score > 0 {
+		if float64(matchScore)/float64(rival.Score) > 0.90 && matchScore <= rival.Score {
+			return true
+		}
+	}
+	
+	return false
 }
 
 func processBoard(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, boardId, userID, username string, score, subscore int64, metadata map[string]interface{}, isSolo bool, shouldWrite bool) notify.CompetitiveBoardState {
@@ -154,12 +126,13 @@ func processBoard(ctx context.Context, nk runtime.NakamaModule, logger runtime.L
 	}
 
 	state := notify.CompetitiveBoardState{
-		BoardID:       boardId,
-		IsScoreBased:  isSolo,
-		RankCurrent:   int(rank),
-		RankDelta:     delta,
-		ScoreCurrent:  actualScore,
-		ScorePrevious: prevScore,
+		BoardID:        boardId,
+		IsScoreBased:   isSolo,
+		IsPersonalBest: isSolo && (score > prevScore),
+		RankCurrent:    int(rank),
+		RankDelta:      delta,
+		ScoreCurrent:   actualScore,
+		ScorePrevious:  prevScore,
 	}
 
 	if rank > 1 {
@@ -196,12 +169,13 @@ func processBoard(ctx context.Context, nk runtime.NakamaModule, logger runtime.L
 		}
 	}
 
-	// Resolve ceremony using the score from this match (score) rather than post-write board score
+	// Resolve semantic outcomes using the score from this match (score) rather than post-write board score
 	matchScore := score
 	if !isSolo && !shouldWrite {
 		matchScore = 0
 	}
-	state.CeremonyContext = resolveCeremony(rank, prevRank, prevScore, matchScore, state.NextTarget, isSolo, shouldWrite)
+	state.OutcomeTier = resolveOutcomeTier(rank, prevRank, prevScore, matchScore, isSolo, shouldWrite)
+	state.IsBoilingPoint = resolveBoilingPoint(rank, prevRank, prevScore, matchScore, state.NextTarget, isSolo)
 
 	return state
 }

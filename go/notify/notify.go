@@ -70,18 +70,19 @@ type EconomyState struct {
 }
 
 // CompetitiveBoardState encapsulates rank data for a single leaderboard.
-// CeremonyContext values: new_champion, rechamp_beat,
-// rechamp_boiling, rechamp_idle, overtake, personal_best, boiling_point,
-// first_match, normal_loss, unranked.
+// OutcomeTier values: champion_new, champion_defend, overtake, first_match, normal.
+// IsBoilingPoint and IsPersonalBest are orthogonal boolean modifiers.
 type CompetitiveBoardState struct {
 	BoardID         string             `json:"board_id,omitempty"`
 	IsScoreBased    bool               `json:"is_score_based"`
+	IsPersonalBest  bool               `json:"is_personal_best"`
 	RankCurrent     int                `json:"rank_current,omitempty"`
 	RankDelta       int                `json:"rank_delta,omitempty"`
 	ScoreCurrent    int64              `json:"score_current,omitempty"`
 	ScorePrevious   int64              `json:"score_previous,omitempty"`
 	NextTarget      *CompetitiveTarget `json:"next_target,omitempty"`
-	CeremonyContext string             `json:"ceremony_context,omitempty"`
+	OutcomeTier     string             `json:"outcome_tier,omitempty"`
+	IsBoilingPoint  bool               `json:"is_boiling_point"`
 }
 
 // CompetitiveTarget encapsulates the Rival player for the End Screen chase UI.
