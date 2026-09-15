@@ -69,9 +69,7 @@ services:
     volumes:
       - certs:/certs
     ports:
-      - '7349:7349'
       - '7350:7350'
-      - '9100:9100'
     healthcheck:
       test: ["CMD", "/nakama/nakama", "healthcheck"]
       interval: 10s
@@ -83,8 +81,6 @@ services:
     command: ['--config.file=/etc/prometheus/prometheus.yml']
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
-    ports:
-      - '9090:9090'
 
   vector:
     image: 'timberio/vector:0.45.0-debian'
