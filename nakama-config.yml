@@ -1,5 +1,10 @@
 name: block-server
 session:
   token_expiry_sec: 14400
+  refresh_token_expiry_sec: 2592000
+socket:
+  outgoing_queue_size: 512
+  read_buffer_size_bytes: 16384
+  write_buffer_size_bytes: 16384
 metrics:
    prometheus_port: 9100
