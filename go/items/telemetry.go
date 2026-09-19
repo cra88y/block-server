@@ -15,23 +15,17 @@ import (
 // Wire-protocol whitelist. Must match client-side TelemetryEventTypes.cs.
 var validEventTypes = map[string]bool{
 	"match_started":           true,
-	"match_completed":         true,
 	"match_abandoned":         true,
-	"match_result_verified":   true,
 	"performance":             true,
 	"crash":                   true,
 	"session_start":           true,
 	"session_end":             true,
-	"account_created":         true,
 	"ability_used":            true,
-	"progression_claimed":     true,
-	"progression_claimed_all": true,
-	"onboarding_completed":    true,
-	"latency":                 true, // LatencyMetric
-	"state_hash":              true, // StateHashMetric
-	"social_event":            true, // SocialEventMetric
-	"user_feedback":           true, // UserFeedbackMetric
-	"non_fatal_error":        true,
+	"latency":                 true,
+	"state_hash":              true,
+	"social_event":            true,
+	"user_feedback":           true,
+	"non_fatal_error":         true,
 
 	// Network Recovery & Resilience
 	"network_ghost_socket_detected":   true,
@@ -41,28 +35,24 @@ var validEventTypes = map[string]bool{
 	"network_match_salvaged":          true,
 	"match_forfeit_grace_expired":     true,
 	"match_forfeit_grace_cancelled":   true,
-	
-	// Server-authoritative economy events
-	"currency_gained":                 true,
-	"currency_spent":                  true,
-	"iap_purchase":                    true,
 }
 
 const retentionDays = 30
 
-// Timestamp is client-provided.
+// Timestamp is client-provided; must be validated against server clock to prevent time-series corruption from mobile drift.
 // Data is a raw JSON string for AOT compatibility; do not change to map[string]interface{}.
 type TelemetryEvent struct {
-	EventType string  `json:"event_type"`
-	Timestamp float64 `json:"timestamp"`
-	Data      string  `json:"data"`
+	EventType   string  `json:"event_type"`
+	Timestamp   float64 `json:"timestamp"`
+	Data        string  `json:"data"`
+	ClockSkewed bool    `json:"-"`
 }
 
 type TelemetryBatch struct {
 	Events []TelemetryEvent `json:"events"`
 }
 
-// EmitServerTelemetry directly emits a telemetry event from the server side
+// Bypasses the client whitelist for secure, server-authoritative events (e.g. iap_purchase, match_completed).
 func EmitServerTelemetry(logger runtime.Logger, userID string, eventType string, payload interface{}) {
 	payloadBytes, _ := json.Marshal(payload)
 	logger.WithField("payload", string(payloadBytes)).
@@ -72,7 +62,7 @@ func EmitServerTelemetry(logger runtime.Logger, userID string, eventType string,
 		Info("telemetry_event")
 }
 
-// Batch processing is atomic per-request; individual event failures don't abort the batch.
+// Atomic batch processing: Prevents a single malformed event from dropping the entire batch of valid metrics.
 func RpcSubmitTelemetry(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	var batch TelemetryBatch
 	if err := json.Unmarshal([]byte(payload), &batch); err != nil {
@@ -85,12 +75,13 @@ func RpcSubmitTelemetry(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 		return "", errors.ErrNoUserIdFound
 	}
 
-	for _, event := range batch.Events {
+	for i := range batch.Events {
+		event := &batch.Events[i]
 		if err := validateTelemetryEvent(event); err != nil {
 			logger.Warn("Invalid telemetry event %s: %v", event.EventType, err)
 			continue
 		}
-		if err := processTelemetryEvent(ctx, logger, db, nk, userID, event); err != nil {
+		if err := processTelemetryEvent(ctx, logger, db, nk, userID, *event); err != nil {
 			logger.Error("Failed to process telemetry event %s: %v", event.EventType, err)
 		}
 	}
@@ -99,7 +90,7 @@ func RpcSubmitTelemetry(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 	return `{"success": true}`, nil
 }
 
-func validateTelemetryEvent(event TelemetryEvent) error {
+func validateTelemetryEvent(event *TelemetryEvent) error {
 	if !validEventTypes[event.EventType] {
 		return fmt.Errorf("invalid event type: %s", event.EventType)
 	}
@@ -107,11 +98,10 @@ func validateTelemetryEvent(event TelemetryEvent) error {
 	now := time.Now().Unix()
 	eventTime := int64(event.Timestamp)
 
-	if eventTime < now-(retentionDays*24*60*60) {
-		return fmt.Errorf("event timestamp too old: %d (retention: %d days)", eventTime, retentionDays)
-	}
-	if eventTime > now+3600 { // 1 hour in future
-		return fmt.Errorf("event timestamp in future: %d", eventTime)
+	if eventTime < now-(retentionDays*24*60*60) || eventTime > now+3600 {
+		// Ingestion Stamp pattern: Don't drop the telemetry, just fix the timestamp and flag it.
+		event.Timestamp = float64(now)
+		event.ClockSkewed = true
 	}
 
 	// Validate payload size (prevent abuse).
@@ -128,6 +118,7 @@ func processTelemetryEvent(ctx context.Context, logger runtime.Logger, db *sql.D
 		WithField("event_type", event.EventType).
 		WithField("timestamp", event.Timestamp).
 		WithField("user_id", userID).
+		WithField("clock_skewed", event.ClockSkewed).
 		Info("telemetry_event")
 	return nil
 }

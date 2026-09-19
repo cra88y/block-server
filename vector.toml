@@ -12,18 +12,16 @@ condition = 'contains(string!(.message), "telemetry_event")'
 type = "remap"
 inputs = ["filter_telemetry"]
 source = '''
-  # Parse the outer log message
   parsed = parse_json!(.message)
   
-  # Extract our fields from the Zap log structure
   .event_type = parsed.event_type
   .timestamp = parsed.timestamp
   .user_id = parsed.user_id
   
-  # Parse the nested stringified payload into actual JSON columns for Parquet
+  # payload is stored as a stringified JSON string by Nakama's logger; must be parsed again to be queryable in Parquet
   .payload = parse_json!(parsed.payload)
   
-  # Drop Docker metadata and keep only the analytics data
+  # Docker runtime fields are high-cardinality noise with zero analytical value; strip them to keep R2 objects lean
   del(.container_created_at)
   del(.container_id)
   del(.container_name)
@@ -51,3 +49,30 @@ codec = "json"
 [sinks.r2_lakehouse.batch]
 max_bytes = 5000000
 timeout_secs = 300
+
+[transforms.filter_discord_alerts]
+type = "filter"
+inputs = ["parse_json"]
+condition = 'includes(["crash", "non_fatal_error", "iap_purchase", "match_abandoned"], .event_type)'
+
+[transforms.format_discord]
+type = "remap"
+inputs = ["filter_discord_alerts"]
+source = '''
+  payload_str = encode_json(.payload)
+  if length(payload_str) > 1800 {
+    payload_str = slice!(payload_str, 0, 1800) + "\n...[TRUNCATED]"
+  }
+  msg = "🚨 **" + .event_type + "** | User: `" + .user_id + "`\n```json\n" + payload_str + "\n```"
+  . = {
+    "content": msg
+  }
+'''
+
+[sinks.discord_webhook]
+type = "http"
+inputs = ["format_discord"]
+uri = "${DISCORD_WEBHOOK_URL}"
+method = "post"
+encoding.codec = "json"
+healthcheck.enabled = false

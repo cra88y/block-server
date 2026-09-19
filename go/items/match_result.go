@@ -208,6 +208,19 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 			opponentIDForDeferred = activeMatch.OpponentID
 			opponentWonForDeferred = !req.Won
 		}
+		if consensusResult == "forfeit_win" && activeMatch.OpponentID != "" {
+			abandonData, _ := json.Marshal(map[string]interface{}{
+				"match_id":    req.MatchID,
+				"reporter_id": userID,
+				"reason":      "forfeit_win_claimed",
+			})
+			abandonEvent := TelemetryEvent{
+				EventType: "match_abandoned",
+				Timestamp: float64(time.Now().UnixNano()) / 1e9,
+				Data:      string(abandonData),
+			}
+			go processTelemetryEvent(context.Background(), logger, db, nk, activeMatch.OpponentID, abandonEvent)
+		}
 	}
 
 	// Validate equipped items exist
@@ -260,6 +273,8 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 				"AbilitiesCast":   req.AbilitiesCast,
 				"APM":             req.APM,
 				"PiecesPlaced":    req.PiecesPlaced,
+				"LocalClassId":    req.EquippedClassID,
+				"LocalPetId":      req.EquippedPetID,
 			})
 
 			telemetryEvent := TelemetryEvent{
@@ -753,7 +768,7 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	return result, nil
 }
 
-// processDeferredWinBonus is a no-op cyrrentThe caller still invokes this function on the "ok" consensus path; returning
+// processDeferredWinBonus is a no-op currently. The caller still invokes this function on the "ok" consensus path; returning
 // nil, nil causes the notification send to be skipped cleanly.
 func processDeferredWinBonus(_ context.Context, _ runtime.NakamaModule, _ runtime.Logger, _ string, _ bool) (*notify.RewardPayload, error) {
 	return nil, nil
