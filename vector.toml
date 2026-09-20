@@ -76,3 +76,6 @@ uri = "${DISCORD_WEBHOOK_URL}"
 method = "post"
 encoding.codec = "json"
 healthcheck.enabled = false
+
+[sinks.discord_webhook.batch]
+max_events = 1
