@@ -542,6 +542,13 @@ func RpcUsePetTreat(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		"action":   "use_pet_treat",
 	}).Info("Pet treat used successfully")
 
+	EmitServerTelemetry(logger, userID, "economy_transaction", map[string]interface{}{
+		"action":        "upgrade",
+		"item_id":       fmt.Sprintf("pet_%d", req.PetID),
+		"cost_amount":   costAmount,
+		"cost_currency": costCurrency,
+	})
+
 	respBytes, err := json.Marshal(result)
 	if err != nil {
 		return "", errors.ErrMarshal
@@ -681,6 +688,13 @@ func RpcUseGoldForClassXP(ctx context.Context, logger runtime.Logger, db *sql.DB
 		"newLevel": newLevel,
 		"action":   "use_gold_for_class_xp",
 	}).Info("Gold used for class XP successfully")
+
+	EmitServerTelemetry(logger, userID, "economy_transaction", map[string]interface{}{
+		"action":        "upgrade",
+		"item_id":       fmt.Sprintf("class_%d", req.ClassID),
+		"cost_amount":   costAmount,
+		"cost_currency": costCurrency,
+	})
 
 	respBytes, err := json.Marshal(result)
 	if err != nil {

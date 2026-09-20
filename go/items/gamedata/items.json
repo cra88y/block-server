@@ -664,6 +664,9 @@
       "ability_used": 0.05,
       "match_forfeit_grace_expired": 1,
       "match_forfeit_grace_cancelled": 1,
+      "onboarding_progress": 1,
+      "shop_interaction": 1,
+      "economy_transaction": 1,
       "state_hash": 0.05
     }
   }
