@@ -660,8 +660,8 @@
       "social_event": 1,
       "user_feedback": 1,
       "performance": 1,
-      "latency": 1,
-      "ability_used": 1,
+      "latency": 0.05,
+      "ability_used": 0.05,
       "match_forfeit_grace_expired": 1,
       "match_forfeit_grace_cancelled": 1,
       "state_hash": 0.05
