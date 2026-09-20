@@ -542,11 +542,24 @@ func RpcUsePetTreat(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		"action":   "use_pet_treat",
 	}).Info("Pet treat used successfully")
 
+	gemsSpent := 0
+	goldSpent := 0
+	treatsSpent := 0
+	switch costCurrency {
+	case "gems":
+		gemsSpent = int(costAmount)
+	case "gold":
+		goldSpent = int(costAmount)
+	case "treats":
+		treatsSpent = int(costAmount)
+	}
+
 	EmitServerTelemetry(logger, userID, "economy_transaction", map[string]interface{}{
-		"action":        "upgrade",
-		"item_id":       fmt.Sprintf("pet_%d", req.PetID),
-		"cost_amount":   costAmount,
-		"cost_currency": costCurrency,
+		"action":       "upgrade",
+		"item_id":      fmt.Sprintf("pet_%d", req.PetID),
+		"gems_spent":   gemsSpent,
+		"gold_spent":   goldSpent,
+		"treats_spent": treatsSpent,
 	})
 
 	respBytes, err := json.Marshal(result)
@@ -689,11 +702,24 @@ func RpcUseGoldForClassXP(ctx context.Context, logger runtime.Logger, db *sql.DB
 		"action":   "use_gold_for_class_xp",
 	}).Info("Gold used for class XP successfully")
 
+	gemsSpent := 0
+	goldSpent := 0
+	treatsSpent := 0
+	switch costCurrency {
+	case "gems":
+		gemsSpent = int(costAmount)
+	case "gold":
+		goldSpent = int(costAmount)
+	case "treats":
+		treatsSpent = int(costAmount)
+	}
+
 	EmitServerTelemetry(logger, userID, "economy_transaction", map[string]interface{}{
-		"action":        "upgrade",
-		"item_id":       fmt.Sprintf("class_%d", req.ClassID),
-		"cost_amount":   costAmount,
-		"cost_currency": costCurrency,
+		"action":       "upgrade",
+		"item_id":      fmt.Sprintf("class_%d", req.ClassID),
+		"gems_spent":   gemsSpent,
+		"gold_spent":   goldSpent,
+		"treats_spent": treatsSpent,
 	})
 
 	respBytes, err := json.Marshal(result)
