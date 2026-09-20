@@ -17,6 +17,8 @@ var validEventTypes = map[string]bool{
 	"match_started":           true,
 	"match_abandoned":         true,
 	"performance":             true,
+	"performance_baseline":    true,
+	"performance_breach":      true,
 	"crash":                   true,
 	"session_start":           true,
 	"session_end":             true,
