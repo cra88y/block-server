@@ -64,9 +64,9 @@ source = '''
     payload_str = slice!(payload_str, 0, 1800) + "\n...[TRUNCATED]"
   }
   msg = "🚨 **" + to_string!(.event_type) + "** | User: `" + to_string!(.user_id) + "`\n```json\n" + payload_str + "\n```"
-  . = {
-    "content": msg
-  }
+  
+  # Manually construct the JSON payload string to bypass Vector's array-batching json codec
+  . = "{\"content\": " + encode_json(msg) + "}"
 '''
 
 [sinks.discord_webhook]
@@ -74,8 +74,13 @@ type = "http"
 inputs = ["format_discord"]
 uri = "${DISCORD_WEBHOOK_URL}"
 method = "post"
-encoding.codec = "json"
 healthcheck.enabled = false
+
+[sinks.discord_webhook.encoding]
+codec = "text"
+
+[sinks.discord_webhook.request.headers]
+Content-Type = "application/json"
 
 [sinks.discord_webhook.batch]
 max_events = 1
