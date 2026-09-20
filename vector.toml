@@ -50,6 +50,10 @@ codec = "json"
 max_bytes = 5000000
 timeout_secs = 300
 
+[sinks.r2_lakehouse.buffer]
+type = "disk"
+max_size = 536870912 # 512MB
+
 [transforms.filter_discord_alerts]
 type = "filter"
 inputs = ["parse_json"]
