@@ -63,7 +63,7 @@ source = '''
   if length(payload_str) > 1800 {
     payload_str = slice!(payload_str, 0, 1800) + "\n...[TRUNCATED]"
   }
-  msg = "🚨 **" + .event_type + "** | User: `" + .user_id + "`\n```json\n" + payload_str + "\n```"
+  msg = "🚨 **" + to_string!(.event_type) + "** | User: `" + to_string!(.user_id) + "`\n```json\n" + payload_str + "\n```"
   . = {
     "content": msg
   }
