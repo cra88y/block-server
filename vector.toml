@@ -53,7 +53,7 @@ timeout_secs = 300
 [transforms.filter_discord_alerts]
 type = "filter"
 inputs = ["parse_json"]
-condition = 'includes(["crash", "non_fatal_error", "iap_purchase", "match_abandoned"], .event_type)'
+condition = 'includes(["crash", "non_fatal_error", "iap_purchase", "match_abandoned", "user_feedback"], .event_type)'
 
 [transforms.format_discord]
 type = "remap"
@@ -76,6 +76,9 @@ source = '''
   } else if event == "match_abandoned" {
     title_str = "wrn :: " + event
     color_int = 16377227 # yellow (#f9e2af)
+  } else if event == "user_feedback" {
+    title_str = "msg :: " + event
+    color_int = 13813982 # pink (#f5c2e7)
   }
   
   uid = string(.user_id) ?? "unknown"
@@ -84,19 +87,24 @@ source = '''
   state = string(.payload.ContextGameState) ?? "?"
   overlay = string(.payload.CurrentOverlay) ?? "none"
   
-  msg = string(.payload.Message) ?? string(.payload.Reason) ?? string(.payload.ExceptionType) ?? "none"
+  msg = string(.payload.Message) ?? string(.payload.Reason) ?? string(.payload.ExceptionType) ?? string(.payload.FeedbackText) ?? "none"
   if event == "iap_purchase" {
     msg = to_string!(.payload.product_id) + " -> " + to_string!(.payload.amount) + " " + to_string!(.payload.currency)
   }
   
-  if length(msg) > 1000 {
-    msg = slice!(msg, 0, 1000) + " ...[trunc]"
+  if length(msg) > 800 {
+    msg = slice!(msg, 0, 800) + " ...[trunc]"
   }
   
   breadcrumbs = array(.payload.Breadcrumbs) ?? []
   trc = "none"
   if length(breadcrumbs) > 0 {
     trc = join!(breadcrumbs, " > ")
+  }
+
+  stack = string(.payload.StackTrace) ?? ""
+  if length(stack) > 800 {
+    stack = slice!(stack, 0, 800) + " ...[trunc]"
   }
   
   # Build a dense, uniform code block
@@ -105,6 +113,10 @@ source = '''
   body = body + "env :: " + plat + " [" + app_ver + "]\n"
   body = body + "ctx :: " + state + " [" + overlay + "]\n"
   body = body + "trc :: " + trc
+  
+  if stack != "" {
+    body = body + "\nstk ::\n" + stack
+  }
   
   embed = {
     "title": "` " + title_str + " `",
