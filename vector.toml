@@ -59,14 +59,82 @@ condition = 'includes(["crash", "non_fatal_error", "iap_purchase", "match_abando
 type = "remap"
 inputs = ["filter_discord_alerts"]
 source = '''
-  payload_str = encode_json(.payload)
-  if length(payload_str) > 1800 {
-    payload_str = slice!(payload_str, 0, 1800) + "\n...[TRUNCATED]"
-  }
-  msg = "🚨 **" + to_string!(.event_type) + "** | User: `" + to_string!(.user_id) + "`\n```json\n" + payload_str + "\n```"
+  title_str = "🔔 " + to_string!(.event_type)
+  color_int = 3447003 # blue
   
-  # Manually construct the JSON payload string to bypass Vector's array-batching json codec
-  . = "{\"content\": " + encode_json(msg) + "}"
+  if .event_type == "crash" {
+    title_str = "💥 CRASH"
+    color_int = 16711680 # red
+  } else if .event_type == "non_fatal_error" {
+    title_str = "🚨 Non-Fatal Error"
+    color_int = 16753920 # orange
+  } else if .event_type == "iap_purchase" {
+    title_str = "💰 IAP Purchase"
+    color_int = 5763719 # green
+  } else if .event_type == "match_abandoned" {
+    title_str = "🏃 Match Abandoned"
+    color_int = 16776960 # yellow
+  }
+  
+  # Main message body
+  msg = string(.payload.Message) ?? string(.payload.Reason) ?? string(.payload.ExceptionType) ?? "Event triggered without message."
+  if .event_type == "iap_purchase" {
+    msg = "Purchased `" + to_string!(.payload.product_id) + "` for **" + to_string!(.payload.amount) + " " + to_string!(.payload.currency) + "**"
+  }
+  
+  if length(msg) > 1500 {
+    msg = slice!(msg, 0, 1500) + "...\n[TRUNCATED]"
+  }
+  
+  embed = {
+    "title": title_str,
+    "description": msg,
+    "color": color_int,
+    "fields": [
+      {
+        "name": "User ID",
+        "value": "`" + to_string!(.user_id) + "`",
+        "inline": false
+      }
+    ]
+  }
+  
+  app_ver = string(.payload.AppVersion) ?? ""
+  plat = string(.payload.Platform) ?? ""
+  if app_ver != "" || plat != "" {
+    embed.fields = push(embed.fields, {
+      "name": "Environment",
+      "value": plat + " v" + app_ver,
+      "inline": true
+    })
+  }
+
+  state = string(.payload.ContextGameState) ?? ""
+  overlay = string(.payload.CurrentOverlay) ?? "None"
+  if state != "" {
+    embed.fields = push(embed.fields, {
+      "name": "Game State",
+      "value": state + " (Modal: " + overlay + ")",
+      "inline": true
+    })
+  }
+
+  breadcrumbs = array(.payload.Breadcrumbs) ?? []
+  if length(breadcrumbs) > 0 {
+    embed.fields = push(embed.fields, {
+      "name": "Breadcrumb Trail",
+      "value": "`" + join!(breadcrumbs, " → ") + "`",
+      "inline": false
+    })
+  }
+
+  # Build the final Discord webhook schema
+  payload_obj = {
+    "embeds": [embed]
+  }
+
+  # Replace the entire event with the JSON string to bypass array-batching
+  . = encode_json(payload_obj)
 '''
 
 [sinks.discord_webhook]
