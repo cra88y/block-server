@@ -59,81 +59,63 @@ condition = 'includes(["crash", "non_fatal_error", "iap_purchase", "match_abando
 type = "remap"
 inputs = ["filter_discord_alerts"]
 source = '''
-  title_str = "🔔 " + to_string!(.event_type)
-  color_int = 3447003 # blue
+  event = to_string!(.event_type)
+  title_str = event
+  color_int = 4999756 # surface0 (#4c4f69)
   
-  if .event_type == "crash" {
-    title_str = "💥 CRASH"
-    color_int = 16711680 # red
-  } else if .event_type == "non_fatal_error" {
-    title_str = "🚨 Non-Fatal Error"
-    color_int = 16753920 # orange
-  } else if .event_type == "iap_purchase" {
-    title_str = "💰 IAP Purchase"
-    color_int = 5763719 # green
-  } else if .event_type == "match_abandoned" {
-    title_str = "🏃 Match Abandoned"
-    color_int = 16776960 # yellow
+  # Catppuccin Mocha Palette
+  if event == "crash" {
+    title_str = "ftl :: " + event
+    color_int = 16026746 # red (#f38ba8)
+  } else if event == "non_fatal_error" {
+    title_str = "err :: " + event
+    color_int = 16763261 # peach (#fab387)
+  } else if event == "iap_purchase" {
+    title_str = "usd :: " + event
+    color_int = 10933100 # green (#a6e3a1)
+  } else if event == "match_abandoned" {
+    title_str = "wrn :: " + event
+    color_int = 16377227 # yellow (#f9e2af)
   }
   
-  # Main message body
-  msg = string(.payload.Message) ?? string(.payload.Reason) ?? string(.payload.ExceptionType) ?? "Event triggered without message."
-  if .event_type == "iap_purchase" {
-    msg = "Purchased `" + to_string!(.payload.product_id) + "` for **" + to_string!(.payload.amount) + " " + to_string!(.payload.currency) + "**"
+  uid = string(.user_id) ?? "unknown"
+  app_ver = string(.payload.AppVersion) ?? "?"
+  plat = string(.payload.Platform) ?? "?"
+  state = string(.payload.ContextGameState) ?? "?"
+  overlay = string(.payload.CurrentOverlay) ?? "none"
+  
+  msg = string(.payload.Message) ?? string(.payload.Reason) ?? string(.payload.ExceptionType) ?? "none"
+  if event == "iap_purchase" {
+    msg = to_string!(.payload.product_id) + " -> " + to_string!(.payload.amount) + " " + to_string!(.payload.currency)
   }
   
-  if length(msg) > 1500 {
-    msg = slice!(msg, 0, 1500) + "...\n[TRUNCATED]"
+  if length(msg) > 1000 {
+    msg = slice!(msg, 0, 1000) + " ...[trunc]"
   }
+  
+  breadcrumbs = array(.payload.Breadcrumbs) ?? []
+  trc = "none"
+  if length(breadcrumbs) > 0 {
+    trc = join!(breadcrumbs, " > ")
+  }
+  
+  # Build a dense, uniform code block
+  body = "msg :: " + msg + "\n"
+  body = body + "usr :: " + uid + "\n"
+  body = body + "env :: " + plat + " [" + app_ver + "]\n"
+  body = body + "ctx :: " + state + " [" + overlay + "]\n"
+  body = body + "trc :: " + trc
   
   embed = {
-    "title": title_str,
-    "description": msg,
-    "color": color_int,
-    "fields": [
-      {
-        "name": "User ID",
-        "value": "`" + to_string!(.user_id) + "`",
-        "inline": false
-      }
-    ]
+    "title": "` " + title_str + " `",
+    "description": "```log\n" + body + "\n```",
+    "color": color_int
   }
   
-  app_ver = string(.payload.AppVersion) ?? ""
-  plat = string(.payload.Platform) ?? ""
-  if app_ver != "" || plat != "" {
-    embed.fields = push(embed.fields, {
-      "name": "Environment",
-      "value": plat + " v" + app_ver,
-      "inline": true
-    })
-  }
-
-  state = string(.payload.ContextGameState) ?? ""
-  overlay = string(.payload.CurrentOverlay) ?? "None"
-  if state != "" {
-    embed.fields = push(embed.fields, {
-      "name": "Game State",
-      "value": state + " (Modal: " + overlay + ")",
-      "inline": true
-    })
-  }
-
-  breadcrumbs = array(.payload.Breadcrumbs) ?? []
-  if length(breadcrumbs) > 0 {
-    embed.fields = push(embed.fields, {
-      "name": "Breadcrumb Trail",
-      "value": "`" + join!(breadcrumbs, " → ") + "`",
-      "inline": false
-    })
-  }
-
-  # Build the final Discord webhook schema
   payload_obj = {
     "embeds": [embed]
   }
-
-  # Replace the entire event with the JSON string to bypass array-batching
+  
   . = encode_json(payload_obj)
 '''
 
