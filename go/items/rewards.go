@@ -172,7 +172,7 @@ func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger run
 
 	for rewardType, amount := range rewards {
 		switch rewardType {
-		case "gold", "gems":
+		case "gold", "gems", "treats":
 			walletChanges[rewardType] = int64(amount)
 
 		case "abilities", "sprites":
