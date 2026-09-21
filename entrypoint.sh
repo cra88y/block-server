@@ -7,7 +7,7 @@ if [ -f "/certs/ca.crt" ]; then
   SSL_OPTS="sslmode=verify-full&sslrootcert=/certs/ca.crt"
 fi
 
-DB_ADDRESS="${DB_USER?DB_USER not set}:${DB_PASS?DB_PASS not set}@cockroachdb:${DB_PORT?DB_PORT not set}/${DB_NAME?DB_NAME not set}${SSL_OPTS:+?$SSL_OPTS}"
+DB_ADDRESS="${DB_USER?DB_USER not set}:${DB_PASS?DB_PASS not set}@block-db:5432/${DB_NAME?DB_NAME not set}${SSL_OPTS:+?$SSL_OPTS}"
 
 echo "Running database migrations..."
 /nakama/nakama migrate up --database.address "${DB_ADDRESS}"
