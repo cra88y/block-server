@@ -172,9 +172,6 @@ func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger run
 
 	for rewardType, amount := range rewards {
 		switch rewardType {
-		case "gold", "gems", "treats":
-			walletChanges[rewardType] = int64(amount)
-
 		case "abilities", "sprites":
 			var maxAbilitiesAvailable int
 			var maxSpritesAvailable int
@@ -202,15 +199,13 @@ func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger run
 
 			rewardIndex := int(amount) // amount is the position-based index
 
-			// Determine max available based on reward type
 			maxAvailable := maxAbilitiesAvailable
 			if rewardType == "sprites" {
 				maxAvailable = maxSpritesAvailable
 			}
 
-			// Bounds check: index must be within pool size
 			if rewardIndex >= maxAvailable {
-				// Silently cap - reward is out of bounds
+				// Client may submit an out-of-bounds index if UI desyncs; silently discard to prevent economy exploit without halting the batch.
 				continue
 			}
 
@@ -243,15 +238,16 @@ func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger run
 					Type: singularType,
 				})
 			}
+		default:
+			// Ockham's Passthrough: If it's not a complex item, route it to the wallet bucket.
+			walletChanges[rewardType] = int64(amount)
 		}
 	}
 
-	// Add wallet changes to pending
 	if len(walletChanges) > 0 {
 		pending.AddWalletUpdate(userID, walletChanges)
 	}
 
-	// Build payload
 	payload := notify.NewRewardPayload("level_up")
 	hasContent := false
 

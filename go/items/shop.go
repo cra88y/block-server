@@ -563,7 +563,10 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 	}
 	// Apple returns UUIDs in uppercase or lowercase. Compare case-insensitively.
 	if !strings.EqualFold(providerPayload.AppAccountToken, userID) {
-		logger.Error("%s CRITICAL: Identity Binding failure! appAccountToken (%s) != userID (%s)", logPrefix, providerPayload.AppAccountToken, userID)
+		LogCriticalAlert(ctx, logger, fmt.Sprintf("%s CRITICAL: Identity Binding failure!", logPrefix), nil, map[string]interface{}{
+			"appAccountToken": providerPayload.AppAccountToken,
+			"userID":          userID,
+		})
 		return "", errors.ErrInvalidInput
 	}
 
@@ -658,7 +661,9 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 	})
 
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
-		logger.Error("%s Failed to commit atomic IAP grant: %v", logPrefix, err)
+		LogCriticalAlert(ctx, logger, fmt.Sprintf("%s Failed to commit atomic IAP grant", logPrefix), err, map[string]interface{}{
+			"userID": userID,
+		})
 		return "", errors.ErrInternalError
 	}
 

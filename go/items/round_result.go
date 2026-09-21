@@ -176,7 +176,10 @@ func RpcReportRoundResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	}
 
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
-		logger.Error("Commit failed for user %s round %d: %v", userID, req.RoundNumber, err)
+		LogCriticalAlert(ctx, logger, "Commit failed for user round result", err, map[string]interface{}{
+			"userID": userID,
+			"roundNumber": req.RoundNumber,
+		})
 		return "", errors.ErrRoundCommit
 	}
 

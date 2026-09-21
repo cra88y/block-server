@@ -1,7 +1,7 @@
 // Package items — game economy, progression, and item RPCs.
 package items
 
-// logging helpers auto-tag lines with the calling user's ID.
+// Core logging decorators. Ensure all telemetry can be joined against user_id.
 
 import (
 	"context"
@@ -44,7 +44,6 @@ func LogWithUser(ctx context.Context, logger runtime.Logger, level, message stri
 		userID = uid
 	}
 
-	// Always include user ID if available
 	if userID != "" {
 		if fields == nil {
 			fields = make(map[string]interface{})
@@ -52,7 +51,6 @@ func LogWithUser(ctx context.Context, logger runtime.Logger, level, message stri
 		fields["user"] = userID
 	}
 
-	// Log with fields if we have any, otherwise log without
 	if len(fields) > 0 {
 		switch level {
 		case "debug":
@@ -96,6 +94,22 @@ func LogInfo(ctx context.Context, logger runtime.Logger, message string) {
 
 func LogWarn(ctx context.Context, logger runtime.Logger, message string) {
 	LogWithUser(ctx, logger, "warn", message, nil)
+}
+
+// LogCriticalAlert wraps the Nakama logger to inject a specific JSON field that triggers high-priority downstream alerting pipelines (e.g. Vector to Discord).
+// Use this ONLY when a physical invariant of the system is breached (e.g. data discard, transaction failure, startup parse failure).
+func LogCriticalAlert(ctx context.Context, logger runtime.Logger, msg string, err error, additionalFields map[string]interface{}) {
+	fields := make(map[string]interface{})
+	if additionalFields != nil {
+		for k, v := range additionalFields {
+			fields[k] = v
+		}
+	}
+	if err != nil {
+		fields["error"] = err.Error()
+	}
+	fields["_alert_critical"] = true
+	LogWithUser(ctx, logger, "error", msg, fields)
 }
 
 func LogDebug(ctx context.Context, logger runtime.Logger, message string) {

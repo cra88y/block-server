@@ -15,7 +15,7 @@ import (
 func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, initializer runtime.Initializer) error {
 	initStart := time.Now()
 	if err := items.LoadGameData(); err != nil {
-		logger.Error("Failed to load game data: %v", err)
+		items.LogCriticalAlert(ctx, logger, "Failed to load game data", err, nil)
 		return err
 	}
 	logger.Info("Loaded game data: %d pets, %d classes, %d backgrounds, %d styles, %d level trees",
