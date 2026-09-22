@@ -432,3 +432,61 @@ func RemoveItemFromInventory(ctx context.Context, nk runtime.NakamaModule, logge
 
 	return nil
 }
+
+// GetAccountMetadata reads the AccountMetadata from storage. Returns empty metadata if not found.
+func GetAccountMetadata(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) (*AccountMetadata, error) {
+	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{
+		{Collection: storageCollectionInventory, Key: storageKeyMetadata, UserID: userID},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read account metadata: %w", err)
+	}
+
+	meta := &AccountMetadata{StarterPackVersion: 0}
+	if len(objects) == 0 {
+		return meta, nil
+	}
+
+	if err := json.Unmarshal([]byte(objects[0].Value), meta); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal account metadata: %w", err)
+	}
+
+	return meta, nil
+}
+
+// SaveAccountMetadata writes the AccountMetadata to storage.
+func SaveAccountMetadata(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, meta *AccountMetadata) error {
+	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{
+		{Collection: storageCollectionInventory, Key: storageKeyMetadata, UserID: userID},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to read account metadata for save: %w", err)
+	}
+
+	var version string
+	if len(objects) > 0 {
+		version = objects[0].Version
+	}
+
+	value, err := json.Marshal(meta)
+	if err != nil {
+		return fmt.Errorf("failed to marshal account metadata: %w", err)
+	}
+
+	_, err = nk.StorageWrite(ctx, []*runtime.StorageWrite{
+		{
+			Collection:      storageCollectionInventory,
+			Key:             storageKeyMetadata,
+			UserID:          userID,
+			Value:           string(value),
+			PermissionRead:  2,
+			PermissionWrite: 0,
+			Version:         version,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to write account metadata: %w", err)
+	}
+
+	return nil
+}

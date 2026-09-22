@@ -3,6 +3,8 @@ package items
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
@@ -35,11 +37,19 @@ func AfterAuthorizeUserDevice(ctx context.Context, logger runtime.Logger, db *sq
 
 // InitializeUser sets up a new user's wallet, inventory, and equipment atomically.
 func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, out *api.Session) error {
+	userID, _ := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
+
 	if !out.Created {
+		// The Watermark Check: Migrates old accounts to the latest starter pack
+		configVersion := GetStarterPack().Version
+		meta, err := GetAccountMetadata(ctx, nk, logger, userID)
+		if err == nil && meta.StarterPackVersion < configVersion {
+			if err := MigrateStarterPack(ctx, nk, logger, userID, meta.StarterPackVersion, configVersion); err != nil {
+				logger.Error("Failed to migrate starter pack: %v", err)
+			}
+		}
 		return nil
 	}
-
-	userID, _ := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
 
 	username, _ := ctx.Value(runtime.RUNTIME_CTX_USERNAME).(string)
 
@@ -88,6 +98,18 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 	for _, w := range equipWrites {
 		pending.AddStorageWrite(w)
 	}
+
+	// Set StarterPackVersion for new accounts
+	meta := &AccountMetadata{StarterPackVersion: GetStarterPack().Version}
+	metaValue, _ := json.Marshal(meta)
+	pending.AddStorageWrite(&runtime.StorageWrite{
+		Collection:      storageCollectionInventory,
+		Key:             storageKeyMetadata,
+		UserID:          userID,
+		Value:           string(metaValue),
+		PermissionRead:  2,
+		PermissionWrite: 0,
+	})
 
 	// Commit everything atomically
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
@@ -181,3 +203,72 @@ func GiveAllItemsToUser(ctx context.Context, nk runtime.NakamaModule, logger run
 
 	return CommitPendingWrites(ctx, nk, logger, pending)
 }
+
+// MigrateStarterPack retroactively grants missing starter items for users who haven't received them due to a schema update.
+func MigrateStarterPack(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, currentVersion, newVersion int) error {
+	pack := GetStarterPack()
+	inv, err := GetUserInventory(ctx, nk, logger, userID)
+	if err != nil {
+		return fmt.Errorf("failed to get inventory: %w", err)
+	}
+
+	mutator := NewInventoryMutator()
+	
+	hasItem := func(slice []uint32, item uint32) bool {
+		for _, v := range slice {
+			if v == item {
+				return true
+			}
+		}
+		return false
+	}
+
+	addedAny := false
+	for _, id := range pack.Pets {
+		if !hasItem(inv.Pets, id) {
+			mutator.AddItem(storageKeyPet, id)
+			addedAny = true
+		}
+	}
+	for _, id := range pack.Classes {
+		if !hasItem(inv.Classes, id) {
+			mutator.AddItem(storageKeyClass, id)
+			addedAny = true
+		}
+	}
+	for _, id := range pack.Backgrounds {
+		if !hasItem(inv.Backgrounds, id) {
+			mutator.AddItem(storageKeyBackground, id)
+			addedAny = true
+		}
+	}
+	for _, id := range pack.PieceStyles {
+		if !hasItem(inv.PieceStyles, id) {
+			mutator.AddItem(storageKeyPieceStyle, id)
+			addedAny = true
+		}
+	}
+
+	if addedAny {
+		invPending, err := mutator.CompileWrites(ctx, nk, logger, userID)
+		if err != nil {
+			return err
+		}
+		if err := CommitPendingWrites(ctx, nk, logger, invPending); err != nil {
+			return err
+		}
+		logger.WithFields(map[string]interface{}{
+			"user": userID,
+			"old_version": currentVersion,
+			"new_version": newVersion,
+		}).Info("Migrated starter pack items successfully")
+	}
+
+	meta := &AccountMetadata{StarterPackVersion: newVersion}
+	if err := SaveAccountMetadata(ctx, nk, logger, userID, meta); err != nil {
+		return fmt.Errorf("failed to save account metadata after migration: %w", err)
+	}
+
+	return nil
+}
+

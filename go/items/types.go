@@ -23,6 +23,7 @@ type GameDataStruct struct {
 }
 
 type StarterPack struct {
+	Version     int      `json:"version"`
 	Pets        []uint32 `json:"pets"`
 	Classes     []uint32 `json:"classes"`
 	Backgrounds []uint32 `json:"backgrounds"`
@@ -88,8 +89,9 @@ const (
 	storageKeyPet              = "pets"         // [0,1,2]
 	storageKeyClass            = "classes"      // [0,1,2]
 	storageKeyBackground       = "backgrounds"  // [0,1,2,3]
-	storageKeyPieceStyle       = "piece_styles" // [0]
+	storageKeyPieceStyle       = "piece_styles" // [0,1,2]
 	storageKeyPlayer           = "player"       // Singleton — ID 0 is always the local player
+	storageKeyMetadata         = "metadata"     // {"starter_pack_version": 1}
 
 	storageCollectionEquipment   = "equipment"
 	storageCollectionProgression = "progression"
@@ -303,6 +305,10 @@ type ProgressionResponse struct {
 
 type InventoryData struct {
 	Items []uint32 `json:"items"`
+}
+
+type AccountMetadata struct {
+	StarterPackVersion int `json:"starter_pack_version"`
 }
 
 type EquipmentData struct {
