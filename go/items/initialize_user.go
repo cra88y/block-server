@@ -53,7 +53,7 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 
 	username, _ := ctx.Value(runtime.RUNTIME_CTX_USERNAME).(string)
 
-	// Emit authoritative account_created telemetry
+	// Anchor authoritative event to prevent spoofed client metrics.
 	EmitServerTelemetry(logger, userID, "account_created", map[string]interface{}{
 		"provider": username, // or other identifying metadata
 	})
@@ -66,10 +66,10 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		return err
 	}
 
-	// Collect all initialization writes
+	// Batch atomic writes to ensure safe ACID commit
 	pending := NewPendingWrites()
 
-	// Add wallet initialization
+	// Initial grant for new economy loop
 	walletChangeset := map[string]int64{
 		"gold":      500,
 		"gems":      100,
@@ -86,7 +86,7 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		return err
 	}
 
-	// Add default equipment writes
+	// Pre-equip defaults to bypass null checks in UI
 	equipWrites, err := PrepareEquipDefaults(ctx, nk, userID)
 	if err != nil {
 		logger.WithFields(map[string]interface{}{
@@ -99,7 +99,7 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		pending.AddStorageWrite(w)
 	}
 
-	// Set StarterPackVersion for new accounts
+	// Anchor account watermark to skip future migration diffs
 	meta := &AccountMetadata{StarterPackVersion: GetStarterPack().Version}
 	metaValue, _ := json.Marshal(meta)
 	pending.AddStorageWrite(&runtime.StorageWrite{
@@ -111,7 +111,7 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		PermissionWrite: 0,
 	})
 
-	// Commit everything atomically
+	// Commit atomic payload
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
 		logger.WithFields(map[string]interface{}{
 			"user":  userID,
@@ -127,7 +127,7 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 	return nil
 }
 
-// prepareAllItemGrants collects all item grant writes into pending.
+// prepareAllItemGrants compiles the entire catalog into a single pending write mutation.
 func prepareAllItemGrants(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, pending *PendingWrites) error {
 	mutator := NewInventoryMutator()
 

@@ -143,6 +143,17 @@ func RpcGetInventory(ctx context.Context, logger runtime.Logger, db *sql.DB, nk 
 		logger.Error("No user ID found in context for get inventory")
 		return "", errors.ErrNoUserIdFound
 	}
+
+	// Bypass missing AfterAuthorize hooks for clients using cached JWT sessions.
+	// Synchronizes the user's legacy array state with the latest Schema Watermark.
+	configVersion := GetStarterPack().Version
+	meta, errMeta := GetAccountMetadata(ctx, nk, logger, userID)
+	if errMeta == nil && meta.StarterPackVersion < configVersion {
+		if errMigrate := MigrateStarterPack(ctx, nk, logger, userID, meta.StarterPackVersion, configVersion); errMigrate != nil {
+			logger.Error("Failed to migrate starter pack during get_inventory: %v", errMigrate)
+		}
+	}
+
 	inventory, err := GetUserInventory(ctx, nk, logger, userID)
 	if err != nil {
 		logger.WithFields(map[string]interface{}{
