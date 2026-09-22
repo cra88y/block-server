@@ -148,6 +148,24 @@ func PrepareLevelRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 			rewards["piece_styles"] = val
 		}
 	}
+	if rewardData.Pets != "" {
+		val, err := ParseUint32Safely(rewardData.Pets, logger)
+		if err != nil {
+			return nil, mutations, errors.ErrParse
+		}
+		if val > 0 {
+			rewards["pets"] = val
+		}
+	}
+	if rewardData.Classes != "" {
+		val, err := ParseUint32Safely(rewardData.Classes, logger)
+		if err != nil {
+			return nil, mutations, errors.ErrParse
+		}
+		if val > 0 {
+			rewards["classes"] = val
+		}
+	}
 
 	pending, err := PrepareRewardItems(ctx, nk, logger, userID, rewards, itemType, itemID, &mutations, mutator)
 	if err != nil {
@@ -216,10 +234,14 @@ func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger run
 				mutations.GrantedSprites = append(mutations.GrantedSprites, uint32(rewardIndex))
 			}
 
-		case "backgrounds", "piece_styles":
+		case "backgrounds", "piece_styles", "pets", "classes":
 			storageKey := storageKeyBackground
 			if rewardType == "piece_styles" {
 				storageKey = storageKeyPieceStyle
+			} else if rewardType == "pets" {
+				storageKey = storageKeyPet
+			} else if rewardType == "classes" {
+				storageKey = storageKeyClass
 			}
 
 			singularType := rewardType
@@ -227,6 +249,10 @@ func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger run
 				singularType = "background"
 			} else if rewardType == "piece_styles" {
 				singularType = "piece_style"
+			} else if rewardType == "pets" {
+				singularType = "pet"
+			} else if rewardType == "classes" {
+				singularType = "class"
 			}
 
 			rewardIDs := GetRewardItemIDs(itemType, itemID, rewardType, amount)
@@ -449,6 +475,10 @@ func GetRewardItemIDs(itemType string, itemID uint32, rewardType string, amount 
 				ids = pet.BackgroundIDs
 			case "piece_styles":
 				ids = pet.StyleIDs
+			case "pets":
+				ids = pet.PetIDs
+			case "classes":
+				ids = pet.ClassIDs
 			}
 		}
 	case CategoryClass, storageKeyClass:
@@ -458,6 +488,10 @@ func GetRewardItemIDs(itemType string, itemID uint32, rewardType string, amount 
 				ids = class.BackgroundIDs
 			case "piece_styles":
 				ids = class.StyleIDs
+			case "pets":
+				ids = class.PetIDs
+			case "classes":
+				ids = class.ClassIDs
 			}
 		}
 	}

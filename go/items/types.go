@@ -39,6 +39,8 @@ type Pet struct {
 	LevelTreeName      string   `json:"levelTreeName"`
 	HealthCurveID      string   `json:"healthCurveId"`
 	AttackCurveID      string   `json:"attackCurveId"`
+	PetIDs             []uint32 `json:"petIds"`
+	ClassIDs           []uint32 `json:"classIds"`
 }
 
 type Class struct {
@@ -51,6 +53,8 @@ type Class struct {
 	LevelTreeName      string   `json:"levelTreeName"`
 	HealthCurveID      string   `json:"healthCurveId"`
 	AttackCurveID      string   `json:"attackCurveId"`
+	PetIDs             []uint32 `json:"petIds"`
+	ClassIDs           []uint32 `json:"classIds"`
 }
 
 type Background struct {
@@ -74,6 +78,8 @@ type LevelTree struct {
 		Backgrounds string `json:"backgrounds,omitempty"`
 		PieceStyles string `json:"piece_styles,omitempty"`
 		Sprites     string `json:"sprites,omitempty"`
+		Pets        string `json:"pets,omitempty"`
+		Classes     string `json:"classes,omitempty"`
 	} `json:"rewards"`
 }
 
