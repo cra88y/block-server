@@ -148,7 +148,9 @@ func RpcGetInventory(ctx context.Context, logger runtime.Logger, db *sql.DB, nk 
 	// Synchronizes the user's legacy array state with the latest Schema Watermark.
 	configVersion := GetStarterPack().Version
 	meta, errMeta := GetAccountMetadata(ctx, nk, logger, userID)
-	if errMeta == nil && meta.StarterPackVersion < configVersion {
+	if errMeta != nil {
+		logger.Warn("get_inventory: metadata read failed, migration skipped: %v", errMeta)
+	} else if meta.StarterPackVersion < configVersion {
 		if errMigrate := MigrateStarterPack(ctx, nk, logger, userID, meta.StarterPackVersion, configVersion); errMigrate != nil {
 			logger.Error("Failed to migrate starter pack during get_inventory: %v", errMigrate)
 		}

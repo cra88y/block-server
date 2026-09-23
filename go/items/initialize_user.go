@@ -43,7 +43,9 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		// The Watermark Check: Migrates old accounts to the latest starter pack
 		configVersion := GetStarterPack().Version
 		meta, err := GetAccountMetadata(ctx, nk, logger, userID)
-		if err == nil && meta.StarterPackVersion < configVersion {
+		if err != nil {
+			logger.Warn("InitializeUser: metadata read failed, migration skipped: %v", err)
+		} else if meta.StarterPackVersion < configVersion {
 			if err := MigrateStarterPack(ctx, nk, logger, userID, meta.StarterPackVersion, configVersion); err != nil {
 				logger.Error("Failed to migrate starter pack: %v", err)
 			}
