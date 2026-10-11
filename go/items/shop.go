@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -211,6 +212,51 @@ type PurchaseLogEntry struct {
 	WalletAfter map[string]int `json:"wallet_after,omitempty"`
 }
 
+// Fails closed to prevent unauthorized SKU testing during pre-release phases.
+func isAdmin(ctx context.Context, nk runtime.NakamaModule, userID string) bool {
+	account, err := nk.AccountGetId(ctx, userID)
+	if err != nil || account == nil || account.User == nil {
+		return false
+	}
+
+	var metadata map[string]interface{}
+	if err := json.Unmarshal([]byte(account.User.Metadata), &metadata); err != nil {
+		return false
+	}
+
+	if val, ok := metadata["is_admin"]; ok {
+		if b, ok := val.(bool); ok && b {
+			return true
+		}
+	}
+
+	if val, ok := metadata["role"]; ok {
+		if s, ok := val.(string); ok && s == "admin" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Inverts evaluation: hot path reads process env with 0 DB queries to prevent Postgres saturation during store spikes.
+func isIAPEnabledForUser(ctx context.Context, nk runtime.NakamaModule, userID string) bool {
+	if os.Getenv("ENABLE_IAP") == "true" {
+		return true
+	}
+	return isAdmin(ctx, nk, userID)
+}
+
+func getAvailableIAPProducts(ctx context.Context, nk runtime.NakamaModule, userID string) []IAPProduct {
+	if !isIAPEnabledForUser(ctx, nk, userID) {
+		return nil
+	}
+	if shopConfig == nil {
+		return nil
+	}
+	return shopConfig.IAPProducts
+}
+
 // RpcGetShopCatalog returns the current shop state
 func RpcGetShopCatalog(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
@@ -272,7 +318,7 @@ func RpcGetShopCatalog(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 		PermanentItems: permanent,
 		LootboxTiers:   lootboxPrices,
 		NextRotationAt: getNextRotationTime(),
-		IAPProducts:    shopConfig.IAPProducts,
+		IAPProducts:    getAvailableIAPProducts(ctx, nk, userID),
 	}
 
 	respBytes, err := json.Marshal(response)
@@ -524,6 +570,15 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 	// Structured log prefix for correlation
 	logPrefix := fmt.Sprintf("[IAP] tx=%s origTx=%s user=%s product=%s",
 		req.TransactionId, req.OriginalTransactionId, userID, req.ProductID)
+
+	if !isIAPEnabledForUser(ctx, nk, userID) {
+		logger.Warn("%s Purchase rejected: IAP not enabled for user", logPrefix)
+		EmitServerTelemetry(logger, userID, "iap_rejected", map[string]interface{}{
+			"product_id": req.ProductID,
+			"reason":     "gate_closed",
+		})
+		return "", errors.ErrItemNotAvailable
+	}
 
 	// 3. Validate receipt with Apple via Nakama
 	// persist=true — Nakama stores validated purchases in its DB for idempotency

@@ -57,7 +57,7 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 
 	// Anchor authoritative event to prevent spoofed client metrics.
 	EmitServerTelemetry(logger, userID, "account_created", map[string]interface{}{
-		"provider": username, // or other identifying metadata
+		"username": username,
 	})
 
 	metadata := map[string]interface{}{
