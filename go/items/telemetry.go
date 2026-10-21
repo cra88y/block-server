@@ -20,6 +20,7 @@ var validEventTypes = map[string]bool{
 	"performance_baseline":    true,
 	"performance_breach":      true,
 	"crash":                   true,
+	"app_exit":                true,
 	"session_start":           true,
 	"session_end":             true,
 	"ability_used":            true,
