@@ -11,11 +11,14 @@ import (
 
 // PendingTelemetry captures an economy event to emit on commit
 type PendingTelemetry struct {
-	UserID   string
-	Currency string
-	Amount   int64
-	Source   string
-	Sink     string
+	UserID    string
+	EventType string // "currency_gained" or "currency_spent"
+	Currency  string
+	Amount    int64
+	Source    string
+	Sink      string
+	Action    string
+	ItemID    string
 }
 
 // PendingWrites batches storage + wallet writes for a single atomic MultiUpdate commit.
@@ -42,6 +45,11 @@ func (pw *PendingWrites) AddStorageWrite(write *runtime.StorageWrite) {
 
 // AddWalletUpdate adds a wallet update to the pending batch
 func (pw *PendingWrites) AddWalletUpdate(userID string, changeset map[string]int64) {
+	pw.AddWalletUpdateWithContext(userID, changeset, "", "")
+}
+
+// AddWalletUpdateWithContext adds a wallet update with domain action and item attribution
+func (pw *PendingWrites) AddWalletUpdateWithContext(userID string, changeset map[string]int64, action string, itemID string) {
 	pw.WalletUpdates = append(pw.WalletUpdates, &runtime.WalletUpdate{
 		UserID:    userID,
 		Changeset: changeset,
@@ -51,19 +59,25 @@ func (pw *PendingWrites) AddWalletUpdate(userID string, changeset map[string]int
 	for currency, amount := range changeset {
 		if amount > 0 {
 			pw.Telemetry = append(pw.Telemetry, PendingTelemetry{
-				UserID:   userID,
-				Currency: currency,
-				Amount:   amount,
-				Source:   "system",
-				Sink:     "wallet",
+				UserID:    userID,
+				EventType: "currency_gained",
+				Currency:  currency,
+				Amount:    amount,
+				Source:    "system",
+				Sink:      "wallet",
+				Action:    action,
+				ItemID:    itemID,
 			})
 		} else if amount < 0 {
 			pw.Telemetry = append(pw.Telemetry, PendingTelemetry{
-				UserID:   userID,
-				Currency: currency,
-				Amount:   -amount,
-				Source:   "wallet",
-				Sink:     "system",
+				UserID:    userID,
+				EventType: "currency_spent",
+				Currency:  currency,
+				Amount:    -amount,
+				Source:    "wallet",
+				Sink:      "system",
+				Action:    action,
+				ItemID:    itemID,
 			})
 		}
 	}
@@ -71,7 +85,12 @@ func (pw *PendingWrites) AddWalletUpdate(userID string, changeset map[string]int
 
 // AddWalletDeduction is a convenience method for deducting currency
 func (pw *PendingWrites) AddWalletDeduction(userID string, currency string, amount int64) {
-	pw.AddWalletUpdate(userID, map[string]int64{currency: -amount})
+	pw.AddWalletDeductionWithContext(userID, currency, amount, "", "")
+}
+
+// AddWalletDeductionWithContext deducts currency with explicit action and item attribution
+func (pw *PendingWrites) AddWalletDeductionWithContext(userID string, currency string, amount int64, action string, itemID string) {
+	pw.AddWalletUpdateWithContext(userID, map[string]int64{currency: -amount}, action, itemID)
 }
 
 // Merge combines another PendingWrites into this one

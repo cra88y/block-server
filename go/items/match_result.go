@@ -19,10 +19,22 @@ const (
 	storageKeyCurrentMatch       = "current"
 )
 
+type ConsensusResult string
+
+const (
+	ConsensusResultOk         ConsensusResult = "ok"
+	ConsensusResultForfeitWin ConsensusResult = "forfeit_win"
+	ConsensusResultPending    ConsensusResult = "pending"
+	ConsensusResultResolved   ConsensusResult = "resolved"
+	ConsensusResultConflict   ConsensusResult = "conflict"
+)
+
 type ActiveMatch struct {
 	MatchID      string        `json:"match_id"`
 	StartTime    int64         `json:"start_time"`
 	OpponentID   string        `json:"opponent_id,omitempty"`
+	ClassID      *uint32       `json:"class_id,omitempty"`
+	PetID        *uint32       `json:"pet_id,omitempty"`
 	TokensBanked int           `json:"tokens_banked"`
 	Rounds       []RoundRecord `json:"rounds,omitempty"`
 	Version      string        `json:"-"`
@@ -30,16 +42,20 @@ type ActiveMatch struct {
 
 // MatchResultRecord stores a player's claimed result for consensus
 type MatchResultRecord struct {
-	UserID      string `json:"user_id"`
-	ClaimedWin  bool   `json:"claimed_win"`
-	Score       int    `json:"score"`
-	SubmittedAt int64  `json:"submitted_at"`
-	Resolved    bool   `json:"resolved"` // True when this player was the second submitter and resolved consensus
+	UserID      string  `json:"user_id"`
+	ClaimedWin  bool    `json:"claimed_win"`
+	Score       int     `json:"score"`
+	ClassID     *uint32 `json:"class_id,omitempty"`
+	PetID       *uint32 `json:"pet_id,omitempty"`
+	SubmittedAt int64   `json:"submitted_at"`
+	Resolved    bool    `json:"resolved"` // True when this player was the second submitter and resolved consensus
 }
 
 type NotifyMatchStartRequest struct {
-	MatchID    string `json:"match_id"`
-	OpponentID string `json:"opponent_id,omitempty"`
+	MatchID    string  `json:"match_id"`
+	OpponentID string  `json:"opponent_id,omitempty"`
+	ClassID    *uint32 `json:"class_id,omitempty"`
+	PetID      *uint32 `json:"pet_id,omitempty"`
 }
 
 // RpcNotifyMatchStart records the start of a match for validation
@@ -64,6 +80,8 @@ func RpcNotifyMatchStart(ctx context.Context, logger runtime.Logger, db *sql.DB,
 		MatchID:    req.MatchID,
 		StartTime:  time.Now().UnixMilli(),
 		OpponentID: req.OpponentID,
+		ClassID:    req.ClassID,
+		PetID:      req.PetID,
 		Rounds:     make([]RoundRecord, 0),
 	}
 
@@ -163,7 +181,7 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	validateRounds(ctx, nk, &req, userID, logger, activeMatch)
 
 	// Consensus check (unified path: solo short-circuits in resolveMatchConsensus)
-	consensusResult, err := resolveMatchConsensus(ctx, nk, logger, userID, activeMatch.OpponentID, req.MatchID, req.Won, req.FinalScore, req.OpponentForfeited)
+	oppRecord, consensusResult, err := resolveMatchConsensus(ctx, nk, logger, userID, activeMatch.OpponentID, req.MatchID, req.Won, req.FinalScore, req.OpponentForfeited, req.EquippedClassID, req.EquippedPetID)
 	if err != nil {
 		logger.Warn("Consensus check failed for user %s: %v", userID, err)
 		return "", err
@@ -174,8 +192,20 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	var opponentIDForDeferred string
 	var opponentWonForDeferred bool
 
+	var oppClassID *uint32
+	var oppPetID *uint32
+	if !isSolo && activeMatch.OpponentID != "" {
+		if oppRecord != nil && oppRecord.ClassID != nil {
+			oppClassID = oppRecord.ClassID
+			oppPetID = oppRecord.PetID
+		} else if oppActive, getErr := getActiveMatch(ctx, nk, activeMatch.OpponentID); getErr == nil && oppActive != nil && oppActive.MatchID == req.MatchID {
+			oppClassID = oppActive.ClassID
+			oppPetID = oppActive.PetID
+		}
+	}
+
 	switch consensusResult {
-	case "pending":
+	case ConsensusResultPending:
 		actualWon = false
 		logger.Info("Match %s: user %s is first submitter, granting participation rewards", req.MatchID, userID)
 
@@ -194,26 +224,33 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 			}(activeMatch.OpponentID)
 		}
 
-	case "resolved":
+	case ConsensusResultResolved:
 		actualWon = false
 		logger.Info("Match %s: user %s arrived late, rewards already resolved by opponent", req.MatchID, userID)
 
-	case "conflict":
+	case ConsensusResultConflict:
 		logger.Warn("Match %s: Both players claimed victory. Voiding win for user %s", req.MatchID, userID)
 		actualWon = false
 
-	case "ok", "forfeit_win":
+	case ConsensusResultOk, ConsensusResultForfeitWin:
 		actualWon = req.Won
-		if consensusResult == "ok" && activeMatch.OpponentID != "" {
+		if consensusResult == ConsensusResultOk && activeMatch.OpponentID != "" {
 			opponentIDForDeferred = activeMatch.OpponentID
 			opponentWonForDeferred = !req.Won
 		}
-		if consensusResult == "forfeit_win" && activeMatch.OpponentID != "" {
-			abandonData, _ := json.Marshal(map[string]interface{}{
+		if consensusResult == ConsensusResultForfeitWin && activeMatch.OpponentID != "" {
+			abandonMap := map[string]interface{}{
 				"match_id":    req.MatchID,
 				"reporter_id": userID,
 				"reason":      "forfeit_win_claimed",
-			})
+			}
+			if oppClassID != nil {
+				abandonMap["local_class_id"] = *oppClassID
+			}
+			if oppPetID != nil {
+				abandonMap["local_pet_id"] = *oppPetID
+			}
+			abandonData, _ := json.Marshal(abandonMap)
 			abandonEvent := TelemetryEvent{
 				EventType: "match_abandoned",
 				Timestamp: float64(time.Now().UnixNano()) / 1e9,
@@ -238,8 +275,8 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 
 	// Process rewards atomically, then clean up active match
 	result, err := processMatchRewards(ctx, nk, logger, userID, &req, isSolo, activeMatch)
-	if err == nil {
-		// Emit authoritative telemetry metric (match_completed)
+	if err == nil && (consensusResult == ConsensusResultOk || consensusResult == ConsensusResultForfeitWin || isSolo) {
+		// Emit authoritative telemetry metric (match_completed) only upon terminal consensus or solo
 		go func() {
 			winnerID := activeMatch.OpponentID
 			loserID := userID
@@ -259,7 +296,7 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 				gameMode = "solo"
 			}
 
-			telemetryData, _ := json.Marshal(map[string]interface{}{
+			telemetryMap := map[string]interface{}{
 				"$type":           "MatchCompletedMetric",
 				"MatchId":         req.MatchID,
 				"WinnerId":        winnerID,
@@ -275,7 +312,24 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 				"PiecesPlaced":    req.PiecesPlaced,
 				"LocalClassId":    req.EquippedClassID,
 				"LocalPetId":      req.EquippedPetID,
-			})
+			}
+
+			// Only emit opponent/symmetric class analytics in 1v1 multiplayer when opponent loadout is verified
+			if !isSolo && oppClassID != nil {
+				telemetryMap["OpponentClassId"] = *oppClassID
+				if oppPetID != nil {
+					telemetryMap["OpponentPetId"] = *oppPetID
+				}
+				if actualWon {
+					telemetryMap["WinnerClassId"] = req.EquippedClassID
+					telemetryMap["LoserClassId"] = *oppClassID
+				} else {
+					telemetryMap["WinnerClassId"] = *oppClassID
+					telemetryMap["LoserClassId"] = req.EquippedClassID
+				}
+			}
+
+			telemetryData, _ := json.Marshal(telemetryMap)
 
 			telemetryEvent := TelemetryEvent{
 				EventType: "match_completed",
@@ -406,7 +460,10 @@ const (
 	errorCodeOpponentSubmitted = "OPPONENT_SUBMITTED"
 )
 
-func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, matchID string) (*ActiveMatch, error) {
+func getActiveMatch(ctx context.Context, nk runtime.NakamaModule, userID string) (*ActiveMatch, error) {
+	if userID == "" {
+		return nil, errors.ErrInvalidInput
+	}
 	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
 		Collection: storageCollectionActiveMatch,
 		Key:        storageKeyCurrentMatch,
@@ -415,7 +472,6 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 	if err != nil {
 		return nil, errors.ErrCouldNotReadStorage
 	}
-
 	if len(objects) == 0 {
 		return nil, errors.ErrNoActiveMatch
 	}
@@ -425,6 +481,14 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 		return nil, errors.ErrUnmarshal
 	}
 	activeMatch.Version = objects[0].Version
+	return &activeMatch, nil
+}
+
+func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, matchID string) (*ActiveMatch, error) {
+	activeMatch, err := getActiveMatch(ctx, nk, userID)
+	if err != nil {
+		return nil, err
+	}
 
 	if activeMatch.MatchID != matchID {
 		return nil, errors.ErrMatchIDMismatch
@@ -433,7 +497,7 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 	if time.Now().UnixMilli()-activeMatch.StartTime < minMatchDurationMs {
 		// Return the activeMatch alongside the error so the caller can apply semantic override.
 		// If the caller has round records proving meaningful play, it may proceed despite short duration.
-		return &activeMatch, errors.ErrMatchTooShort
+		return activeMatch, errors.ErrMatchTooShort
 	}
 
 	// Apply a mode-specific stale-session ceiling.
@@ -444,10 +508,10 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 	}
 	if time.Now().UnixMilli()-activeMatch.StartTime > maxDuration {
 		// Return activeMatch alongside error so caller can notify opponent before cleanup.
-		return &activeMatch, errors.ErrStaleMatchExpired
+		return activeMatch, errors.ErrStaleMatchExpired
 	}
 
-	return &activeMatch, nil
+	return activeMatch, nil
 }
 
 // Write-first single-resolution consensus.
@@ -460,16 +524,18 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 //	forfeit_win : Opponent abandoned. Full rewards immediately.
 //	resolved    : Late arrival (opponent resolved). Participation-only.
 //	conflict    : Both claimed win. Both downgraded.
-func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, opponentID string, matchID string, claimedWin bool, score int, opponentForfeited bool) (string, error) {
+func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, opponentID string, matchID string, claimedWin bool, score int, opponentForfeited bool, classID uint32, petID uint32) (*MatchResultRecord, ConsensusResult, error) {
 	if opponentID == "" {
-		return "ok", nil // Solo — no consensus needed, caller handles isSolo reward reduction
+		return nil, ConsensusResultOk, nil // Solo — no consensus needed, caller handles isSolo reward reduction
 	}
 
-	// Step 1: Write our claim FIRST (unconditional)
+	// Step 1: Write our claim FIRST (unconditional) with authoritative loadouts for persistence
 	myRecord := MatchResultRecord{
 		UserID:      userID,
 		ClaimedWin:  claimedWin,
 		Score:       score,
+		ClassID:     &classID,
+		PetID:       &petID,
 		SubmittedAt: time.Now().UnixMilli(),
 		Resolved:    false,
 	}
@@ -484,7 +550,7 @@ func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger 
 		PermissionWrite: 0,
 	}})
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 
 	// If opponent forfeited, bypass waiting for their claim and resolve unilaterally
@@ -500,7 +566,7 @@ func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger 
 			PermissionRead:  0,
 			PermissionWrite: 0,
 		}})
-		return "forfeit_win", nil
+		return nil, ConsensusResultForfeitWin, nil
 	}
 
 	// Step 2: Read opponent's claim AFTER writing ours
@@ -511,24 +577,24 @@ func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger 
 	}})
 	if err != nil || len(opponentResults) == 0 {
 		// First submitter: opponent hasn't written yet
-		return "pending", nil
+		return nil, ConsensusResultPending, nil
 	}
 
 	var opponentRecord MatchResultRecord
 	if err := json.Unmarshal([]byte(opponentResults[0].Value), &opponentRecord); err != nil {
-		return "pending", nil
+		return nil, ConsensusResultPending, nil
 	}
 
 	// If opponent's record has Resolved=true, they were the second submitter and already resolved.
 	// Our deferred win bonus (if applicable) was already pushed via notify.SendReward.
 	if opponentRecord.Resolved {
-		return "resolved", nil
+		return &opponentRecord, ConsensusResultResolved, nil
 	}
 
 	// Conflict: both claimed win simultaneously
 	if claimedWin && opponentRecord.ClaimedWin {
 		logger.Warn("CONFLICT: Match %s - both %s and %s claimed victory", matchID, userID, opponentID)
-		return "conflict", nil
+		return &opponentRecord, ConsensusResultConflict, nil
 	}
 
 	// Mark local user record as resolved.
@@ -545,7 +611,7 @@ func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger 
 		PermissionWrite: 0,
 	}})
 
-	return "ok", nil
+	return &opponentRecord, ConsensusResultOk, nil
 	// TODO(ATOM-D1): Cross-audit RoundRecords post-consensus.
 	// Validate playerA.round[N].PlayerWon == !playerB.round[N].PlayerWon.
 }

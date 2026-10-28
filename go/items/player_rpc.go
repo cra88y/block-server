@@ -522,7 +522,7 @@ func RpcUsePetTreat(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 	}
 
 	// Deduct from dynamic cost currency in one wallet write
-	pending.AddWalletDeduction(userID, costCurrency, costAmount)
+	pending.AddWalletDeductionWithContext(userID, costCurrency, costAmount, "use_pet_treat", strconv.FormatUint(uint64(req.PetID), 10))
 
 	// Commit all writes atomically via MultiUpdate
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
@@ -678,7 +678,7 @@ func RpcUseGoldForClassXP(ctx context.Context, logger runtime.Logger, db *sql.DB
 	}
 
 	// Add currency deduction to pending writes
-	pending.AddWalletDeduction(userID, costCurrency, costAmount)
+	pending.AddWalletDeductionWithContext(userID, costCurrency, costAmount, "use_gold_for_class_xp", strconv.FormatUint(uint64(req.ClassID), 10))
 
 	// Commit all writes atomically via MultiUpdate
 	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {

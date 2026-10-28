@@ -407,12 +407,12 @@ func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB,
 		if wallet["gems"] < int64(item.Price.Gems) {
 			return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrInsufficientGems)
 		}
-		pending.AddWalletDeduction(userID, "gems", int64(item.Price.Gems))
+		pending.AddWalletDeductionWithContext(userID, "gems", int64(item.Price.Gems), "shop_purchase", req.ShopItemID)
 	} else if item.Price.Gold > 0 {
 		if wallet["gold"] < int64(item.Price.Gold) {
 			return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrInsufficientGold)
 		}
-		pending.AddWalletDeduction(userID, "gold", int64(item.Price.Gold))
+		pending.AddWalletDeductionWithContext(userID, "gold", int64(item.Price.Gold), "shop_purchase", req.ShopItemID)
 	}
 
 	// type → storage key
@@ -514,7 +514,7 @@ func RpcPurchaseLootbox(ctx context.Context, logger runtime.Logger, db *sql.DB, 
 	pending := NewPendingWrites()
 
 	// Gem deduction
-	pending.AddWalletDeduction(userID, "gems", int64(price))
+	pending.AddWalletDeductionWithContext(userID, "gems", int64(price), "buy_lootbox", string(req.Tier))
 
 	// Lootbox creation
 	lootbox, lootboxWrite, err := PrepareCreateLootbox(userID, req.Tier)
@@ -672,13 +672,13 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 	pending := NewPendingWrites()
 	
 	if product.Gems > 0 {
-		pending.AddWalletUpdate(userID, map[string]int64{"gems": int64(product.Gems)})
+		pending.AddWalletUpdateWithContext(userID, map[string]int64{"gems": int64(product.Gems)}, "iap_grant", req.ProductID)
 	}
 
 	mutator := NewInventoryMutator()
 	for _, reward := range product.Rewards {
 		if reward.Type == "currency" {
-			pending.AddWalletUpdate(userID, map[string]int64{reward.ID: int64(reward.Amount)})
+			pending.AddWalletUpdateWithContext(userID, map[string]int64{reward.ID: int64(reward.Amount)}, "iap_grant", req.ProductID)
 		} else if reward.Type == "lootbox" {
 			for i := 0; i < reward.Amount; i++ {
 				_, boxWrite, err := PrepareCreateLootbox(userID, reward.ID)
@@ -1032,7 +1032,7 @@ func RpcRevokeIAPPurchase(ctx context.Context, logger runtime.Logger, db *sql.DB
 	}
 
 	if gemDeduction > 0 {
-		pending.AddWalletDeduction(userID, "gems", int64(gemDeduction))
+		pending.AddWalletDeductionWithContext(userID, "gems", int64(gemDeduction), "revoke_purchase", grant.ProductId)
 	}
 
 	mutator := NewInventoryMutator()

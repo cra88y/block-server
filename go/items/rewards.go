@@ -444,21 +444,31 @@ func CommitPendingWrites(ctx context.Context, nk runtime.NakamaModule, logger ru
 	}
 
 	for _, t := range pending.Telemetry {
-		if t.Amount > 0 {
-			EmitServerTelemetry(logger, t.UserID, "currency_gained", map[string]interface{}{
-				"currency": t.Currency,
-				"amount":   t.Amount,
-				"source":   t.Source,
-				"sink":     t.Sink,
-			})
-		} else {
-			EmitServerTelemetry(logger, t.UserID, "currency_spent", map[string]interface{}{
-				"currency": t.Currency,
-				"amount":   t.Amount,
-				"source":   t.Source,
-				"sink":     t.Sink,
-			})
+		eventType := t.EventType
+		amount := t.Amount
+		if eventType == "" {
+			if amount < 0 {
+				eventType = "currency_spent"
+				amount = -amount
+			} else {
+				eventType = "currency_gained"
+			}
 		}
+
+		payload := map[string]interface{}{
+			"currency": t.Currency,
+			"amount":   amount,
+			"source":   t.Source,
+			"sink":     t.Sink,
+		}
+		if t.Action != "" {
+			payload["action"] = t.Action
+		}
+		if t.ItemID != "" {
+			payload["item_id"] = t.ItemID
+		}
+
+		EmitServerTelemetry(logger, t.UserID, eventType, payload)
 	}
 
 	return nil
