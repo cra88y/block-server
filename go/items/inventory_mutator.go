@@ -168,31 +168,58 @@ func (m *InventoryMutator) CompileWrites(ctx context.Context, nk runtime.NakamaM
 		}
 	}
 
-	// 4. Apply progression initializations for new pets/classes
-	for progKey, itemIDs := range m.progressionInits {
-		for _, id := range itemIDs {
-			category := storageKeyClass
-			if progKey == ProgressionKeyPet {
-				category = storageKeyPet
+	// 4. Apply progression initializations for new pets/classes safely
+	if len(m.progressionInits) > 0 {
+		var progReads []*runtime.StorageRead
+		for progKey, itemIDs := range m.progressionInits {
+			for _, id := range itemIDs {
+				progReads = append(progReads, &runtime.StorageRead{
+					Collection: storageCollectionProgression,
+					Key:        progKey + fmt.Sprintf("%d", id),
+					UserID:     userID,
+				})
 			}
-			
-			treeName, _ := GetLevelTreeName(category, id)
-			prog := DefaultProgression(treeName)
-			value, err := json.Marshal(prog)
-			if err != nil {
-				return nil, fmt.Errorf("CRITICAL: failed to marshal progression init for %s %d: %w", progKey, id, err)
+		}
+
+		existingProgObjs, err := nk.StorageRead(ctx, progReads)
+		existingProgMap := make(map[string]bool)
+		if err == nil {
+			for _, obj := range existingProgObjs {
+				if obj != nil && len(obj.Value) > 0 {
+					existingProgMap[obj.Key] = true
+				}
 			}
-			
-			key := progKey + fmt.Sprintf("%d", id)
-			pending.AddStorageWrite(&runtime.StorageWrite{
+		}
+
+		for progKey, itemIDs := range m.progressionInits {
+			for _, id := range itemIDs {
+				key := progKey + fmt.Sprintf("%d", id)
+				if existingProgMap[key] {
+					continue
+				}
+
+				category := storageKeyClass
+				if progKey == ProgressionKeyPet {
+					category = storageKeyPet
+				}
+
+				treeName, _ := GetLevelTreeName(category, id)
+				prog := DefaultProgression(treeName)
+				value, err := json.Marshal(prog)
+				if err != nil {
+					return nil, fmt.Errorf("CRITICAL: failed to marshal progression init for %s %d: %w", progKey, id, err)
+				}
+
+				pending.AddStorageWrite(&runtime.StorageWrite{
 					Collection:      storageCollectionProgression,
 					Key:             key,
 					UserID:          userID,
 					Value:           string(value),
 					PermissionRead:  2,
 					PermissionWrite: 0,
-					Version:         "*", // Enforce Insert-Only to protect existing progression
+					Version:         "*", // Enforce Insert-Only on verified uninitialized rows
 				})
+			}
 		}
 	}
 

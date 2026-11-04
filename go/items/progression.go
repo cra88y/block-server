@@ -231,7 +231,7 @@ func VerifyAndFixUserProgression(ctx context.Context, nk runtime.NakamaModule, l
 		return nil, fmt.Errorf("failed to get user progression: %w", err)
 	}
 
-	petFixes, err := verifyAndFixItemProgression(ctx, nk, logger, userID, storageKeyPet, inventory.Pets, existingProgression.Pets, ProgressionKeyPet)
+	petFixes, err := verifyAndFixItemProgression(ctx, nk, logger, userID, storageKeyPet, inventory.Pets, existingProgression.Pets, ProgressionKeyPet, inventory)
 	if err != nil {
 		logVerificationIssue(ctx, logger, "error", "Failed to verify pet progression",
 			"pet", 0, userID, "verify_pet_progression", err)
@@ -239,7 +239,7 @@ func VerifyAndFixUserProgression(ctx context.Context, nk runtime.NakamaModule, l
 		report.PetRepairs = petFixes
 	}
 
-	classFixes, err := verifyAndFixItemProgression(ctx, nk, logger, userID, storageKeyClass, inventory.Classes, existingProgression.Classes, ProgressionKeyClass)
+	classFixes, err := verifyAndFixItemProgression(ctx, nk, logger, userID, storageKeyClass, inventory.Classes, existingProgression.Classes, ProgressionKeyClass, inventory)
 	if err != nil {
 		logVerificationIssue(ctx, logger, "error", "Failed to verify class progression",
 			"class", 0, userID, "verify_class_progression", err)
@@ -266,12 +266,32 @@ func VerifyAndFixUserProgression(ctx context.Context, nk runtime.NakamaModule, l
 }
 
 func verifyAndFixItemProgression(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string,
-	itemType string, inventoryItems []uint32, existingProgression map[uint32]ItemProgression, progressionKeyPrefix string) (map[uint32]string, error) {
+	itemType string, inventoryItems []uint32, existingProgression map[uint32]ItemProgression, progressionKeyPrefix string, inventory *InventoryResponse) (map[uint32]string, error) {
 
 	repairs := make(map[uint32]string)
+	if inventory == nil {
+		inventory = &InventoryResponse{}
+	}
 	var progressionRecords []struct {
 		ProgressionKey string
 		ItemID         uint32
+	}
+
+	ownedPets := make(map[uint32]struct{}, len(inventory.Pets))
+	for _, id := range inventory.Pets {
+		ownedPets[id] = struct{}{}
+	}
+	ownedClasses := make(map[uint32]struct{}, len(inventory.Classes))
+	for _, id := range inventory.Classes {
+		ownedClasses[id] = struct{}{}
+	}
+	ownedBackgrounds := make(map[uint32]struct{}, len(inventory.Backgrounds))
+	for _, id := range inventory.Backgrounds {
+		ownedBackgrounds[id] = struct{}{}
+	}
+	ownedStyles := make(map[uint32]struct{}, len(inventory.PieceStyles))
+	for _, id := range inventory.PieceStyles {
+		ownedStyles[id] = struct{}{}
 	}
 
 	for _, itemID := range inventoryItems {
@@ -371,13 +391,23 @@ func verifyAndFixItemProgression(ctx context.Context, nk runtime.NakamaModule, l
 
 			for lvl := 1; lvl <= prog.Level; lvl++ {
 				lvlStr := strconv.Itoa(lvl)
-				state, hasState := prog.TierStates[lvlStr]
-				if !hasState || state.Status == "unclaimed" {
-					continue // Not claimed yet or no reward
-				}
-
 				rewardData, hasReward := tree.Rewards[lvlStr]
 				if !hasReward {
+					continue
+				}
+
+				state, hasState := prog.TierStates[lvlStr]
+				if !hasState {
+					// Level surpassed but no tier state recorded; materialize as unclaimed
+					prog.TierStates[lvlStr] = TierState{
+						Status:     "unclaimed",
+						UnlockedAt: time.Now().UnixMilli(),
+					}
+					needsSave = true
+					continue
+				}
+
+				if state.Status == "unclaimed" {
 					continue
 				}
 
@@ -396,9 +426,35 @@ func verifyAndFixItemProgression(ctx context.Context, nk runtime.NakamaModule, l
 					}
 				}
 
+				// Symmetrically audit non-fungible inventory unlocks
+				checkMissingItem := func(rewardStr, rType string, owned map[uint32]struct{}) bool {
+					if rewardStr == "" {
+						return false
+					}
+					val, err := ParseUint32Safely(rewardStr, logger)
+					if err != nil || val == 0 {
+						return false
+					}
+					for _, id := range GetRewardItemIDs(itemType, itemID, rType, val) {
+						if _, exists := owned[id]; !exists {
+							return true
+						}
+					}
+					return false
+				}
+
+				if checkMissingItem(rewardData.Pets, "pets", ownedPets) ||
+					checkMissingItem(rewardData.Classes, "classes", ownedClasses) ||
+					checkMissingItem(rewardData.Backgrounds, "backgrounds", ownedBackgrounds) ||
+					checkMissingItem(rewardData.PieceStyles, "piece_styles", ownedStyles) {
+					missingReward = true
+				}
+
 				if missingReward {
-					// We migrated this to claimed, but the user actually never got the reward. Revert to unclaimed.
-					prog.TierStates[lvlStr] = TierState{Status: "unclaimed"}
+					prog.TierStates[lvlStr] = TierState{
+						Status:     "unclaimed",
+						UnlockedAt: time.Now().UnixMilli(),
+					}
 					needsSave = true
 				}
 			}

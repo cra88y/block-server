@@ -17,7 +17,18 @@ import (
 const (
 	storageCollectionActiveMatch = "active_match"
 	storageKeyCurrentMatch       = "current"
+	storageCollectionSettlement  = "match_settlement"
+	systemUserID                 = "00000000-0000-0000-0000-000000000000"
 )
+
+type MatchSettlement struct {
+	MatchID    string             `json:"match_id"`
+	Status     ConsensusResult    `json:"status"`
+	CreatedAt  int64              `json:"created_at"`
+	SubmitterA MatchResultRecord  `json:"submitter_a"`
+	SubmitterB *MatchResultRecord `json:"submitter_b,omitempty"`
+	WinnerID   string             `json:"winner_id,omitempty"`
+}
 
 type ConsensusResult string
 
@@ -181,7 +192,7 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	validateRounds(ctx, nk, &req, userID, logger, activeMatch)
 
 	// Consensus check (unified path: solo short-circuits in resolveMatchConsensus)
-	oppRecord, consensusResult, err := resolveMatchConsensus(ctx, nk, logger, userID, activeMatch.OpponentID, req.MatchID, req.Won, req.FinalScore, req.OpponentForfeited, req.EquippedClassID, req.EquippedPetID)
+	oppRecord, consensusResult, err := resolveMatchConsensus(ctx, nk, logger, userID, activeMatch, &req)
 	if err != nil {
 		logger.Warn("Consensus check failed for user %s: %v", userID, err)
 		return "", err
@@ -348,7 +359,7 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		return "", err
 	}
 
-	// Second submitter: push deferred gold win bonus to first submitter
+	// Second submitter: push deferred XP win bonus to first submitter
 	if opponentIDForDeferred != "" {
 		deferredReward, err := processDeferredWinBonus(ctx, nk, logger, opponentIDForDeferred, opponentWonForDeferred)
 		if err != nil {
@@ -451,8 +462,6 @@ const (
 	// Use a 1-hour ceiling purely to clean up sessions from crashed/uninstalled clients.
 	maxSoloMatchDurationMs = 60 * 60 * 1000 // 1 hour
 
-	storageCollectionResults = "match_results"
-
 	// errorCode constants: set in RewardMeta.ErrorCode when a validation gate rejects the match.
 	// The client routes to distinct UI messages. Empty string = normal processing.
 	errorCodeMatchTooShort     = "MATCH_TOO_SHORT"
@@ -524,96 +533,178 @@ func validateActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger ru
 //	forfeit_win : Opponent abandoned. Full rewards immediately.
 //	resolved    : Late arrival (opponent resolved). Participation-only.
 //	conflict    : Both claimed win. Both downgraded.
-func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, opponentID string, matchID string, claimedWin bool, score int, opponentForfeited bool, classID uint32, petID uint32) (*MatchResultRecord, ConsensusResult, error) {
-	if opponentID == "" {
+func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string, activeMatch *ActiveMatch, req *MatchResultRequest) (*MatchResultRecord, ConsensusResult, error) {
+	if activeMatch == nil || activeMatch.OpponentID == "" {
 		return nil, ConsensusResultOk, nil // Solo — no consensus needed, caller handles isSolo reward reduction
 	}
 
-	// Step 1: Write our claim FIRST (unconditional) with authoritative loadouts for persistence
 	myRecord := MatchResultRecord{
 		UserID:      userID,
-		ClaimedWin:  claimedWin,
-		Score:       score,
-		ClassID:     &classID,
-		PetID:       &petID,
+		ClaimedWin:  req.Won,
+		Score:       req.FinalScore,
+		ClassID:     &req.EquippedClassID,
+		PetID:       &req.EquippedPetID,
 		SubmittedAt: time.Now().UnixMilli(),
 		Resolved:    false,
 	}
-	myRecordBytes, _ := json.Marshal(myRecord)
 
-	_, err := nk.StorageWrite(ctx, []*runtime.StorageWrite{{
-		Collection:      storageCollectionResults,
-		Key:             matchID + "_" + userID,
-		UserID:          userID,
-		Value:           string(myRecordBytes),
-		PermissionRead:  0,
-		PermissionWrite: 0,
+	// Read canonical settlement record
+	records, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
+		Collection: storageCollectionSettlement,
+		Key:        req.MatchID,
+		UserID:     systemUserID,
 	}})
 	if err != nil {
+		logger.Error("StorageRead failed for settlement %s: %v", req.MatchID, err)
 		return nil, "", err
 	}
 
-	// If opponent forfeited, bypass waiting for their claim and resolve unilaterally
-	if opponentForfeited && claimedWin {
-		logger.Info("Match %s: User %s claims victory via opponent forfeit. Bypassing pending state.", matchID, userID)
-		myRecord.Resolved = true
-		myRecordBytes, _ = json.Marshal(myRecord)
-		nk.StorageWrite(ctx, []*runtime.StorageWrite{{
-			Collection:      storageCollectionResults,
-			Key:             matchID + "_" + userID,
-			UserID:          userID,
-			Value:           string(myRecordBytes),
+	now := time.Now().UnixMilli()
+
+	// Phase 1: Settlement record does not yet exist -> First submitter
+	if len(records) == 0 {
+		status := ConsensusResultPending
+		winnerID := ""
+
+		// Forfeit guard: Only allow immediate forfeit win if match duration >= 15s to prevent tick-0 spoofing
+		if req.OpponentForfeited && req.Won {
+			durationMs := now - activeMatch.StartTime
+			if activeMatch.StartTime > 0 && durationMs >= 15000 {
+				status = ConsensusResultForfeitWin
+				winnerID = userID
+				myRecord.Resolved = true
+			} else {
+				logger.Warn("Premature forfeit claim for match %s (duration %dms < 15s floor); demoting to pending", req.MatchID, durationMs)
+			}
+		}
+
+		settlement := MatchSettlement{
+			MatchID:    req.MatchID,
+			Status:     status,
+			CreatedAt:  now,
+			SubmitterA: myRecord,
+			WinnerID:   winnerID,
+		}
+		bytes, _ := json.Marshal(settlement)
+
+		// Atomic create: Version: "*" ensures insert fails if opponent writes simultaneously
+		_, writeErr := nk.StorageWrite(ctx, []*runtime.StorageWrite{{
+			Collection:      storageCollectionSettlement,
+			Key:             req.MatchID,
+			UserID:          systemUserID,
+			Value:           string(bytes),
+			Version:         "*",
 			PermissionRead:  0,
 			PermissionWrite: 0,
 		}})
-		return nil, ConsensusResultForfeitWin, nil
+		if writeErr == nil {
+			return nil, status, nil
+		}
+
+		// Write collision: Opponent created the row at the exact same millisecond. Re-read row below.
+		records, err = nk.StorageRead(ctx, []*runtime.StorageRead{{
+			Collection: storageCollectionSettlement,
+			Key:        req.MatchID,
+			UserID:     systemUserID,
+		}})
+		if err != nil || len(records) == 0 {
+			return nil, "", fmt.Errorf("concurrent settlement read failed for match %s", req.MatchID)
+		}
 	}
 
-	// Step 2: Read opponent's claim AFTER writing ours
-	opponentResults, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
-		Collection: storageCollectionResults,
-		Key:        matchID + "_" + opponentID,
-		UserID:     opponentID,
-	}})
-	if err != nil || len(opponentResults) == 0 {
-		// First submitter: opponent hasn't written yet
+	// Phase 2: Settlement record exists -> Second submitter or terminal state
+	var settlement MatchSettlement
+	if err := json.Unmarshal([]byte(records[0].Value), &settlement); err != nil {
+		logger.Error("Corrupt settlement JSON for match %s: %v", req.MatchID, err)
+		return nil, "", err
+	}
+	existingVersion := records[0].Version
+
+	// Terminal state: match already resolved
+	if settlement.Status == ConsensusResultOk || settlement.Status == ConsensusResultResolved || settlement.Status == ConsensusResultForfeitWin {
+		opp := &settlement.SubmitterA
+		if settlement.SubmitterA.UserID == userID && settlement.SubmitterB != nil {
+			opp = settlement.SubmitterB
+		}
+		return opp, ConsensusResultResolved, nil
+	}
+
+	// Resubmission by original submitter (e.g. promoting pending to forfeit after grace timeout)
+	if settlement.SubmitterA.UserID == userID {
+		if req.OpponentForfeited && req.Won && (now-settlement.CreatedAt >= 15000) {
+			settlement.Status = ConsensusResultForfeitWin
+			settlement.WinnerID = userID
+			settlement.SubmitterA.Resolved = true
+			bytes, _ := json.Marshal(settlement)
+			_, writeErr := nk.StorageWrite(ctx, []*runtime.StorageWrite{{
+				Collection:      storageCollectionSettlement,
+				Key:             req.MatchID,
+				UserID:          systemUserID,
+				Value:           string(bytes),
+				Version:         existingVersion,
+				PermissionRead:  0,
+				PermissionWrite: 0,
+			}})
+			if writeErr != nil {
+				logger.Warn("CAS version collision promoting forfeit for match %s: %v, assuming terminal", req.MatchID, writeErr)
+				return nil, ConsensusResultResolved, nil
+			}
+			return nil, ConsensusResultForfeitWin, nil
+		}
 		return nil, ConsensusResultPending, nil
 	}
 
-	var opponentRecord MatchResultRecord
-	if err := json.Unmarshal([]byte(opponentResults[0].Value), &opponentRecord); err != nil {
-		return nil, ConsensusResultPending, nil
+	// Caller is Submitter B (the second distinct submitter)
+	oppRecord := settlement.SubmitterA
+
+	// Conflict check: Both claimed victory
+	if req.Won && oppRecord.ClaimedWin {
+		logger.Warn("CONFLICT: Match %s - both %s and %s claimed victory", req.MatchID, userID, oppRecord.UserID)
+		settlement.Status = ConsensusResultConflict
+		settlement.SubmitterB = &myRecord
+		bytes, _ := json.Marshal(settlement)
+		if _, writeErr := nk.StorageWrite(ctx, []*runtime.StorageWrite{{
+			Collection:      storageCollectionSettlement,
+			Key:             req.MatchID,
+			UserID:          systemUserID,
+			Value:           string(bytes),
+			Version:         existingVersion,
+			PermissionRead:  0,
+			PermissionWrite: 0,
+		}}); writeErr != nil {
+			logger.Warn("CAS collision writing conflict settlement for match %s: %v", req.MatchID, writeErr)
+		}
+		return &oppRecord, ConsensusResultConflict, nil
 	}
 
-	// If opponent's record has Resolved=true, they were the second submitter and already resolved.
-	// Our deferred win bonus (if applicable) was already pushed via notify.SendReward.
-	if opponentRecord.Resolved {
-		return &opponentRecord, ConsensusResultResolved, nil
+	// Consensual resolution
+	winnerID := userID
+	if oppRecord.ClaimedWin {
+		winnerID = oppRecord.UserID
 	}
 
-	// Conflict: both claimed win simultaneously
-	if claimedWin && opponentRecord.ClaimedWin {
-		logger.Warn("CONFLICT: Match %s - both %s and %s claimed victory", matchID, userID, opponentID)
-		return &opponentRecord, ConsensusResultConflict, nil
-	}
-
-	// Mark local user record as resolved.
-	// Opponents will read this record to confirm consensus.
-	// Maintains authority boundaries by not mutating opponent records directly.
 	myRecord.Resolved = true
-	myRecordBytes, _ = json.Marshal(myRecord)
-	nk.StorageWrite(ctx, []*runtime.StorageWrite{{
-		Collection:      storageCollectionResults,
-		Key:             matchID + "_" + userID,
-		UserID:          userID,
-		Value:           string(myRecordBytes),
+	settlement.Status = ConsensusResultOk
+	settlement.SubmitterB = &myRecord
+	settlement.WinnerID = winnerID
+	bytes, _ := json.Marshal(settlement)
+
+	// Optimistic CAS: write with expected existingVersion
+	_, writeErr := nk.StorageWrite(ctx, []*runtime.StorageWrite{{
+		Collection:      storageCollectionSettlement,
+		Key:             req.MatchID,
+		UserID:          systemUserID,
+		Value:           string(bytes),
+		Version:         existingVersion,
 		PermissionRead:  0,
 		PermissionWrite: 0,
 	}})
+	if writeErr != nil {
+		logger.Warn("CAS version collision resolving match %s: %v, assuming terminal", req.MatchID, writeErr)
+		return &oppRecord, ConsensusResultResolved, nil
+	}
 
-	return &opponentRecord, ConsensusResultOk, nil
-	// TODO(ATOM-D1): Cross-audit RoundRecords post-consensus.
-	// Validate playerA.round[N].PlayerWon == !playerB.round[N].PlayerWon.
+	return &oppRecord, ConsensusResultOk, nil
 }
 
 func clearActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) {
@@ -834,10 +925,39 @@ func processMatchRewards(ctx context.Context, nk runtime.NakamaModule, logger ru
 	return result, nil
 }
 
-// processDeferredWinBonus is a no-op currently. The caller still invokes this function on the "ok" consensus path; returning
-// nil, nil causes the notification send to be skipped cleanly.
-func processDeferredWinBonus(_ context.Context, _ runtime.NakamaModule, _ runtime.Logger, _ string, _ bool) (*notify.RewardPayload, error) {
-	return nil, nil
+// processDeferredWinBonus credits the differential between victory and participation rewards to the first submitter
+func processDeferredWinBonus(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, opponentID string, opponentWon bool) (*notify.RewardPayload, error) {
+	if !opponentWon || opponentID == "" {
+		return nil, nil
+	}
+
+	cfg := GetEconomyConfig()
+	winDiffXP := cfg.WinXP - cfg.LossXP
+	if winDiffXP <= 0 {
+		return nil, nil
+	}
+
+	playerLevelUp, xpPending, err := preparePlayerXP(ctx, nk, logger, opponentID, winDiffXP, 1)
+	if err != nil {
+		logger.Warn("Failed to prepare deferred win XP for %s: %v", opponentID, err)
+		return nil, err
+	}
+
+	if err := CommitPendingWrites(ctx, nk, logger, xpPending); err != nil {
+		logger.Error("Failed committing deferred win XP for opponent %s: %v", opponentID, err)
+		return nil, err
+	}
+
+	payload := notify.NewRewardPayload("match")
+	payload.ReasonKey = "reward.match.win_bonus"
+	payload.Progression = &notify.ProgressionDelta{
+		XpGranted: notify.IntPtr(winDiffXP),
+	}
+	if playerLevelUp > 0 {
+		payload.Progression.NewPlayerLevel = notify.IntPtr(playerLevelUp)
+	}
+
+	return payload, nil
 }
 
 // preparePlayerXP applies diminishing returns and returns deferred progression writes.

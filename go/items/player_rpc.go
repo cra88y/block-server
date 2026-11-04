@@ -827,11 +827,22 @@ func RpcClaimProgressionReward(ctx context.Context, logger runtime.Logger, db *s
 	var alreadyClaimed bool
 
 	_, progWrite, err := PrepareProgressionUpdate(ctx, nk, logger, userID, progressionKey, req.ItemID, func(prog *ItemProgression) error {
+		if prog.TierStates == nil {
+			prog.TierStates = make(map[string]TierState)
+		}
 		lvlStr := strconv.Itoa(req.Level)
 
 		state, exists := prog.TierStates[lvlStr]
 		if !exists {
-			return errors.ErrRewardAlreadyClaimed
+			if req.Level <= prog.Level {
+				state = TierState{
+					Status:     "unclaimed",
+					UnlockedAt: time.Now().UnixMilli(),
+				}
+				exists = true
+			} else {
+				return errors.ErrRewardAlreadyClaimed
+			}
 		}
 
 		// Idempotency: abort state mutation if already claimed. Return current state.
@@ -1039,12 +1050,20 @@ func RpcClaimAllProgressionRewards(ctx context.Context, logger runtime.Logger, d
 		return "", err
 	}
 
+	tree, treeExists := GetLevelTree(treeName)
+	if !treeExists {
+		return "", errors.ErrInvalidLevelTree
+	}
+
 	var levelsToClaim []int
-	for lvlStr, state := range prog.TierStates {
-		if state.Status == "unclaimed" {
-			if lvl, parseErr := strconv.Atoi(lvlStr); parseErr == nil {
-				levelsToClaim = append(levelsToClaim, lvl)
-			}
+	for lvl := 1; lvl <= prog.Level; lvl++ {
+		lvlStr := strconv.Itoa(lvl)
+		if _, hasReward := tree.Rewards[lvlStr]; !hasReward {
+			continue
+		}
+		state, exists := prog.TierStates[lvlStr]
+		if !exists || state.Status == "unclaimed" {
+			levelsToClaim = append(levelsToClaim, lvl)
 		}
 	}
 
@@ -1085,12 +1104,19 @@ func RpcClaimAllProgressionRewards(ctx context.Context, logger runtime.Logger, d
 
 	// Prepare progression update to claim all unclaimed rewards and apply all accumulated unlocks
 	_, progWrite, err := PrepareProgressionUpdate(ctx, nk, logger, userID, progressionKey, req.ItemID, func(prog *ItemProgression) error {
+		if prog.TierStates == nil {
+			prog.TierStates = make(map[string]TierState)
+		}
 		updatedTierStates = make(map[string]notify.TierState)
 		for _, lvl := range levelsToClaim {
 			lvlStr := strconv.Itoa(lvl)
-			if state, exists := prog.TierStates[lvlStr]; exists && state.Status == "unclaimed" {
+			state, exists := prog.TierStates[lvlStr]
+			if !exists || state.Status == "unclaimed" {
 				state.Status = "claimed"
 				state.ClaimedAt = time.Now().UnixMilli()
+				if !exists {
+					state.UnlockedAt = state.ClaimedAt
+				}
 				prog.TierStates[lvlStr] = state
 				updatedTierStates[lvlStr] = notify.TierState{
 					Status:     state.Status,
