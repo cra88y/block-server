@@ -19,7 +19,7 @@ source = '''
   .user_id = parsed.user_id
   
   # payload is stored as a stringified JSON string by Nakama's logger; must be parsed again to be queryable in Parquet
-  .payload = parse_json!(parsed.payload)
+  .payload = parse_json(string(parsed.payload) ?? "{}") ?? {}
   
   # Docker runtime fields are high-cardinality noise with zero analytical value; strip them to keep R2 objects lean
   del(.container_created_at)
@@ -86,27 +86,34 @@ source = '''
   }
   
   uid = string(.user_id) ?? "unknown"
-  app_ver = string(.payload.AppVersion) ?? "?"
-  plat = string(.payload.Platform) ?? "?"
-  state = string(.payload.ContextGameState) ?? "?"
-  overlay = string(.payload.CurrentOverlay) ?? "none"
+  app_ver = string(.payload.app_version) ?? string(.payload.AppVersion) ?? "?"
+  plat = string(.payload.platform) ?? string(.payload.Platform) ?? "?"
+  state = string(.payload.context_game_state) ?? string(.payload.ContextGameState) ?? "?"
+  overlay = string(.payload.current_overlay) ?? string(.payload.CurrentOverlay) ?? "none"
   
-  msg = string(.payload.Message) ?? string(.payload.Reason) ?? string(.payload.ExceptionType) ?? string(.payload.FeedbackText) ?? "none"
+  msg = string(.payload.message) ?? string(.payload.Message) ?? \
+        string(.payload.reason) ?? string(.payload.Reason) ?? \
+        string(.payload.exception_type) ?? string(.payload.ExceptionType) ?? \
+        string(.payload.feedback_text) ?? string(.payload.FeedbackText) ?? "none"
+
   if event == "iap_purchase" {
-    msg = to_string!(.payload.product_id) + " -> " + to_string!(.payload.amount) + " " + to_string!(.payload.currency)
+    prod = string(.payload.product_id) ?? string(.payload.ProductId) ?? "?"
+    amt = to_string(.payload.amount) ?? to_string(.payload.Amount) ?? "?"
+    curr = string(.payload.currency) ?? string(.payload.Currency) ?? ""
+    msg = prod + " -> " + amt + " " + curr
   }
   
   if length(msg) > 800 {
     msg = slice!(msg, 0, 800) + " ...[trunc]"
   }
   
-  breadcrumbs = array(.payload.Breadcrumbs) ?? []
+  breadcrumbs = array(.payload.breadcrumbs) ?? array(.payload.Breadcrumbs) ?? []
   trc = "none"
   if length(breadcrumbs) > 0 {
     trc = join!(breadcrumbs, " > ")
   }
 
-  stack = string(.payload.StackTrace) ?? ""
+  stack = string(.payload.stack_trace) ?? string(.payload.StackTrace) ?? string(.payload.diagnostic_trace) ?? string(.payload.DiagnosticTrace) ?? ""
   if length(stack) > 800 {
     stack = slice!(stack, 0, 800) + " ...[trunc]"
   }

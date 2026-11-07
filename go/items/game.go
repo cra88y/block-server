@@ -86,17 +86,9 @@ func LoadGameData() error {
 				parseErrors = append(parseErrors, fmt.Errorf("invalid pet ID %q: %w", k, err))
 				continue
 			}
-			GameData.Pets[uint32(id)] = &Pet{
-				Name:               v.Name,
-				SpriteCount:        v.SpriteCount,
-				AbilityIDs:         v.AbilityIDs,
-				AbilitySet:         createAbilitySet(v.AbilityIDs),
-				BackgroundIDs:      v.BackgroundIDs,
-				StyleIDs:           v.StyleIDs,
-				LevelTreeName:      v.LevelTreeName,
-				HealthCurveID:      v.HealthCurveID,
-				AttackCurveID:      v.AttackCurveID,
-			}
+			p := v
+			p.AbilitySet = createAbilitySet(v.AbilityIDs)
+			GameData.Pets[uint32(id)] = &p
 		}
 
 		for k, v := range raw.Items.Classes {
@@ -105,17 +97,9 @@ func LoadGameData() error {
 				parseErrors = append(parseErrors, fmt.Errorf("invalid class ID %q: %w", k, err))
 				continue
 			}
-			GameData.Classes[uint32(id)] = &Class{
-				Name:               v.Name,
-				SpriteCount:        v.SpriteCount,
-				AbilityIDs:         v.AbilityIDs,
-				AbilitySet:         createAbilitySet(v.AbilityIDs),
-				BackgroundIDs:      v.BackgroundIDs,
-				StyleIDs:           v.StyleIDs,
-				LevelTreeName:      v.LevelTreeName,
-				HealthCurveID:      v.HealthCurveID,
-				AttackCurveID:      v.AttackCurveID,
-			}
+			c := v
+			c.AbilitySet = createAbilitySet(v.AbilityIDs)
+			GameData.Classes[uint32(id)] = &c
 		}
 
 		GameData.StatCurves = raw.Items.StatCurves

@@ -275,6 +275,8 @@ func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 		}
 	}
 
+	reconcileProgressionClaims(ctx, logger, nk, userID, &progression)
+
 	if !dailyJourneyFound {
 		nowUTC := time.Now().UTC()
 		midnightUTC := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC)
@@ -317,6 +319,144 @@ func RpcGetProgression(ctx context.Context, logger runtime.Logger, db *sql.DB, n
 	}
 
 	return string(resp), nil
+}
+
+// Authoritative self-healing: if an earlier interrupted grant or bug marked a progression tier "claimed"
+// but the reward items are absent from inventory, reset tier state to "unclaimed" and persist the repair.
+func reconcileProgressionClaims(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, userID string, progression *ProgressionResponse) {
+	if progression == nil || (len(progression.Pets) == 0 && len(progression.Classes) == 0) {
+		return
+	}
+
+	invObjects, err := nk.StorageRead(ctx, []*runtime.StorageRead{
+		{Collection: storageCollectionInventory, Key: storageKeyPet, UserID: userID},
+		{Collection: storageCollectionInventory, Key: storageKeyClass, UserID: userID},
+		{Collection: storageCollectionInventory, Key: storageKeyBackground, UserID: userID},
+		{Collection: storageCollectionInventory, Key: storageKeyPieceStyle, UserID: userID},
+	})
+	if err != nil || len(invObjects) == 0 {
+		return
+	}
+
+	owned := map[string]map[uint32]bool{
+		storageKeyPet:        make(map[uint32]bool),
+		storageKeyClass:      make(map[uint32]bool),
+		storageKeyBackground: make(map[uint32]bool),
+		storageKeyPieceStyle: make(map[uint32]bool),
+	}
+
+	for _, obj := range invObjects {
+		if obj == nil {
+			continue
+		}
+		data, err := UnmarshalJSON[InventoryData](obj.Value)
+		if err != nil {
+			continue
+		}
+		if set, exists := owned[obj.Key]; exists {
+			for _, itemID := range data.Items {
+				set[itemID] = true
+			}
+		}
+	}
+
+	var storageWrites []*runtime.StorageWrite
+
+	checkItem := func(category string, storageKeyPrefix string, id uint32, prog ItemProgression) {
+		if prog.TierStates == nil {
+			return
+		}
+		treeName, err := GetLevelTreeName(category, id)
+		if err != nil {
+			return
+		}
+		tree, exists := GetLevelTree(treeName)
+		if !exists {
+			return
+		}
+
+		dirty := false
+		for lvlStr, state := range prog.TierStates {
+			if state.Status != "claimed" {
+				continue
+			}
+			rewardData, hasRewards := tree.Rewards[lvlStr]
+			if !hasRewards {
+				continue
+			}
+
+			checkMissing := func(rewardType string, rewardKey string, countStr string) bool {
+				if countStr == "" {
+					return false
+				}
+				cnt, err := ParseUint32Safely(countStr, logger)
+				if err != nil || cnt == 0 {
+					return false
+				}
+				grantIDs := GetRewardItemIDs(category, id, rewardType, cnt)
+				for _, gid := range grantIDs {
+					if !owned[rewardKey][gid] {
+						return true
+					}
+				}
+				return false
+			}
+
+			missing := checkMissing("pets", storageKeyPet, rewardData.Pets) ||
+				checkMissing("classes", storageKeyClass, rewardData.Classes) ||
+				checkMissing("backgrounds", storageKeyBackground, rewardData.Backgrounds) ||
+				checkMissing("piece_styles", storageKeyPieceStyle, rewardData.PieceStyles)
+
+			if missing {
+				logger.WithFields(map[string]interface{}{
+					"user":     userID,
+					"category": category,
+					"id":       id,
+					"level":    lvlStr,
+				}).Info("Self-healing desynced progression tier: resetting claimed tier to unclaimed")
+
+				state.Status = "unclaimed"
+				prog.TierStates[lvlStr] = state
+				dirty = true
+			}
+		}
+
+		if dirty {
+			if category == CategoryPet || category == storageKeyPet {
+				progression.Pets[id] = prog
+			} else {
+				progression.Classes[id] = prog
+			}
+
+			progBytes, err := json.Marshal(prog)
+			if err == nil {
+				storageWrites = append(storageWrites, &runtime.StorageWrite{
+					Collection:      storageCollectionProgression,
+					Key:             storageKeyPrefix + strconv.FormatUint(uint64(id), 10),
+					UserID:          userID,
+					Value:           string(progBytes),
+					PermissionRead:  2,
+					PermissionWrite: 0,
+				})
+			}
+		}
+	}
+
+	for id, p := range progression.Pets {
+		checkItem(CategoryPet, ProgressionKeyPet, id, p)
+	}
+	for id, c := range progression.Classes {
+		checkItem(CategoryClass, ProgressionKeyClass, id, c)
+	}
+
+	if len(storageWrites) > 0 {
+		if _, writeErr := nk.StorageWrite(ctx, storageWrites); writeErr != nil {
+			logger.WithFields(map[string]interface{}{
+				"user":  userID,
+				"error": writeErr.Error(),
+			}).Warn("Failed to persist self-healed progression states")
+		}
+	}
 }
 
 func RpcEquipPetAbility(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
