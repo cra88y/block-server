@@ -120,7 +120,7 @@ func validateTelemetryEvent(event *TelemetryEvent) error {
 
 func processTelemetryEvent(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, userID string, event TelemetryEvent) error {
 	// We format it as a structured log line that Vector can easily parse
-	logger.WithField("payload", event.Data).
+	logger.WithField("payload", json.RawMessage(event.Data)).
 		WithField("event_type", event.EventType).
 		WithField("timestamp", event.Timestamp).
 		WithField("user_id", userID).

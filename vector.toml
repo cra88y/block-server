@@ -17,9 +17,16 @@ source = '''
   .event_type = parsed.event_type
   .timestamp = parsed.timestamp
   .user_id = parsed.user_id
+  .clock_skewed = parsed.clock_skewed ?? false
   
-  # payload is stored as a stringified JSON string by Nakama's logger; must be parsed again to be queryable in Parquet
-  .payload = parse_json(string(parsed.payload) ?? "{}") ?? {}
+  # payload can be a native JSON object (via json.RawMessage) or a stringified JSON string
+  if is_string(parsed.payload) {
+    .payload = parse_json(string!(parsed.payload)) ?? {}
+  } else if is_object(parsed.payload) {
+    .payload = parsed.payload
+  } else {
+    .payload = {}
+  }
   
   # Docker runtime fields are high-cardinality noise with zero analytical value; strip them to keep R2 objects lean
   del(.container_created_at)
@@ -59,9 +66,15 @@ type = "filter"
 inputs = ["parse_json"]
 condition = 'includes(["crash", "non_fatal_error", "iap_purchase", "match_abandoned", "user_feedback"], .event_type)'
 
+[transforms.throttle_discord]
+type = "throttle"
+inputs = ["filter_discord_alerts"]
+threshold = 10
+window_secs = 60
+
 [transforms.format_discord]
 type = "remap"
-inputs = ["filter_discord_alerts"]
+inputs = ["throttle_discord"]
 source = '''
   event = to_string!(.event_type)
   title_str = event
@@ -91,9 +104,9 @@ source = '''
   state = string(.payload.context_game_state) ?? string(.payload.ContextGameState) ?? "?"
   overlay = string(.payload.current_overlay) ?? string(.payload.CurrentOverlay) ?? "none"
   
-  msg = string(.payload.message) ?? string(.payload.Message) ?? \
-        string(.payload.reason) ?? string(.payload.Reason) ?? \
-        string(.payload.exception_type) ?? string(.payload.ExceptionType) ?? \
+  msg = string(.payload.message) ?? string(.payload.Message) ??
+        string(.payload.reason) ?? string(.payload.Reason) ??
+        string(.payload.exception_type) ?? string(.payload.ExceptionType) ??
         string(.payload.feedback_text) ?? string(.payload.FeedbackText) ?? "none"
 
   if event == "iap_purchase" {
@@ -127,6 +140,10 @@ source = '''
   
   if stack != "" {
     body = body + "\nstk ::\n" + stack
+  }
+  
+  if length(body) > 3900 {
+    body = slice!(body, 0, 3900) + "\n...[trunc]"
   }
   
   embed = {
