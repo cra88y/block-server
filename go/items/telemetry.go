@@ -31,7 +31,9 @@ var validEventTypes = map[string]bool{
 	"non_fatal_error":         true,
 	"onboarding_progress":     true,
 	"shop_interaction":        true,
+	"shop_viewed":             true,
 	"matchmaking":             true,
+	"server_error":            true,
 
 	// Network Recovery & Resilience
 	"network_ghost_socket_detected":   true,

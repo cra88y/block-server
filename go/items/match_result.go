@@ -69,6 +69,132 @@ type NotifyMatchStartRequest struct {
 	PetID      *uint32 `json:"pet_id,omitempty"`
 }
 
+// Enforces snake_case wire serialization for match outcome facts sealed at terminal consensus.
+type MatchCompletedTelemetry struct {
+	Type              string  `json:"$type"`
+	MatchID           string  `json:"match_id"`
+	WinnerID          string  `json:"winner_id"`
+	LoserID           string  `json:"loser_id"`
+	WinnerScore       int     `json:"winner_score"`
+	LoserScore        int     `json:"loser_score"`
+	DurationSeconds   float64 `json:"duration_seconds"`
+	GameMode          string  `json:"game_mode"`
+	RoundsWon         int     `json:"rounds_won"`
+	RoundsLost        int     `json:"rounds_lost"`
+	AbilitiesCast     int     `json:"abilities_cast"`
+	APM               int     `json:"apm"`
+	PiecesPlaced      int     `json:"pieces_placed"`
+	TowerHeight       int     `json:"tower_height"`
+	OpponentForfeited bool    `json:"opponent_forfeited"`
+	LocalClassID      uint32  `json:"local_class_id"`
+	LocalPetID        uint32  `json:"local_pet_id"`
+	OpponentClassID   *uint32 `json:"opponent_class_id,omitempty"`
+	OpponentPetID     *uint32 `json:"opponent_pet_id,omitempty"`
+	WinnerClassID     *uint32 `json:"winner_class_id,omitempty"`
+	LoserClassID      *uint32 `json:"loser_class_id,omitempty"`
+
+	// Goal-Gradient Progression Vector
+	TokensBefore    int   `json:"tokens_before"`
+	TokensAfter     int   `json:"tokens_after"`
+	TokensGranted   int   `json:"tokens_granted"`
+	TokenThreshold  int   `json:"token_threshold"`
+	ExchangesLeft   int   `json:"exchanges_left"`
+	ExchangesMade   int   `json:"exchanges_made"`
+	IsNearMiss      bool  `json:"is_near_miss"`
+	DailyMatches    int   `json:"daily_matches"`
+	LootboxesEarned int   `json:"lootboxes_earned"`
+	XpGranted       *int  `json:"xp_granted,omitempty"`
+	NewPlayerLevel  *int  `json:"new_player_level,omitempty"`
+}
+
+// Enforces snake_case wire serialization for per-player reward settlements and goal-gradient vectors.
+type MatchResultVerifiedTelemetry struct {
+	MatchID         string `json:"match_id"`
+	Won             bool   `json:"won"`
+	TokensBefore    int    `json:"tokens_before"`
+	TokensAfter     int    `json:"tokens_after"`
+	TokensGranted   int    `json:"tokens_granted"`
+	TokenThreshold  int    `json:"token_threshold"`
+	ExchangesLeft   int    `json:"exchanges_left"`
+	ExchangesMade   int    `json:"exchanges_made"`
+	IsNearMiss      bool   `json:"is_near_miss"`
+	DailyMatches    int    `json:"daily_matches"`
+	LootboxesEarned int    `json:"lootboxes_earned"`
+	XpEarned        int    `json:"xp_earned"`
+	NewPlayerLevel  *int   `json:"new_player_level,omitempty"`
+	LocalClassID    uint32 `json:"local_class_id"`
+	LocalPetID      uint32 `json:"local_pet_id"`
+}
+
+type ProgressionVector struct {
+	TokensBefore    int
+	TokensAfter     int
+	TokensGranted   int
+	TokenThreshold  int
+	ExchangesLeft   int
+	ExchangesMade   int
+	IsNearMiss      bool
+	DailyMatches    int
+	LootboxesEarned int
+	NewPlayerLevel  *int
+}
+
+func extractProgressionVector(result *notify.RewardPayload) ProgressionVector {
+	thresh := GetEconomyConfig().TokenExchangeThresh
+	if thresh <= 0 {
+		thresh = 6
+	}
+	tokensAfter := 0
+	tokensGranted := 0
+	exchangesLeft := 0
+	exchangesMade := 0
+	dailyMatches := 0
+	if result != nil && result.Meta != nil {
+		if result.Meta.RoundTokens != nil {
+			tokensAfter = *result.Meta.RoundTokens
+		}
+		if result.Meta.TokensEarned != nil {
+			tokensGranted = *result.Meta.TokensEarned
+		}
+		if result.Meta.ExchangesLeft != nil {
+			exchangesLeft = *result.Meta.ExchangesLeft
+		}
+		exchangesMade = result.Meta.ExchangesMade
+		if result.Meta.DailyMatches != nil {
+			dailyMatches = *result.Meta.DailyMatches
+		}
+	}
+
+	isNearMiss := (tokensAfter%thresh == thresh-1) && (exchangesLeft > 0)
+	tokensBefore := tokensAfter - tokensGranted + (exchangesMade * thresh)
+	if tokensBefore < 0 {
+		tokensBefore = 0
+	}
+
+	lootboxesEarned := 0
+	if result != nil {
+		lootboxesEarned = len(result.Lootboxes)
+	}
+
+	var newLevel *int
+	if result != nil && result.Progression != nil {
+		newLevel = result.Progression.NewPlayerLevel
+	}
+
+	return ProgressionVector{
+		TokensBefore:    tokensBefore,
+		TokensAfter:     tokensAfter,
+		TokensGranted:   tokensGranted,
+		TokenThreshold:  thresh,
+		ExchangesLeft:   exchangesLeft,
+		ExchangesMade:   exchangesMade,
+		IsNearMiss:      isNearMiss,
+		DailyMatches:    dailyMatches,
+		LootboxesEarned: lootboxesEarned,
+		NewPlayerLevel:  newLevel,
+	}
+}
+
 // RpcNotifyMatchStart records the start of a match for validation
 func RpcNotifyMatchStart(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
 	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
@@ -307,40 +433,55 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 				gameMode = "solo"
 			}
 
-			telemetryMap := map[string]interface{}{
-				"$type":           "MatchCompletedMetric",
-				"MatchId":         req.MatchID,
-				"WinnerId":        winnerID,
-				"LoserId":         loserID,
-				"WinnerScore":     winnerScore,
-				"LoserScore":      loserScore,
-				"DurationSeconds": float64(req.MatchDurationSec),
-				"GameMode":        gameMode,
-				"RoundsWon":       req.RoundsWon,
-				"RoundsLost":      req.RoundsLost,
-				"AbilitiesCast":   req.AbilitiesCast,
-				"APM":             req.APM,
-				"PiecesPlaced":    req.PiecesPlaced,
-				"LocalClassId":    req.EquippedClassID,
-				"LocalPetId":      req.EquippedPetID,
+			metric := MatchCompletedTelemetry{
+				Type:              "MatchCompletedMetric",
+				MatchID:           req.MatchID,
+				WinnerID:          winnerID,
+				LoserID:           loserID,
+				WinnerScore:       winnerScore,
+				LoserScore:        loserScore,
+				DurationSeconds:   float64(req.MatchDurationSec),
+				GameMode:          gameMode,
+				RoundsWon:         req.RoundsWon,
+				RoundsLost:        req.RoundsLost,
+				AbilitiesCast:     req.AbilitiesCast,
+				APM:               req.APM,
+				PiecesPlaced:      req.PiecesPlaced,
+				TowerHeight:       req.TowerHeight,
+				OpponentForfeited: req.OpponentForfeited,
+				LocalClassID:      req.EquippedClassID,
+				LocalPetID:        req.EquippedPetID,
+			}
+
+			pv := extractProgressionVector(result)
+			metric.TokensBefore = pv.TokensBefore
+			metric.TokensAfter = pv.TokensAfter
+			metric.TokensGranted = pv.TokensGranted
+			metric.TokenThreshold = pv.TokenThreshold
+			metric.ExchangesLeft = pv.ExchangesLeft
+			metric.ExchangesMade = pv.ExchangesMade
+			metric.IsNearMiss = pv.IsNearMiss
+			metric.DailyMatches = pv.DailyMatches
+			metric.LootboxesEarned = pv.LootboxesEarned
+			metric.NewPlayerLevel = pv.NewPlayerLevel
+			if result != nil && result.Progression != nil {
+				metric.XpGranted = result.Progression.XpGranted
 			}
 
 			// Only emit opponent/symmetric class analytics in 1v1 multiplayer when opponent loadout is verified
 			if !isSolo && oppClassID != nil {
-				telemetryMap["OpponentClassId"] = *oppClassID
-				if oppPetID != nil {
-					telemetryMap["OpponentPetId"] = *oppPetID
-				}
+				metric.OpponentClassID = oppClassID
+				metric.OpponentPetID = oppPetID
 				if actualWon {
-					telemetryMap["WinnerClassId"] = req.EquippedClassID
-					telemetryMap["LoserClassId"] = *oppClassID
+					metric.WinnerClassID = &req.EquippedClassID
+					metric.LoserClassID = oppClassID
 				} else {
-					telemetryMap["WinnerClassId"] = *oppClassID
-					telemetryMap["LoserClassId"] = req.EquippedClassID
+					metric.WinnerClassID = oppClassID
+					metric.LoserClassID = &req.EquippedClassID
 				}
 			}
 
-			telemetryData, _ := json.Marshal(telemetryMap)
+			telemetryData, _ := json.Marshal(metric)
 
 			telemetryEvent := TelemetryEvent{
 				EventType: "match_completed",
@@ -436,14 +577,29 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 	logger.Info("Match result processed for user %s: won=%v, xp=%d",
 		userID, req.Won, xpAmount)
 
-	telemetryData, _ := json.Marshal(map[string]interface{}{
-		"match_id":  req.MatchID,
-		"won":       req.Won,
-		"xp_earned": xpAmount,
-	})
+	pv := extractProgressionVector(result)
+	verifiedMetric := MatchResultVerifiedTelemetry{
+		MatchID:         req.MatchID,
+		Won:             req.Won,
+		TokensBefore:    pv.TokensBefore,
+		TokensAfter:     pv.TokensAfter,
+		TokensGranted:   pv.TokensGranted,
+		TokenThreshold:  pv.TokenThreshold,
+		ExchangesLeft:   pv.ExchangesLeft,
+		ExchangesMade:   pv.ExchangesMade,
+		IsNearMiss:      pv.IsNearMiss,
+		DailyMatches:    pv.DailyMatches,
+		LootboxesEarned: pv.LootboxesEarned,
+		XpEarned:        xpAmount,
+		NewPlayerLevel:  pv.NewPlayerLevel,
+		LocalClassID:    req.EquippedClassID,
+		LocalPetID:      req.EquippedPetID,
+	}
+
+	telemetryData, _ := json.Marshal(verifiedMetric)
 	telemetryEvent := TelemetryEvent{
 		EventType: "match_result_verified",
-		Timestamp: float64(time.Now().Unix()),
+		Timestamp: float64(time.Now().UnixNano()) / 1e9,
 		Data:      string(telemetryData),
 	}
 	processTelemetryEvent(context.Background(), logger, db, nk, userID, telemetryEvent)

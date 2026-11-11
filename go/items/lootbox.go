@@ -118,7 +118,7 @@ func RpcOpenLootbox(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 			"gems":   int64(contents.Gems),
 			"treats": int64(contents.Treats),
 		}
-		pending.AddWalletUpdate(userID, walletChanges)
+		pending.AddWalletUpdateWithContext(userID, walletChanges, "lootbox_open", req.ID)
 	}
 
 	// Item rewards - prepare inventory writes using the Centralized Fulfillment Engine

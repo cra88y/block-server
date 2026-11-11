@@ -43,11 +43,6 @@ func (pw *PendingWrites) AddStorageWrite(write *runtime.StorageWrite) {
 	pw.StorageWrites = append(pw.StorageWrites, write)
 }
 
-// AddWalletUpdate adds a wallet update to the pending batch
-func (pw *PendingWrites) AddWalletUpdate(userID string, changeset map[string]int64) {
-	pw.AddWalletUpdateWithContext(userID, changeset, "", "")
-}
-
 // AddWalletUpdateWithContext adds a wallet update with domain action and item attribution
 func (pw *PendingWrites) AddWalletUpdateWithContext(userID string, changeset map[string]int64, action string, itemID string) {
 	pw.WalletUpdates = append(pw.WalletUpdates, &runtime.WalletUpdate{
@@ -81,11 +76,6 @@ func (pw *PendingWrites) AddWalletUpdateWithContext(userID string, changeset map
 			})
 		}
 	}
-}
-
-// AddWalletDeduction is a convenience method for deducting currency
-func (pw *PendingWrites) AddWalletDeduction(userID string, currency string, amount int64) {
-	pw.AddWalletDeductionWithContext(userID, currency, amount, "", "")
 }
 
 // AddWalletDeductionWithContext deducts currency with explicit action and item attribution

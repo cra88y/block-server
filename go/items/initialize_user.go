@@ -77,7 +77,7 @@ func InitializeUser(ctx context.Context, logger runtime.Logger, db *sql.DB, nk r
 		"gems":      100,
 		"treats":    1,
 	}
-	pending.AddWalletUpdate(userID, walletChangeset)
+	pending.AddWalletUpdateWithContext(userID, walletChangeset, "account_init", "starter_pack")
 
 	// Grant only starter items to new accounts. Full catalog grants are prohibited here.
 	if err := GiveStarterItemsToUser(ctx, nk, logger, userID); err != nil {

@@ -271,7 +271,7 @@ func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger run
 	}
 
 	if len(walletChanges) > 0 {
-		pending.AddWalletUpdate(userID, walletChanges)
+		pending.AddWalletUpdateWithContext(userID, walletChanges, "track_payout", fmt.Sprintf("%s_%d", itemType, itemID))
 	}
 
 	payload := notify.NewRewardPayload("level_up")
@@ -437,10 +437,22 @@ func CommitPendingWrites(ctx context.Context, nk runtime.NakamaModule, logger ru
 		return nil
 	}
 
-	_, _, err := nk.MultiUpdate(ctx, nil, pending.StorageWrites, nil, pending.WalletUpdates, true)
+	_, walletResults, err := nk.MultiUpdate(ctx, nil, pending.StorageWrites, nil, pending.WalletUpdates, true)
 	if err != nil {
 		LogError(ctx, logger, "MultiUpdate commit failed", err)
+		EmitServerTelemetry(logger, "system", "server_error", map[string]interface{}{
+			"message": "MultiUpdate commit failed: " + err.Error(),
+			"reason":  "multi_update_failure",
+		})
 		return fmt.Errorf("atomic commit failed: %w", err)
+	}
+
+	// Index post-commit wallet balances by user and currency for self-healing ledger snapshots
+	resultingBalances := make(map[string]map[string]int64, len(walletResults))
+	for _, wr := range walletResults {
+		if wr != nil && wr.Updated != nil {
+			resultingBalances[wr.UserID] = wr.Updated
+		}
 	}
 
 	for _, t := range pending.Telemetry {
@@ -466,6 +478,11 @@ func CommitPendingWrites(ctx context.Context, nk runtime.NakamaModule, logger ru
 		}
 		if t.ItemID != "" {
 			payload["item_id"] = t.ItemID
+		}
+		if userWallets, ok := resultingBalances[t.UserID]; ok {
+			if bal, hasBal := userWallets[t.Currency]; hasBal {
+				payload["resulting_balance"] = bal
+			}
 		}
 
 		EmitServerTelemetry(logger, t.UserID, eventType, payload)

@@ -64,7 +64,7 @@ max_size = 536870912 # 512MB
 [transforms.filter_discord_alerts]
 type = "filter"
 inputs = ["parse_json"]
-condition = 'includes(["crash", "non_fatal_error", "iap_purchase", "match_abandoned", "user_feedback"], .event_type)'
+condition = 'includes(["crash", "non_fatal_error", "server_error", "iap_purchase", "match_abandoned", "user_feedback"], .event_type)'
 
 [transforms.throttle_discord]
 type = "throttle"
@@ -81,7 +81,7 @@ source = '''
   color_int = 4999756 # surface0 (#4c4f69)
   
   # Catppuccin Mocha Palette
-  if event == "crash" {
+  if event == "crash" || event == "server_error" {
     title_str = "ftl :: " + event
     color_int = 16026746 # red (#f38ba8)
   } else if event == "non_fatal_error" {
@@ -99,20 +99,20 @@ source = '''
   }
   
   uid = string(.user_id) ?? "unknown"
-  app_ver = string(.payload.app_version) ?? string(.payload.AppVersion) ?? "?"
-  plat = string(.payload.platform) ?? string(.payload.Platform) ?? "?"
-  state = string(.payload.context_game_state) ?? string(.payload.ContextGameState) ?? "?"
-  overlay = string(.payload.current_overlay) ?? string(.payload.CurrentOverlay) ?? "none"
+  app_ver = string(.payload.app_version) ?? "?"
+  plat = string(.payload.platform) ?? "?"
+  state = string(.payload.context_game_state) ?? "?"
+  overlay = string(.payload.current_overlay) ?? "none"
   
-  msg = string(.payload.message) ?? string(.payload.Message) ??
-        string(.payload.reason) ?? string(.payload.Reason) ??
-        string(.payload.exception_type) ?? string(.payload.ExceptionType) ??
-        string(.payload.feedback_text) ?? string(.payload.FeedbackText) ?? "none"
+  msg = string(.payload.message) ??
+        string(.payload.reason) ??
+        string(.payload.exception_type) ??
+        string(.payload.feedback_text) ?? "none"
 
   if event == "iap_purchase" {
-    prod = string(.payload.product_id) ?? string(.payload.ProductId) ?? "?"
-    amt = to_string(.payload.amount) ?? to_string(.payload.Amount) ?? "?"
-    curr = string(.payload.currency) ?? string(.payload.Currency) ?? ""
+    prod = string(.payload.product_id) ?? "?"
+    amt = to_string(.payload.amount) ?? "?"
+    curr = string(.payload.currency) ?? ""
     msg = prod + " -> " + amt + " " + curr
   }
   
@@ -120,13 +120,13 @@ source = '''
     msg = slice!(msg, 0, 800) + " ...[trunc]"
   }
   
-  breadcrumbs = array(.payload.breadcrumbs) ?? array(.payload.Breadcrumbs) ?? []
+  breadcrumbs = array(.payload.breadcrumbs) ?? []
   trc = "none"
   if length(breadcrumbs) > 0 {
     trc = join!(breadcrumbs, " > ")
   }
 
-  stack = string(.payload.stack_trace) ?? string(.payload.StackTrace) ?? string(.payload.diagnostic_trace) ?? string(.payload.DiagnosticTrace) ?? ""
+  stack = string(.payload.stack_trace) ?? string(.payload.diagnostic_trace) ?? ""
   if length(stack) > 800 {
     stack = slice!(stack, 0, 800) + " ...[trunc]"
   }
