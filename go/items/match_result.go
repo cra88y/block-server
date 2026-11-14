@@ -369,6 +369,28 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		logger.Warn("Match %s: Both players claimed victory. Voiding win for user %s", req.MatchID, userID)
 		actualWon = false
 
+		conflictMap := map[string]interface{}{
+			"match_id":       req.MatchID,
+			"reporter_id":    userID,
+			"opponent_id":    activeMatch.OpponentID,
+			"reason":         "consensus_conflict",
+			"final_score":    req.FinalScore,
+			"opponent_score": req.OpponentScore,
+		}
+		if oppClassID != nil {
+			conflictMap["local_class_id"] = *oppClassID
+		}
+		if oppPetID != nil {
+			conflictMap["local_pet_id"] = *oppPetID
+		}
+		conflictData, _ := json.Marshal(conflictMap)
+		conflictEvent := TelemetryEvent{
+			EventType: "match_abandoned",
+			Timestamp: float64(time.Now().UnixNano()) / 1e9,
+			Data:      string(conflictData),
+		}
+		go processTelemetryEvent(context.Background(), logger, db, nk, userID, conflictEvent)
+
 	case ConsensusResultOk, ConsensusResultForfeitWin:
 		actualWon = req.Won
 		if consensusResult == ConsensusResultOk && activeMatch.OpponentID != "" {
@@ -1210,7 +1232,6 @@ func preparePlayerXP(ctx context.Context, nk runtime.NakamaModule, logger runtim
 
 	return resultLevel, pending, nil
 }
-
 
 // EconomyConfig holds match reward and token exchange configuration.
 type EconomyConfig struct {

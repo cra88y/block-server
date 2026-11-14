@@ -64,7 +64,7 @@ max_size = 536870912 # 512MB
 [transforms.filter_discord_alerts]
 type = "filter"
 inputs = ["parse_json"]
-condition = 'includes(["crash", "non_fatal_error", "server_error", "iap_purchase", "match_abandoned", "user_feedback"], .event_type)'
+condition = 'includes(["crash", "non_fatal_error", "server_error", "iap_purchase", "user_feedback"], .event_type)'
 
 [transforms.throttle_discord]
 type = "throttle"
@@ -90,9 +90,6 @@ source = '''
   } else if event == "iap_purchase" {
     title_str = "usd :: " + event
     color_int = 10933100 # green (#a6e3a1)
-  } else if event == "match_abandoned" {
-    title_str = "wrn :: " + event
-    color_int = 16377227 # yellow (#f9e2af)
   } else if event == "user_feedback" {
     title_str = "msg :: " + event
     color_int = 13813982 # pink (#f5c2e7)
