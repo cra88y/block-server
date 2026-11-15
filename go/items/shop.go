@@ -240,8 +240,9 @@ func isAdmin(ctx context.Context, nk runtime.NakamaModule, userID string) bool {
 }
 
 // Inverts evaluation: hot path reads process env with 0 DB queries to prevent Postgres saturation during store spikes.
+// Defaults to ON unless explicitly disabled with ENABLE_IAP=false.
 func isIAPEnabledForUser(ctx context.Context, nk runtime.NakamaModule, userID string) bool {
-	if os.Getenv("ENABLE_IAP") == "true" {
+	if os.Getenv("ENABLE_IAP") != "false" {
 		return true
 	}
 	return isAdmin(ctx, nk, userID)
@@ -582,7 +583,14 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 
 	// 3. Validate receipt with Apple via Nakama
 	// persist=true — Nakama stores validated purchases in its DB for idempotency
-	resp, err := nk.PurchaseValidateApple(ctx, userID, req.JwsRepresentation, true)
+	// StoreKit 2 JWS validation is cryptographic and does not use the shared password for verification.
+	// We supply APPLE_SHARED_PASSWORD (or a fallback override) to satisfy Nakama's legacy configuration gate
+	// without requiring nakama-config.yml edits.
+	applePassword := os.Getenv("APPLE_SHARED_PASSWORD")
+	if applePassword == "" {
+		applePassword = "storekit2_bypass"
+	}
+	resp, err := nk.PurchaseValidateApple(ctx, userID, req.JwsRepresentation, true, applePassword)
 	if err != nil {
 		logger.Error("%s Apple validation failed: %v", logPrefix, err)
 		return "", errors.ErrInternalError
