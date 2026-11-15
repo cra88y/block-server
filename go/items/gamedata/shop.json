@@ -510,7 +510,7 @@
   },
   "iap_products": [
     {
-      "product_id": "com.blockjitsu.testpack1",
+      "product_id": "com.blockjitsu.style_pack",
       "usd_cents": 199,
       "rewards": [
         {
@@ -528,7 +528,7 @@
       ]
     },
     {
-      "product_id": "com.blockjitsu.testpack2",
+      "product_id": "com.blockjitsu.starter_pack",
       "usd_cents": 999,
       "rewards": [
         {
@@ -555,7 +555,7 @@
       ]
     },
     {
-      "product_id": "com.blockjitsu.testpack3",
+      "product_id": "com.blockjitsu.gems_1000",
       "usd_cents": 499,
       "rewards": [
         {
