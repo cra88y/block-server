@@ -22,12 +22,12 @@ var shopdata []byte
 
 // Shop configuration loaded from gamedata/shop.json
 type ShopConfig struct {
-	ExchangeRates      ExchangeRates               `json:"exchange_rates"`
-	LootboxTiers       map[string]LootboxTierDef   `json:"lootbox_tiers"`
-	ShopItems          []ShopItem                  `json:"shop_items"`
-	RotationConfig     RotationConfig              `json:"rotation_config"`
-	IAPProducts        []IAPProduct                `json:"iap_products"`
-	ItemPools          map[string][]PoolItem       `json:"item_pools"`
+	ExchangeRates      ExchangeRates                `json:"exchange_rates"`
+	LootboxTiers       map[string]LootboxTierDef    `json:"lootbox_tiers"`
+	ShopItems          []ShopItem                   `json:"shop_items"`
+	RotationConfig     RotationConfig               `json:"rotation_config"`
+	IAPProducts        []IAPProduct                 `json:"iap_products"`
+	ItemPools          map[string][]PoolItem        `json:"item_pools"`
 	DuplicateFallbacks map[string]DuplicateFallback `json:"duplicate_fallbacks"`
 }
 
@@ -91,18 +91,18 @@ type RotationConfig struct {
 }
 
 type IAPBundleReward struct {
-	Type   string `json:"type"`             // "currency", "pet", "class", "lootbox"
-	ID     string `json:"id,omitempty"`     // e.g., "gems", "premium" (for lootboxes)
-	ItemID uint32 `json:"item_id,omitempty"`// e.g., 4 (for pets/classes)
-	Amount int    `json:"amount,omitempty"` // For currencies/lootboxes
+	Type   string `json:"type"`              // "currency", "pet", "class", "lootbox"
+	ID     string `json:"id,omitempty"`      // e.g., "gems", "premium" (for lootboxes)
+	ItemID uint32 `json:"item_id,omitempty"` // e.g., 4 (for pets/classes)
+	Amount int    `json:"amount,omitempty"`  // For currencies/lootboxes
 }
 
 type IAPProduct struct {
 	ProductID     string            `json:"product_id"`
-	Gems          int               `json:"gems"`             // Base gems (legacy/simple support)
+	Gems          int               `json:"gems"` // Base gems (legacy/simple support)
 	USDCents      int               `json:"usd_cents"`
-	RevokeGemDebt int               `json:"revoke_gem_debt"`  // Penalty applied if bundle is refunded
-	Rewards       []IAPBundleReward `json:"rewards,omitempty"`// Dynamic starter pack contents
+	RevokeGemDebt int               `json:"revoke_gem_debt"`   // Penalty applied if bundle is refunded
+	Rewards       []IAPBundleReward `json:"rewards,omitempty"` // Dynamic starter pack contents
 }
 
 // ValidateIAPPayload is the client request for IAP receipt validation.
@@ -580,14 +580,7 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		return "", errors.ErrItemNotAvailable
 	}
 
-	// Persist=true records validated purchases in Nakama's SQL purchase ledger for cross-session replay tracking.
-	// StoreKit 2 JWS verification is cryptographic (PKI) and does not consume the shared secret for signature checks.
-	// We pass APPLE_SHARED_PASSWORD (with fallback) to satisfy Nakama's runtime wrapper gate without requiring nakama-config.yml edits.
-	applePassword := os.Getenv("APPLE_SHARED_PASSWORD")
-	if applePassword == "" {
-		applePassword = "storekit2_bypass"
-	}
-	resp, err := nk.PurchaseValidateApple(ctx, userID, req.JwsRepresentation, true, applePassword)
+	resp, err := nk.PurchaseValidateApple(ctx, userID, req.JwsRepresentation, true)
 	if err != nil {
 		logger.Error("%s Apple validation failed: %v", logPrefix, err)
 		return "", errors.ErrInternalError
@@ -723,11 +716,11 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 
 	// Emit telemetry for IAP purchase
 	EmitServerTelemetry(logger, userID, "iap_purchase", map[string]interface{}{
-		"currency": "usd", 
-		"amount":   float64(product.USDCents) / 100.0,
-		"source":   "iap",
-		"sink":     "wallet",
-		"product_id": req.ProductID,
+		"currency":     "usd",
+		"amount":       float64(product.USDCents) / 100.0,
+		"source":       "iap",
+		"sink":         "wallet",
+		"product_id":   req.ProductID,
 		"gems_granted": product.Gems,
 	})
 
@@ -998,7 +991,7 @@ func RpcRevokeIAPPurchase(ctx context.Context, logger runtime.Logger, db *sql.DB
 	grant.RevokedAt = &now
 
 	grantBytes, _ := json.Marshal(grant)
-	
+
 	var product *IAPProduct
 	for _, p := range shopConfig.IAPProducts {
 		if p.ProductID == grant.ProductId {
