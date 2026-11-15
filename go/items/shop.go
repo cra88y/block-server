@@ -103,6 +103,14 @@ type IAPProduct struct {
 	USDCents      int               `json:"usd_cents"`
 	RevokeGemDebt int               `json:"revoke_gem_debt"`   // Penalty applied if bundle is refunded
 	Rewards       []IAPBundleReward `json:"rewards,omitempty"` // Dynamic starter pack contents
+	IsEnabled     *bool             `json:"is_enabled,omitempty"`
+}
+
+func (p *IAPProduct) Active() bool {
+	if p.IsEnabled == nil {
+		return true
+	}
+	return *p.IsEnabled
 }
 
 // ValidateIAPPayload is the client request for IAP receipt validation.
@@ -255,7 +263,13 @@ func getAvailableIAPProducts(ctx context.Context, nk runtime.NakamaModule, userI
 	if shopConfig == nil {
 		return nil
 	}
-	return shopConfig.IAPProducts
+	var available []IAPProduct
+	for _, p := range shopConfig.IAPProducts {
+		if p.Active() {
+			available = append(available, p)
+		}
+	}
+	return available
 }
 
 // RpcGetShopCatalog returns the current shop state
@@ -655,8 +669,8 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 			break
 		}
 	}
-	if product == nil {
-		logger.Error("%s Unknown product", logPrefix)
+	if product == nil || !product.Active() {
+		logger.Error("%s Unknown or disabled product", logPrefix)
 		return "", errors.ErrInvalidInput
 	}
 

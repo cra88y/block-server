@@ -510,7 +510,41 @@
   },
   "iap_products": [
     {
+      "product_id": "com.blockjitsu.gems_1",
+      "usd_cents": 99,
+      "rewards": [
+        {
+          "type": "currency",
+          "id": "gems",
+          "amount": 400
+        }
+      ]
+    },
+    {
+      "product_id": "com.blockjitsu.gems_5",
+      "usd_cents": 499,
+      "rewards": [
+        {
+          "type": "currency",
+          "id": "gems",
+          "amount": 2200
+        }
+      ]
+    },
+    {
+      "product_id": "com.blockjitsu.gems_10",
+      "usd_cents": 999,
+      "rewards": [
+        {
+          "type": "currency",
+          "id": "gems",
+          "amount": 5000
+        }
+      ]
+    },
+    {
       "product_id": "com.blockjitsu.style_pack",
+      "is_enabled": false,
       "usd_cents": 199,
       "rewards": [
         {
@@ -529,6 +563,7 @@
     },
     {
       "product_id": "com.blockjitsu.starter_pack",
+      "is_enabled": false,
       "usd_cents": 999,
       "rewards": [
         {
@@ -551,17 +586,6 @@
           "type": "currency",
           "id": "gems",
           "amount": 500
-        }
-      ]
-    },
-    {
-      "product_id": "com.blockjitsu.gems_1000",
-      "usd_cents": 499,
-      "rewards": [
-        {
-          "type": "currency",
-          "id": "gems",
-          "amount": 1000
         }
       ]
     }
