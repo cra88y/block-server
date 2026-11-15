@@ -568,7 +568,6 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		return "", errors.ErrInvalidInput
 	}
 
-	// Structured log prefix for correlation
 	logPrefix := fmt.Sprintf("[IAP] tx=%s origTx=%s user=%s product=%s",
 		req.TransactionId, req.OriginalTransactionId, userID, req.ProductID)
 
@@ -581,11 +580,9 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		return "", errors.ErrItemNotAvailable
 	}
 
-	// 3. Validate receipt with Apple via Nakama
-	// persist=true — Nakama stores validated purchases in its DB for idempotency
-	// StoreKit 2 JWS validation is cryptographic and does not use the shared password for verification.
-	// We supply APPLE_SHARED_PASSWORD (or a fallback override) to satisfy Nakama's legacy configuration gate
-	// without requiring nakama-config.yml edits.
+	// Persist=true records validated purchases in Nakama's SQL purchase ledger for cross-session replay tracking.
+	// StoreKit 2 JWS verification is cryptographic (PKI) and does not consume the shared secret for signature checks.
+	// We pass APPLE_SHARED_PASSWORD (with fallback) to satisfy Nakama's runtime wrapper gate without requiring nakama-config.yml edits.
 	applePassword := os.Getenv("APPLE_SHARED_PASSWORD")
 	if applePassword == "" {
 		applePassword = "storekit2_bypass"
@@ -601,7 +598,6 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		return "", errors.ErrInvalidInput
 	}
 
-	// 4. Find the matching purchase
 	var purchase *api.ValidatedPurchase
 	for _, p := range resp.ValidatedPurchases {
 		if p.ProductId == req.ProductID {
@@ -614,8 +610,8 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		return "", errors.ErrInvalidInput
 	}
 
-	// 4b. Identity Binding & Cryptographic Extraction
-	// Nakama provides Apple's raw JSON decoded JWT payload in ProviderResponse
+	// Verify cryptographic appAccountToken from Apple's decoded JWT payload matches the session user.
+	// Prevents cross-account receipt injection where User A purchases and User B claims.
 	var providerPayload struct {
 		AppAccountToken       string `json:"appAccountToken"`
 		OriginalTransactionId string `json:"originalTransactionId"`
@@ -624,7 +620,6 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		logger.Error("%s Failed to decode Apple provider response: %v", logPrefix, err)
 		return "", errors.ErrInvalidInput
 	}
-	// Apple returns UUIDs in uppercase or lowercase. Compare case-insensitively.
 	if !strings.EqualFold(providerPayload.AppAccountToken, userID) {
 		LogCriticalAlert(ctx, logger, fmt.Sprintf("%s CRITICAL: Identity Binding failure!", logPrefix), nil, map[string]interface{}{
 			"appAccountToken": providerPayload.AppAccountToken,
@@ -639,7 +634,9 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		return "", errors.ErrInvalidInput
 	}
 
-	// 5. Absolute Idempotency Check: Query Nakama Storage
+	// Absolute idempotency: storage record presence indicates full grant completion.
+	// If Nakama's purchase table recorded SeenBefore but the storage grant is absent,
+	// a crash occurred between Apple receipt ingestion and DB grant; proceed safely to complete it.
 	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
 		Collection: StorageCollectionIAPPurchases,
 		Key:        verifiedOrigTxId,
@@ -653,17 +650,11 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		}
 	}
 
-	// Note: If purchase.SeenBefore == true but the storage record DOES NOT exist, 
-	// it means the server crashed exactly between Apple validation and gem granting.
-	// We safely proceed to grant gems, fixing the 'Ghost Purchase' bug.
-
-	// 6. Check for refunds
 	if purchase.RefundTime != nil && !purchase.RefundTime.AsTime().IsZero() {
 		logger.Warn("%s Refunded — skipping grant", logPrefix)
 		return "", errors.ErrInvalidInput
 	}
 
-	// 7. Look up product in server config to determine payout
 	var product *IAPProduct
 	for _, p := range shopConfig.IAPProducts {
 		if p.ProductID == req.ProductID {
@@ -676,9 +667,9 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		return "", errors.ErrInvalidInput
 	}
 
-	// 8. Grant items and persist record ATOMICALLY
+	// Atomic multi-resource commit: wallet balance, inventory mutations, and grant record
+	// share a single transaction to eliminate orphan grants during mid-flight worker restarts.
 	pending := NewPendingWrites()
-	
 	if product.Gems > 0 {
 		pending.AddWalletUpdateWithContext(userID, map[string]int64{"gems": int64(product.Gems)}, "iap_grant", req.ProductID)
 	}
