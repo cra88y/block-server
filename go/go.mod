@@ -1,8 +1,7 @@
 module block-server
 
-go 1.25.0
+go 1.25.5
 
-require (
-	github.com/heroiclabs/nakama-common v1.42.1
-	google.golang.org/protobuf v1.36.8
-)
+require github.com/heroiclabs/nakama-common v1.44.2
+
+require google.golang.org/protobuf v1.36.11 // indirect

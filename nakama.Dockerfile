@@ -2,7 +2,7 @@
 
 # |1| build go modules
 # match the version for both heroic images
-FROM heroiclabs/nakama-pluginbuilder:3.32.1 AS builder
+FROM heroiclabs/nakama-pluginbuilder:3.37.0 AS builder
 ENV GO111MODULE on
 ENV CGO_ENABLED 1
 
@@ -23,7 +23,7 @@ RUN npm run build
 
 # |3| build final nakama image
 # match the version for both heroic images
-FROM heroiclabs/nakama:3.32.1
+FROM heroiclabs/nakama:3.37.0
 
 # copy built ts/go modules
 COPY --from=builder /_work/backend.so /nakama/data/modules/	

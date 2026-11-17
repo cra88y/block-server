@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -594,7 +595,7 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		return "", errors.ErrItemNotAvailable
 	}
 
-	resp, err := nk.PurchaseValidateApple(ctx, userID, req.JwsRepresentation, true)
+	resp, err := nk.PurchaseValidateApple(ctx, userID, req.JwsRepresentation, true, os.Getenv("IAP_APPLE_SHARED_SECRET"))
 	if err != nil {
 		logger.Error("%s Apple validation failed: %v", logPrefix, err)
 		return "", errors.ErrInternalError
@@ -619,12 +620,23 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 
 	// Verify cryptographic appAccountToken from Apple's decoded JWT payload matches the session user.
 	// Prevents cross-account receipt injection where User A purchases and User B claims.
+	parts := strings.Split(req.JwsRepresentation, ".")
+	if len(parts) != 3 {
+		logger.Error("%s Malformed JWS format", logPrefix)
+		return "", errors.ErrInvalidInput
+	}
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		logger.Error("%s Failed to base64 decode JWS payload: %v", logPrefix, err)
+		return "", errors.ErrInvalidInput
+	}
+
 	var providerPayload struct {
 		AppAccountToken       string `json:"appAccountToken"`
 		OriginalTransactionId string `json:"originalTransactionId"`
 	}
-	if err := json.Unmarshal([]byte(purchase.ProviderResponse), &providerPayload); err != nil {
-		logger.Error("%s Failed to decode Apple provider response: %v", logPrefix, err)
+	if err := json.Unmarshal(payloadBytes, &providerPayload); err != nil {
+		logger.Error("%s Failed to decode Apple provider payload: %v", logPrefix, err)
 		return "", errors.ErrInvalidInput
 	}
 	if !strings.EqualFold(providerPayload.AppAccountToken, userID) {
@@ -637,7 +649,13 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 
 	verifiedOrigTxId := providerPayload.OriginalTransactionId
 	if verifiedOrigTxId == "" {
-		logger.Error("%s CRITICAL: No originalTransactionId in Apple payload", logPrefix)
+		verifiedOrigTxId = purchase.TransactionId
+	}
+	if verifiedOrigTxId == "" {
+		verifiedOrigTxId = req.TransactionId
+	}
+	if verifiedOrigTxId == "" {
+		logger.Error("%s CRITICAL: No transaction identifiers found in Apple payload", logPrefix)
 		return "", errors.ErrInvalidInput
 	}
 
@@ -657,15 +675,17 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		}
 	}
 
-	if purchase.RefundTime != nil && !purchase.RefundTime.AsTime().IsZero() {
+	// In StoreKit 2 JWS, unrevoked purchases yield RevocationDate == 0 -> Unix(0,0), which has Seconds == 0.
+	// AsTime().IsZero() is false for Unix epoch 1970; we must test Seconds > 0 to detect real revocations.
+	if purchase.RefundTime != nil && purchase.RefundTime.Seconds > 0 {
 		logger.Warn("%s Refunded — skipping grant", logPrefix)
 		return "", errors.ErrInvalidInput
 	}
 
 	var product *IAPProduct
-	for _, p := range shopConfig.IAPProducts {
-		if p.ProductID == req.ProductID {
-			product = &p
+	for i := range shopConfig.IAPProducts {
+		if shopConfig.IAPProducts[i].ProductID == req.ProductID {
+			product = &shopConfig.IAPProducts[i]
 			break
 		}
 	}

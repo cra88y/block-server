@@ -11,7 +11,7 @@ services:
       - block_db_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${DB_USER}", "-d", "${DB_NAME}"]
+      test: [ "CMD", "pg_isready", "-U", "${DB_USER}", "-d", "${DB_NAME}" ]
       interval: 3s
       timeout: 3s
       retries: 5
@@ -28,21 +28,21 @@ services:
     ports:
       - '7350:7350'
     healthcheck:
-      test: ["CMD", "/nakama/nakama", "healthcheck"]
+      test: [ "CMD", "/nakama/nakama", "healthcheck" ]
       interval: 10s
       timeout: 5s
       retries: 5
 
   prometheus:
     image: prom/prometheus
-    command: ['--config.file=/etc/prometheus/prometheus.yml']
+    command: [ '--config.file=/etc/prometheus/prometheus.yml' ]
     restart: unless-stopped
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
 
   vector:
     image: 'timberio/vector:0.45.0-debian'
-    command: ["--config", "/etc/vector/vector.toml"]
+    command: [ "--config", "/etc/vector/vector.toml" ]
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -57,7 +57,7 @@ services:
     depends_on:
       - nakama
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8686/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8686/health" ]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -157,6 +157,9 @@ const (
 
 	// Tick rate defined for this match. Only applicable to server authoritative multiplayer.
 	RUNTIME_CTX_MATCH_TICK_RATE = "match_tick_rate"
+
+	// Trace identifier serves to distinguish requests for debugging purposes.
+	RUNTIME_CTX_TRACE_ID = "trace_id"
 )
 
 var (
@@ -892,6 +895,9 @@ type Initializer interface {
 
 	// RegisterHttp attaches a new HTTP handler to a specified path on the main client API server endpoint.
 	RegisterHttp(pathPattern string, handler func(http.ResponseWriter, *http.Request), methods ...string) error
+
+	// RegisterConsoleHttp attaches a new HTTP handler to a specified path on the main console API server endpoint.
+	RegisterConsoleHttp(pathPattern string, handler func(http.ResponseWriter, *http.Request), methods ...string) error
 }
 
 type PresenceReason uint8
@@ -1351,13 +1357,78 @@ type Satori interface {
 	PropertiesUpdate(ctx context.Context, id string, properties *PropertiesUpdate) error
 	EventsPublish(ctx context.Context, id string, events []*Event, ipAddress ...string) error
 	ServerEventsPublish(ctx context.Context, events []*Event, ipAddress ...string) error
-	ExperimentsList(ctx context.Context, id string, names ...string) (*ExperimentList, error)
-	FlagsList(ctx context.Context, id string, names ...string) (*FlagList, error)
-	FlagsOverridesList(ctx context.Context, id string, names ...string) (*FlagOverridesList, error)
-	LiveEventsList(ctx context.Context, id string, names ...string) (*LiveEventList, error)
-	MessagesList(ctx context.Context, id string, limit int, forward bool, cursor string) (*MessageList, error)
+	ExperimentsList(ctx context.Context, id string, names, labels []string) (*ExperimentList, error)
+	FlagsList(ctx context.Context, id string, names, labels []string) (*FlagList, error)
+	FlagsOverridesList(ctx context.Context, id string, names, labels []string) (*FlagOverridesList, error)
+	LiveEventsList(ctx context.Context, id string, names, labels []string, pastRunCount, futureRunCount int32, startTimeSec, endTimeSec int64) (*LiveEventList, error)
+	LiveEventJoin(ctx context.Context, id, liveEventId string) error
+	MessagesList(ctx context.Context, id string, limit int, forward bool, cursor string, messageIDs []string) (*MessageList, error)
 	MessageUpdate(ctx context.Context, id, messageId string, readTime, consumeTime int64) error
 	MessageDelete(ctx context.Context, id, messageId string) error
+	ConsoleDirectMessageSend(ctx context.Context, templateId string, recipientIDs []string, integrations []SatoriMessageIntegration, persist bool, channels map[SatoriMessageIntegration]*SatoriMessageIntegrationChannels, templateOverride *SatoriMessageTemplateOverride) (*SatoriMessageSendResults, error)
+}
+
+type SatoriMessageIntegration int
+
+const (
+	SatoriMessageIntegrationUnknown SatoriMessageIntegration = 0
+	// The variant for Google's Firebase Cloud Messaging.
+	SatoriMessageIntegrationFCM SatoriMessageIntegration = 1
+	// The variant for Apple's Message system.
+	SatoriMessageIntegrationAPNS SatoriMessageIntegration = 2
+	// The variant for Facebook App-to-User Notifications.
+	SatoriMessageIntegrationFacebookNotification SatoriMessageIntegration = 3
+	// The variant for OneSignal Notifications.
+	SatoriMessageIntegrationOneSignalNotification SatoriMessageIntegration = 4
+	// The variant for Webhook Notifications.
+	SatoriMessageIntegrationWebhookNotification SatoriMessageIntegration = 5
+)
+
+type SatoriMessageIntegrationChannel int
+
+const (
+	SatoriMessageIntegrationChannelDefault SatoriMessageIntegrationChannel = 0
+	// Push notification.
+	SatoriMessageIntegrationChannelPush SatoriMessageIntegrationChannel = 1
+	// Email.
+	SatoriMessageIntegrationChannelEmail SatoriMessageIntegrationChannel = 2
+)
+
+type SatoriMessageIntegrationChannels struct {
+	Channels []SatoriMessageIntegrationChannel `json:"channels,omitempty"`
+}
+
+type SatoriMessageTemplateOverride struct {
+	// Message title.
+	Title string `json:"title,omitempty"`
+	// Message template contents.
+	Value string `json:"value,omitempty"`
+	// Image URL.
+	ImageURL string `json:"image_url,omitempty"`
+	// JSON-encoded metadata.
+	JsonMetadata string `json:"json_metadata,omitempty"`
+	// Optional language-specific override template values.
+	Variants map[string]*SatoriMessageTemplateOverride `json:"variants,omitempty"`
+}
+
+type SatoriMessageSendResults struct {
+	DeliveryResults []*SatoriMessageSendResult `json:"delivery_results,omitempty"`
+}
+
+type SatoriMessageSendResult struct {
+	RecipientID        string                                `json:"recipient_id,omitempty"`
+	IntegrationResults []*SatoriMessageSendIntegrationResult `json:"integration_results,omitempty"`
+}
+
+type SatoriMessageSendIntegrationResult struct {
+	IntegrationType SatoriMessageIntegration        `json:"integration_type,omitempty"`
+	Success         bool                            `json:"success,omitempty"`
+	ErrorMessage    string                          `json:"error_message,omitempty"`
+	ChannelType     SatoriMessageIntegrationChannel `json:"channel_type,omitempty"`
+}
+
+type SatoriLabeled interface {
+	GetLabels() []string
 }
 
 type Properties struct {
@@ -1393,8 +1464,13 @@ type ExperimentList struct {
 }
 
 type Experiment struct {
-	Name  string `json:"name,omitempty"`
-	Value string `json:"value,omitempty"`
+	Name   string   `json:"name,omitempty"`
+	Value  string   `json:"value,omitempty"`
+	Labels []string `json:"labels,omitempty"`
+}
+
+func (e *Experiment) GetLabels() []string {
+	return e.Labels
 }
 
 type FlagList struct {
@@ -1406,9 +1482,14 @@ type FlagOverridesList struct {
 }
 
 type FlagOverrides struct {
-	FlagName string `protobuf:"bytes,1,opt,name=flag_name,json=flagName,proto3" json:"flag_name,omitempty"`
+	FlagName string   `json:"flag_name,omitempty"`
+	Labels   []string `json:"labels,omitempty"`
 	// The list of configuration that affect the value of the flag.
 	Overrides []*FlagOverride `json:"overrides,omitempty"`
+}
+
+func (fo *FlagOverrides) GetLabels() []string {
+	return fo.Labels
 }
 
 type FlagOverride struct {
@@ -1447,14 +1528,19 @@ func (ot OverrideType) String() string {
 }
 
 type Flag struct {
-	Name              string `json:"name,omitempty"`
-	Value             string `json:"value,omitempty"`
-	ConditionChanged  bool   `json:"condition_changed,omitempty"`
+	Name              string   `json:"name,omitempty"`
+	Value             string   `json:"value,omitempty"`
+	Labels            []string `json:"labels,omitempty"`
+	ConditionChanged  bool     `json:"condition_changed,omitempty"`
 	ValueChangeReason *struct {
 		Type        FlagType `json:"type,omitempty"`
 		Name        string   `json:"name,omitempty"`
 		VariantName string   `json:"variant_name,omitempty"`
 	} `json:"change_reason,omitempty"`
+}
+
+func (f *Flag) GetLabels() []string {
+	return f.Labels
 }
 
 type FlagType int
@@ -1481,21 +1567,52 @@ func (ft FlagType) String() string {
 	}
 }
 
-type LiveEventList struct {
-	LiveEvents []*LiveEvent `json:"live_events,omitempty"`
+type LiveEvent struct {
+	Name               string          `json:"name,omitempty"`
+	Description        string          `json:"description,omitempty"`
+	Value              string          `json:"value,omitempty"`
+	Labels             []string        `json:"labels,omitempty"`
+	ActiveStartTimeSec int64           `json:"active_start_time_sec,string,omitempty"`
+	ActiveEndTimeSec   int64           `json:"active_end_time_sec,string,omitempty"`
+	Id                 string          `json:"id,omitempty"`
+	StartTimeSec       int64           `json:"start_time_sec,string,omitempty"`
+	EndTimeSec         int64           `json:"end_time_sec,string,omitempty"`
+	DurationSec        int64           `json:"duration_sec,string,omitempty"`
+	ResetCronExpr      string          `json:"reset_cron,omitempty"`
+	Status             LiveEventStatus `json:"status,omitempty"`
 }
 
-type LiveEvent struct {
-	Name               string `json:"name,omitempty"`
-	Description        string `json:"description,omitempty"`
-	Value              string `json:"value,omitempty"`
-	ActiveStartTimeSec int64  `json:"active_start_time_sec,string,omitempty"`
-	ActiveEndTimeSec   int64  `json:"active_end_time_sec,string,omitempty"`
-	Id                 string `json:"id,omitempty"`
-	StartTimeSec       int64  `json:"start_time_sec,string,omitempty"`
-	EndTimeSec         int64  `json:"end_time_sec,string,omitempty"`
-	DurationSec        int64  `json:"duration_sec,string,omitempty"`
-	ResetCronExpr      string `json:"reset_cron,omitempty"`
+type LiveEventList struct {
+	LiveEvents             []*LiveEvent `json:"live_events,omitempty"`
+	ExplicitJoinLiveEvents []*LiveEvent `json:"explicit_join_live_events"`
+}
+
+type LiveEventStatus int
+
+const (
+	LiveEventUnknown    LiveEventStatus = 0
+	LiveEventActive     LiveEventStatus = 1
+	LiveEventUpcoming   LiveEventStatus = 2
+	LiveEventTerminated LiveEventStatus = 3
+)
+
+func (ls LiveEventStatus) String() string {
+	switch ls {
+	case LiveEventUnknown:
+		return "UNKNOWN"
+	case LiveEventActive:
+		return "ACTIVE"
+	case LiveEventUpcoming:
+		return "UPCOMING"
+	case LiveEventTerminated:
+		return "TERMINATED"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func (le *LiveEvent) GetLabels() []string {
+	return le.Labels
 }
 
 type MessageList struct {
