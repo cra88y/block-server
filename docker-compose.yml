@@ -56,6 +56,12 @@ services:
       - AWS_REQUEST_CHECKSUM_CALCULATION=WHEN_REQUIRED
     depends_on:
       - nakama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8686/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 volumes:
   block_db_data:
   vector_data:

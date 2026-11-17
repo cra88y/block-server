@@ -25,5 +25,5 @@ exec /nakama/nakama \
   --console.signing_key "${CONSOLE_SIGNING_KEY}" \
   --logger.level "${NAKAMA_LOG_LEVEL}" \
   --iap.apple.shared_password "${IAP_APPLE_SHARED_SECRET}" \
-  --iap.apple.notifications_endpoint_id  "${IAP_APPLE_NOTIFICATIONS_ENDPOINT_ID}"
-  
+  --iap.apple.notifications_endpoint_id "${IAP_APPLE_NOTIFICATIONS_ENDPOINT_ID}"
+
