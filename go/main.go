@@ -42,6 +42,9 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 		items.LeaderboardSoloSeason, items.LeaderboardSoloWeekly,
 		items.Leaderboard1v1Season, items.Leaderboard1v1Weekly)
 
+	items.StartAttributionWorkers(logger, nk)
+	items.InitAttributionQueue(ctx, logger, nk)
+
 	if err := initializer.RegisterAfterAuthenticateDevice(items.AfterAuthorizeUserDevice); err != nil {
 		logger.Error("Unable to register: %v", err)
 		return err
@@ -198,6 +201,10 @@ func InitModule(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runti
 	}
 	if err := initializer.RegisterRpc("submit_telemetry", items.RpcSubmitTelemetry); err != nil {
 		logger.Error("Unable to register: %v", err)
+		return err
+	}
+	if err := initializer.RegisterRpc("submit_attribution_token", items.RpcSubmitAttributionToken); err != nil {
+		logger.Error("Unable to register submit_attribution_token: %v", err)
 		return err
 	}
 

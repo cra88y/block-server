@@ -14,26 +14,25 @@ import (
 
 // Wire-protocol whitelist. Must match client-side TelemetryEventTypes.cs.
 var validEventTypes = map[string]bool{
-	"match_started":           true,
-	"match_abandoned":         true,
-	"performance":             true,
-	"performance_baseline":    true,
-	"performance_breach":      true,
-	"crash":                   true,
-	"app_exit":                true,
-	"session_start":           true,
-	"session_end":             true,
-	"ability_used":            true,
-	"latency":                 true,
-	"state_hash":              true,
-	"social_event":            true,
-	"user_feedback":           true,
-	"non_fatal_error":         true,
-	"onboarding_progress":     true,
-	"shop_interaction":        true,
-	"shop_viewed":             true,
-	"matchmaking":             true,
-	"server_error":            true,
+	"match_started":        true,
+	"match_abandoned":      true,
+	"performance":          true,
+	"performance_baseline": true,
+	"performance_breach":   true,
+	"crash":                true,
+	"app_exit":             true,
+	"session_start":        true,
+	"session_end":          true,
+	"ability_used":         true,
+	"latency":              true,
+	"social_event":         true,
+	"user_feedback":        true,
+	"non_fatal_error":      true,
+	"onboarding_progress":  true,
+	"shop_interaction":     true,
+	"shop_viewed":          true,
+	"matchmaking":          true,
+	"server_error":         true,
 
 	// Network Recovery & Resilience
 	"network_ghost_socket_detected":   true,
@@ -43,7 +42,6 @@ var validEventTypes = map[string]bool{
 	"network_match_salvaged":          true,
 	"match_forfeit_grace_expired":     true,
 	"match_forfeit_grace_cancelled":   true,
-	"snapshot_integrity_failure":       true,
 }
 
 const retentionDays = 30
@@ -122,6 +120,15 @@ func validateTelemetryEvent(event *TelemetryEvent) error {
 }
 
 func processTelemetryEvent(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, userID string, event TelemetryEvent) error {
+	if event.EventType == "session_start" {
+		var startPayload struct {
+			AttributionToken string `json:"attribution_token"`
+		}
+		if err := json.Unmarshal([]byte(event.Data), &startPayload); err == nil && startPayload.AttributionToken != "" {
+			_ = EnqueueAttributionToken(ctx, logger, nk, userID, startPayload.AttributionToken, "ios")
+		}
+	}
+
 	// We format it as a structured log line that Vector can easily parse
 	logger.WithField("payload", json.RawMessage(event.Data)).
 		WithField("event_type", event.EventType).
