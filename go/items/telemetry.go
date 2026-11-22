@@ -32,6 +32,8 @@ var validEventTypes = map[string]bool{
 	"shop_interaction":     true,
 	"shop_viewed":          true,
 	"matchmaking":          true,
+	"store_review_prompted": true,
+	"attribution_submitted": true,
 	"server_error":         true,
 
 	// Network Recovery & Resilience
