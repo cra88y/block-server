@@ -10,15 +10,6 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-const (
-	DefaultPetID        = 0
-	DefaultClassID      = 0
-	DefaultBackgroundID = 0
-	DefaultPieceStyleID = 0
-
-	WhiteoutPieceStyleID = 8
-)
-
 func AfterAuthorizeUserGC(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, out *api.Session, in *api.AuthenticateGameCenterRequest) error {
 	if err := InitializeUser(ctx, logger, db, nk, out); err != nil {
 		logger.Error("User initialization failed: %v", err)

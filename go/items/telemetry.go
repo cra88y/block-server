@@ -43,6 +43,7 @@ var validEventTypes = map[string]bool{
 	"network_match_salvaged":          true,
 	"match_forfeit_grace_expired":     true,
 	"match_forfeit_grace_cancelled":   true,
+	"snapshot_integrity_failure":       true,
 }
 
 const retentionDays = 30

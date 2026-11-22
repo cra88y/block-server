@@ -63,7 +63,7 @@ func LoadGameData() error {
 
 		for name, tree := range raw.Items.LevelTrees {
 			t := tree
-			
+
 			// Validate level_thresholds array
 			if len(t.LevelThresholds) < t.MaxLevel+1 {
 				parseErrors = append(parseErrors, fmt.Errorf("level tree %q has invalid level_thresholds length (got %d, expected at least %d)", name, len(t.LevelThresholds), t.MaxLevel+1))
@@ -76,7 +76,7 @@ func LoadGameData() error {
 					}
 				}
 			}
-			
+
 			GameData.LevelTrees[name] = t
 		}
 
@@ -255,7 +255,7 @@ func GetStarterPack() *StarterPack {
 		Pets:        []uint32{0},
 		Classes:     []uint32{0},
 		Backgrounds: []uint32{0},
-		PieceStyles: []uint32{0},
+		PieceStyles: []uint32{61},
 	}
 }
 

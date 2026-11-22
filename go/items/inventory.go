@@ -29,6 +29,7 @@ func PrepareEquipDefaults(ctx context.Context, nk runtime.NakamaModule, userID s
 
 	// NOTE (PL-7): Assumes StorageRead returns objects in request order.
 	// Safe for current Nakama version. Verify on major version upgrades.
+	pack := GetStarterPack()
 	for i, key := range []string{storageKeyPet, storageKeyClass, storageKeyBackground, storageKeyPieceStyle} {
 		var version string
 		if i < len(objects) && objects[i] != nil {
@@ -38,13 +39,13 @@ func PrepareEquipDefaults(ctx context.Context, nk runtime.NakamaModule, userID s
 		var itemID uint32
 		switch key {
 		case storageKeyPet:
-			itemID = DefaultPetID
+			itemID = pack.DefaultPet()
 		case storageKeyClass:
-			itemID = DefaultClassID
+			itemID = pack.DefaultClass()
 		case storageKeyBackground:
-			itemID = DefaultBackgroundID
+			itemID = pack.DefaultBackground()
 		case storageKeyPieceStyle:
-			itemID = DefaultPieceStyleID
+			itemID = pack.DefaultPieceStyle()
 		}
 
 		data := EquipmentData{ID: itemID}

@@ -30,6 +30,34 @@ type StarterPack struct {
 	PieceStyles []uint32 `json:"piece_styles"`
 }
 
+func (s *StarterPack) DefaultPet() uint32 {
+	if s != nil && len(s.Pets) > 0 {
+		return s.Pets[0]
+	}
+	return 0
+}
+
+func (s *StarterPack) DefaultClass() uint32 {
+	if s != nil && len(s.Classes) > 0 {
+		return s.Classes[0]
+	}
+	return 0
+}
+
+func (s *StarterPack) DefaultBackground() uint32 {
+	if s != nil && len(s.Backgrounds) > 0 {
+		return s.Backgrounds[0]
+	}
+	return 0
+}
+
+func (s *StarterPack) DefaultPieceStyle() uint32 {
+	if s != nil && len(s.PieceStyles) > 0 {
+		return s.PieceStyles[0]
+	}
+	return 61
+}
+
 type Pet struct {
 	Name               string   `json:"name"`
 	SpriteCount        int      `json:"spriteCount"`

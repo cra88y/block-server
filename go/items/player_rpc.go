@@ -76,11 +76,12 @@ func RpcGetEquipment(ctx context.Context, logger runtime.Logger, db *sql.DB, nk 
 		return "", errors.ErrNoUserIdFound
 	}
 
+	pack := GetStarterPack()
 	equipped := EquipmentResponse{
-		Pet:        DefaultPetID,
-		Class:      DefaultClassID,
-		Background: DefaultBackgroundID,
-		PieceStyle: DefaultPieceStyleID,
+		Pet:        pack.DefaultPet(),
+		Class:      pack.DefaultClass(),
+		Background: pack.DefaultBackground(),
+		PieceStyle: pack.DefaultPieceStyle(),
 	}
 
 	reads := []*runtime.StorageRead{
@@ -114,7 +115,11 @@ func RpcGetEquipment(ctx context.Context, logger runtime.Logger, db *sql.DB, nk 
 			case storageKeyBackground:
 				equipped.Background = data.ID
 			case storageKeyPieceStyle:
-				equipped.PieceStyle = data.ID
+				if data.ID == 0 {
+					equipped.PieceStyle = pack.DefaultPieceStyle()
+				} else {
+					equipped.PieceStyle = data.ID
+				}
 			}
 		} else {
 			logger.WithFields(map[string]interface{}{
@@ -1387,13 +1392,14 @@ func RpcGetUsersLoadouts(ctx context.Context, logger runtime.Logger, db *sql.DB,
 			continue
 		}
 
+		pack := GetStarterPack()
 		loadout := PlayerLoadout{
-			PetID:        DefaultPetID,
+			PetID:        pack.DefaultPet(),
 			PetLevel:     1,
-			ClassID:      DefaultClassID,
+			ClassID:      pack.DefaultClass(),
 			ClassLevel:   1,
-			BackgroundID: DefaultBackgroundID,
-			ThemeID:      DefaultPieceStyleID,
+			BackgroundID: pack.DefaultBackground(),
+			ThemeID:      pack.DefaultPieceStyle(),
 		}
 
 		for _, obj := range objs {
@@ -1411,7 +1417,11 @@ func RpcGetUsersLoadouts(ctx context.Context, logger runtime.Logger, db *sql.DB,
 				case storageKeyBackground:
 					loadout.BackgroundID = data.ID
 				case storageKeyPieceStyle:
-					loadout.ThemeID = data.ID
+					if data.ID == 0 {
+						loadout.ThemeID = pack.DefaultPieceStyle()
+					} else {
+						loadout.ThemeID = data.ID
+					}
 				}
 			}
 		}
