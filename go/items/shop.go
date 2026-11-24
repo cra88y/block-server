@@ -639,7 +639,7 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		logger.Error("%s Failed to decode Apple provider payload: %v", logPrefix, err)
 		return "", errors.ErrInvalidInput
 	}
-	if !strings.EqualFold(providerPayload.AppAccountToken, userID) {
+	if providerPayload.AppAccountToken != "" && !strings.EqualFold(providerPayload.AppAccountToken, userID) {
 		LogCriticalAlert(ctx, logger, fmt.Sprintf("%s CRITICAL: Identity Binding failure!", logPrefix), nil, map[string]interface{}{
 			"appAccountToken": providerPayload.AppAccountToken,
 			"userID":          userID,
@@ -974,49 +974,32 @@ func purchaseFail(requestId, userID string, nk runtime.NakamaModule, logger runt
 	return "", err
 }
 
-// ── Revocation RPC ───────────────────────────────────────────────────────────
+// ── Revocation Handling ───────────────────────────────────────────────────────────
 
-// Handles server-side IAP revocation from Apple App Store Server Notifications or admin action.
-func RpcRevokeIAPPurchase(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
-	var req struct {
-		OriginalTransactionId string `json:"original_transaction_id"`
-		RevocationReason      string `json:"revocation_reason"`
-		UserId                string `json:"user_id,omitempty"` // Used for Server-to-Server webhooks
-	}
-	if err := json.Unmarshal([]byte(payload), &req); err != nil {
-		return "", errors.ErrUnmarshal
-	}
-
-	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-	if !ok || userID == "" {
-		// S2S Execution: Webhook proxy must provide user_id (extracted from appAccountToken)
-		if req.UserId == "" {
-			return "", fmt.Errorf("missing user_id for server-to-server invocation")
-		}
-		userID = req.UserId
-	}
-
-	logPrefix := fmt.Sprintf("[IAP-REVOKE] origTx=%s user=%s", req.OriginalTransactionId, userID)
+// RevokeIAPPurchaseInternal performs transactional revocation across storage and wallet.
+// Called by RpcRevokeIAPPurchase (client StoreKit 2 report) and HandleAppleS2SWebhook (Apple server event).
+func RevokeIAPPurchaseInternal(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, userID, origTxID, reason string) error {
+	logPrefix := fmt.Sprintf("[IAP-REVOKE] origTx=%s user=%s", origTxID, userID)
 
 	// Read grant record
 	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
 		Collection: StorageCollectionIAPPurchases,
-		Key:        req.OriginalTransactionId,
+		Key:        origTxID,
 		UserID:     userID,
 	}})
 	if err != nil || len(objects) == 0 {
 		logger.Warn("%s Unknown grant — no-op", logPrefix)
-		return `{"success":true}`, nil // Not an error
+		return nil // Not an error
 	}
 
 	var grant IAPPurchaseGrant
 	if err := json.Unmarshal([]byte(objects[0].Value), &grant); err != nil {
-		return "", fmt.Errorf("corrupt grant record: %w", err)
+		return fmt.Errorf("corrupt grant record: %w", err)
 	}
 
 	if grant.Status == "revoked" {
 		logger.Info("%s Already revoked", logPrefix)
-		return `{"success":true}`, nil // Idempotent
+		return nil // Idempotent
 	}
 
 	// Update grant record
@@ -1036,7 +1019,7 @@ func RpcRevokeIAPPurchase(ctx context.Context, logger runtime.Logger, db *sql.DB
 
 	if product == nil {
 		logger.Warn("%s Unknown product %s in revocation", logPrefix, grant.ProductId)
-		return `{"success":true}`, nil
+		return nil
 	}
 
 	pending := NewPendingWrites()
@@ -1044,7 +1027,7 @@ func RpcRevokeIAPPurchase(ctx context.Context, logger runtime.Logger, db *sql.DB
 	// Add the grant status update to the atomic batch using OCC Version lock
 	pending.AddStorageWrite(&runtime.StorageWrite{
 		Collection:      StorageCollectionIAPPurchases,
-		Key:             req.OriginalTransactionId,
+		Key:             origTxID,
 		UserID:          userID,
 		Value:           string(grantBytes),
 		PermissionRead:  0,
@@ -1052,13 +1035,30 @@ func RpcRevokeIAPPurchase(ctx context.Context, logger runtime.Logger, db *sql.DB
 		Version:         objects[0].Version, // OCC lock
 	})
 
+	// Read user's account wallet to ensure deduction does not breach Nakama's non-negative balance invariant.
+	account, err := nk.AccountGetId(ctx, userID)
+	if err != nil {
+		logger.Error("%s Failed to get account: %v", logPrefix, err)
+		return errors.ErrCouldNotGetAccount
+	}
+	var wallet map[string]int64
+	if err := json.Unmarshal([]byte(account.Wallet), &wallet); err != nil {
+		return errors.ErrUnmarshal
+	}
+
 	gemDeduction := product.Gems
 	if product.RevokeGemDebt > 0 {
 		gemDeduction = product.RevokeGemDebt
 	}
 
-	if gemDeduction > 0 {
-		pending.AddWalletDeductionWithContext(userID, "gems", int64(gemDeduction), "revoke_purchase", grant.ProductId)
+	currentGems := wallet["gems"]
+	actualDeduction := int64(gemDeduction)
+	if actualDeduction > currentGems {
+		actualDeduction = currentGems // Confiscate remaining gems; avoids MultiUpdate negative-balance rejection
+	}
+
+	if actualDeduction > 0 {
+		pending.AddWalletDeductionWithContext(userID, "gems", actualDeduction, "revoke_purchase", grant.ProductId)
 	}
 
 	mutator := NewInventoryMutator()
@@ -1073,18 +1073,90 @@ func RpcRevokeIAPPurchase(ctx context.Context, logger runtime.Logger, db *sql.DB
 		pending.Merge(invPending)
 	}
 
-	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
-		logger.Error("%s Failed to process revocation: %v", logPrefix, err)
-		return "", errors.ErrInternalError // CRITICAL: Tell Apple to retry later
+	// Revert equipped item to starter pack default if player currently has the revoked item equipped
+	if len(product.Rewards) > 0 {
+		equipReads := []*runtime.StorageRead{
+			{Collection: storageCollectionEquipment, Key: storageKeyPet, UserID: userID},
+			{Collection: storageCollectionEquipment, Key: storageKeyClass, UserID: userID},
+			{Collection: storageCollectionEquipment, Key: storageKeyBackground, UserID: userID},
+			{Collection: storageCollectionEquipment, Key: storageKeyPieceStyle, UserID: userID},
+		}
+		equipObjs, err := nk.StorageRead(ctx, equipReads)
+		if err == nil && len(equipObjs) > 0 {
+			pack := GetStarterPack()
+			for _, reward := range product.Rewards {
+				for _, obj := range equipObjs {
+					if obj == nil {
+						continue
+					}
+					var eq EquipmentData
+					if err := json.Unmarshal([]byte(obj.Value), &eq); err == nil && eq.ID == reward.ItemID {
+						var defaultID uint32
+						switch obj.Key {
+						case storageKeyPet:
+							defaultID = pack.DefaultPet()
+						case storageKeyClass:
+							defaultID = pack.DefaultClass()
+						case storageKeyBackground:
+							defaultID = pack.DefaultBackground()
+						case storageKeyPieceStyle:
+							defaultID = pack.DefaultPieceStyle()
+						}
+						eqBytes, _ := json.Marshal(EquipmentData{ID: defaultID})
+						pending.AddStorageWrite(&runtime.StorageWrite{
+							Collection:      storageCollectionEquipment,
+							Key:             obj.Key,
+							UserID:          userID,
+							Value:           string(eqBytes),
+							PermissionRead:  2,
+							PermissionWrite: 0,
+							Version:         obj.Version, // OCC lock
+						})
+					}
+				}
+			}
+		}
 	}
 
-	// Emit telemetry for IAP revocation
+	if err := CommitPendingWrites(ctx, nk, logger, pending); err != nil {
+		logger.Error("%s Failed to process revocation: %v", logPrefix, err)
+		return errors.ErrInternalError // CRITICAL: Tell Apple to retry later
+	}
+
+	// Emit telemetry for IAP revocation reflecting actual wallet deduction
 	EmitServerTelemetry(logger, userID, "iap_revocation", map[string]interface{}{
 		"product_id":   grant.ProductId,
-		"gems_revoked": gemDeduction,
-		"reason":       req.RevocationReason,
+		"gems_revoked": actualDeduction,
+		"reason":       reason,
 	})
 
-	logger.Info("%s Revoked: reason=%s (Deducted %d gems)", logPrefix, req.RevocationReason, gemDeduction)
+	logger.Info("%s Revoked: reason=%s (Deducted %d gems)", logPrefix, reason, actualDeduction)
+	return nil
+}
+
+// RpcRevokeIAPPurchase handles client-initiated IAP revocation from StoreKit 2 product_revoked events.
+// Strict security invariant: Authenticated clients can ONLY revoke their OWN purchases.
+func RpcRevokeIAPPurchase(ctx context.Context, logger runtime.Logger, db *sql.DB, nk runtime.NakamaModule, payload string) (string, error) {
+	userID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
+	if !ok || userID == "" {
+		return "", errors.ErrNoUserIdFound
+	}
+
+	var req struct {
+		OriginalTransactionId string `json:"original_transaction_id"`
+		RevocationReason      string `json:"revocation_reason"`
+	}
+	if err := json.Unmarshal([]byte(payload), &req); err != nil {
+		return "", errors.ErrUnmarshal
+	}
+
+	if req.OriginalTransactionId == "" {
+		return "", errors.ErrInvalidInput
+	}
+
+	if err := RevokeIAPPurchaseInternal(ctx, logger, db, nk, userID, req.OriginalTransactionId, req.RevocationReason); err != nil {
+		return "", err
+	}
+
 	return `{"success":true}`, nil
 }

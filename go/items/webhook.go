@@ -74,19 +74,7 @@ func HandleAppleS2SWebhook(ctx context.Context, logger runtime.Logger, db *sql.D
 
 	// TODO: Verify JWS ECDSA signatures using Apple's Root CA
 
-	revokeReq := struct {
-		OriginalTransactionId string `json:"original_transaction_id"`
-		RevocationReason      string `json:"revocation_reason"`
-		UserId                string `json:"user_id"`
-	}{
-		OriginalTransactionId: txInfo.OriginalTransactionId,
-		RevocationReason:      "apple_s2s_refund",
-		UserId:                txInfo.AppAccountToken,
-	}
-
-	revokeBytes, _ := json.Marshal(revokeReq)
-
-	_, err = RpcRevokeIAPPurchase(ctx, logger, db, nk, string(revokeBytes))
+	err = RevokeIAPPurchaseInternal(ctx, logger, db, nk, txInfo.AppAccountToken, txInfo.OriginalTransactionId, "apple_s2s_refund")
 	if err != nil {
 		return "", err
 	}

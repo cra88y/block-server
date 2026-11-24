@@ -20,16 +20,23 @@ const (
 	StorageKeyAttributionProfile      = "profile"
 	maxAttributionTokenLength         = 4096
 	minAttributionTokenLength         = 10
-	maxAttributionAttempts            = 3
+	maxAttributionAttempts            = 5
 	attributionTtlSeconds             = 86400 // 24 hours
+	attributionWorkerCount            = 8
+	attributionQueueSize              = 1024
 )
 
 var appleHttpClient = &http.Client{
 	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     90 * time.Second,
+	},
 }
 
 var (
-	attributionQueueChan = make(chan AttributionQueueItem, 256)
+	attributionQueueChan = make(chan AttributionQueueItem, attributionQueueSize)
 	globalLogger         runtime.Logger
 	globalNk             runtime.NakamaModule
 )
@@ -76,7 +83,7 @@ func StartAttributionWorkers(logger runtime.Logger, nk runtime.NakamaModule) {
 	globalLogger = logger
 	globalNk = nk
 	bgCtx := context.Background()
-	for i := 0; i < 2; i++ {
+	for i := 0; i < attributionWorkerCount; i++ {
 		go func(workerID int) {
 			for item := range attributionQueueChan {
 				processAttributionItem(bgCtx, logger, nk, item)
@@ -111,6 +118,7 @@ func InitAttributionQueue(ctx context.Context, logger runtime.Logger, nk runtime
 			break
 		}
 		cursor = nextCursor
+		time.Sleep(20 * time.Millisecond) // Paces recovery to avoid worker channel saturation
 	}
 
 	if recoveredCount > 0 {
@@ -118,13 +126,20 @@ func InitAttributionQueue(ctx context.Context, logger runtime.Logger, nk runtime
 	}
 }
 
-// DispatchAttributionTask non-blockingly pushes a task to the in-memory channel,
-// or spawns an ephemeral worker if the channel buffer is saturated under a surge.
+// DispatchAttributionTask non-blockingly pushes a task to the worker channel,
+// or schedules a delayed re-dispatch if the channel buffer is saturated under a viral surge.
 func DispatchAttributionTask(task AttributionQueueItem) {
 	select {
 	case attributionQueueChan <- task:
 	default:
-		go processAttributionItem(context.Background(), globalLogger, globalNk, task)
+		// Saturated channel under traffic spike. Item is already durable on disk in attribution_queue.
+		time.AfterFunc(15*time.Second, func() {
+			select {
+			case attributionQueueChan <- task:
+			default:
+				// Channel still full; item remains on disk for next recovery or retry cycle
+			}
+		})
 	}
 }
 
@@ -218,8 +233,17 @@ func processAttributionItem(ctx context.Context, logger runtime.Logger, nk runti
 
 	resp, err := appleHttpClient.Do(req)
 	if err != nil {
-		logger.Warn("Network error calling Apple AdServices for %s: %v (will retry)", item.UserID, err)
-		scheduleRetry(item)
+		logger.Warn("Network error calling Apple AdServices for %s: %v", item.UserID, err)
+		item.Attempts++
+		if item.Attempts < maxAttributionAttempts {
+			persistQueueItem(ctx, logger, nk, item)
+			scheduleRetry(item)
+		} else {
+			finalizeAttribution(ctx, logger, nk, item.UserID, UserAttributionRecord{
+				Status:     "failed",
+				ResolvedAt: now,
+			})
+		}
 		return
 	}
 	defer resp.Body.Close()
@@ -258,7 +282,7 @@ func processAttributionItem(ctx context.Context, logger runtime.Logger, nk runti
 		}
 
 	case http.StatusNotFound:
-		// Apple 5-15m indexing delay: increment attempt count on disk and reschedule via non-blocking timer
+		// Apple indexing lag (can take up to 24h): persist attempt count and reschedule
 		item.Attempts++
 		if item.Attempts < maxAttributionAttempts {
 			persistQueueItem(ctx, logger, nk, item)
@@ -280,16 +304,29 @@ func processAttributionItem(ctx context.Context, logger runtime.Logger, nk runti
 		logger.Warn("Apple AdServices HTTP %d for user %s: %s", resp.StatusCode, item.UserID, string(bodyBytes))
 		item.Attempts++
 		if item.Attempts < maxAttributionAttempts {
+			persistQueueItem(ctx, logger, nk, item)
 			scheduleRetry(item)
+		} else {
+			finalizeAttribution(ctx, logger, nk, item.UserID, UserAttributionRecord{
+				Status:     "failed",
+				ResolvedAt: now,
+			})
 		}
 	}
 }
 
-// scheduleRetry uses non-blocking time.AfterFunc to prevent worker pool thread starvation.
+// scheduleRetry uses progressive backoff (5m -> 15m -> 1h -> 4h) via non-blocking time.AfterFunc.
 func scheduleRetry(item AttributionQueueItem) {
-	delay := 2 * time.Minute
-	if item.Attempts > 1 {
+	var delay time.Duration
+	switch item.Attempts {
+	case 1:
 		delay = 5 * time.Minute
+	case 2:
+		delay = 15 * time.Minute
+	case 3:
+		delay = 1 * time.Hour
+	default:
+		delay = 4 * time.Hour
 	}
 	time.AfterFunc(delay, func() {
 		DispatchAttributionTask(item)

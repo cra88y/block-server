@@ -8,3 +8,6 @@ socket:
   write_buffer_size_bytes: 16384
 metrics:
    prometheus_port: 9100
+matchmaker:
+  interval_sec: 3
+  max_intervals: 5
