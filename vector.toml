@@ -4,7 +4,7 @@ address = "0.0.0.0:8686"
 
 [sources.docker_logs]
 type = "docker_logs"
-include_containers = ["nakama"]
+include_labels = ["com.docker.compose.service=nakama"]
 auto_partial_merge = true
 
 [transforms.filter_telemetry]
@@ -153,11 +153,9 @@ source = '''
     "color": color_int
   }
   
-  payload_obj = {
+  . = {
     "embeds": [embed]
   }
-  
-  . = encode_json(payload_obj)
 '''
 
 [sinks.discord_webhook]
@@ -168,7 +166,10 @@ method = "post"
 healthcheck.enabled = false
 
 [sinks.discord_webhook.encoding]
-codec = "text"
+codec = "json"
+
+[sinks.discord_webhook.framing]
+method = "newline_delimited"
 
 [sinks.discord_webhook.request.headers]
 Content-Type = "application/json"

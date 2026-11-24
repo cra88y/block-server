@@ -456,6 +456,14 @@ func CommitPendingWrites(ctx context.Context, nk runtime.NakamaModule, logger ru
 	}
 
 	for _, t := range pending.Telemetry {
+		if t.EventType == "item_acquired" {
+			EmitServerTelemetry(logger, t.UserID, "item_acquired", map[string]interface{}{
+				"category": t.Action,
+				"item_id":  t.ItemID,
+			})
+			continue
+		}
+
 		eventType := t.EventType
 		amount := t.Amount
 		if eventType == "" {

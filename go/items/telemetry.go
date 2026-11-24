@@ -34,7 +34,8 @@ var validEventTypes = map[string]bool{
 	"matchmaking":          true,
 	"store_review_prompted": true,
 	"attribution_submitted": true,
-	"server_error":         true,
+	"item_equipped":         true,
+	"server_error":          true,
 
 	// Network Recovery & Resilience
 	"network_ghost_socket_detected":   true,

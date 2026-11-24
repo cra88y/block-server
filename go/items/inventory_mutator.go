@@ -120,6 +120,13 @@ func (m *InventoryMutator) CompileWrites(ctx context.Context, nk runtime.NakamaM
 				data.Items = append(data.Items, addID)
 				changed = true
 
+				pending.Telemetry = append(pending.Telemetry, PendingTelemetry{
+					UserID:    userID,
+					EventType: "item_acquired",
+					Action:    k,
+					ItemID:    fmt.Sprintf("%d", addID),
+				})
+
 				// Only queue progression init if the item was truly newly added
 				if k == storageKeyPet || k == storageKeyClass {
 					progKey := ProgressionKeyClass

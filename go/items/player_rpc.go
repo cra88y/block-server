@@ -113,7 +113,11 @@ func RpcGetEquipment(ctx context.Context, logger runtime.Logger, db *sql.DB, nk 
 			case storageKeyClass:
 				equipped.Class = data.ID
 			case storageKeyBackground:
-				equipped.Background = data.ID
+				if data.ID == 0 {
+					equipped.Background = pack.DefaultBackground()
+				} else {
+					equipped.Background = data.ID
+				}
 			case storageKeyPieceStyle:
 				if data.ID == 0 {
 					equipped.PieceStyle = pack.DefaultPieceStyle()
@@ -1415,7 +1419,11 @@ func RpcGetUsersLoadouts(ctx context.Context, logger runtime.Logger, db *sql.DB,
 				case storageKeyClass:
 					loadout.ClassID = data.ID
 				case storageKeyBackground:
-					loadout.BackgroundID = data.ID
+					if data.ID == 0 {
+						loadout.BackgroundID = pack.DefaultBackground()
+					} else {
+						loadout.BackgroundID = data.ID
+					}
 				case storageKeyPieceStyle:
 					if data.ID == 0 {
 						loadout.ThemeID = pack.DefaultPieceStyle()
