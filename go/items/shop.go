@@ -431,18 +431,11 @@ func RpcPurchaseShopItem(ctx context.Context, logger runtime.Logger, db *sql.DB,
 		pending.AddWalletDeductionWithContext(userID, "gold", int64(item.Price.Gold), "shop_purchase", req.ShopItemID)
 	}
 
-	// type → storage key
-	typeToKey := map[string]string{
-		"background":  storageKeyBackground,
-		"piece_style": storageKeyPieceStyle,
-		"pet":         storageKeyPet,
-		"class":       storageKeyClass,
-	}
-	storageKey, ok2 := typeToKey[resolvedType]
+	spec, ok2 := NormalizeItemCategory(resolvedType)
 	if !ok2 {
 		return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrInvalidItemType)
 	}
-	itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, storageKey, resolvedItemID)
+	itemPending, err := PrepareItemGrant(ctx, nk, logger, userID, spec.StorageKey, resolvedItemID)
 	if err != nil {
 		return purchaseFail(req.RequestId, userID, nk, logger, errors.ErrInternalError)
 	}
@@ -587,12 +580,13 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		req.TransactionId, req.OriginalTransactionId, userID, req.ProductID)
 
 	if !isIAPEnabledForUser(ctx, nk, userID) {
-		logger.Warn("%s Purchase rejected: IAP not enabled for user", logPrefix)
+		logger.Warn("%s Purchase blocked: IAP freeze active", logPrefix)
 		EmitServerTelemetry(logger, userID, "iap_rejected", map[string]interface{}{
 			"product_id": req.ProductID,
 			"reason":     "gate_closed",
 		})
-		return "", errors.ErrItemNotAvailable
+		// Retryable unavailable code (14 -> HTTP 503) so clients preserve StoreKit transactions during freezes.
+		return "", runtime.NewError("iap temporarily disabled", 14)
 	}
 
 	resp, err := nk.PurchaseValidateApple(ctx, userID, req.JwsRepresentation, true, os.Getenv("IAP_APPLE_SHARED_SECRET"))
@@ -639,7 +633,7 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		logger.Error("%s Failed to decode Apple provider payload: %v", logPrefix, err)
 		return "", errors.ErrInvalidInput
 	}
-	if providerPayload.AppAccountToken != "" && !strings.EqualFold(providerPayload.AppAccountToken, userID) {
+	if providerPayload.AppAccountToken == "" || !strings.EqualFold(providerPayload.AppAccountToken, userID) {
 		LogCriticalAlert(ctx, logger, fmt.Sprintf("%s CRITICAL: Identity Binding failure!", logPrefix), nil, map[string]interface{}{
 			"appAccountToken": providerPayload.AppAccountToken,
 			"userID":          userID,
@@ -708,17 +702,27 @@ func RpcValidateIAPReceipt(ctx context.Context, logger runtime.Logger, db *sql.D
 		} else if reward.Type == "lootbox" {
 			for i := 0; i < reward.Amount; i++ {
 				_, boxWrite, err := PrepareCreateLootbox(userID, reward.ID)
-				if err == nil && boxWrite != nil {
+				if err != nil {
+					logger.Error("%s Failed to prepare bundle lootbox %s: %v", logPrefix, reward.ID, err)
+					return "", errors.ErrInternalError
+				}
+				if boxWrite != nil {
 					pending.AddStorageWrite(boxWrite)
 				}
 			}
-		} else if reward.Type == "pet" || reward.Type == "class" || reward.Type == "piece_style" || reward.Type == "background" {
+		} else if _, ok := NormalizeItemCategory(reward.Type); ok {
 			mutator.AddItem(reward.Type, reward.ItemID)
+		} else {
+			logger.Warn("%s Unrecognized IAP reward type: %s", logPrefix, reward.Type)
 		}
 	}
 
 	invPending, err := mutator.CompileWrites(ctx, nk, logger, userID)
-	if err == nil && invPending != nil {
+	if err != nil {
+		logger.Error("%s Failed to compile IAP inventory grant: %v", logPrefix, err)
+		return "", errors.ErrInternalError
+	}
+	if invPending != nil {
 		pending.Merge(invPending)
 	}
 
@@ -808,17 +812,12 @@ func getUserOwnedItems(ctx context.Context, nk runtime.NakamaModule, userID stri
 }
 
 func isItemOwned(owned map[string][]uint32, itemType string, itemID uint32) bool {
-	var key string
-	switch itemType {
-	case "background":
-		key = storageKeyBackground
-	case "piece_style":
-		key = storageKeyPieceStyle
-	default:
+	spec, ok := NormalizeItemCategory(itemType)
+	if !ok {
 		return false
 	}
 
-	items, exists := owned[key]
+	items, exists := owned[spec.StorageKey]
 	if !exists {
 		return false
 	}
@@ -1063,13 +1062,17 @@ func RevokeIAPPurchaseInternal(ctx context.Context, logger runtime.Logger, db *s
 
 	mutator := NewInventoryMutator()
 	for _, reward := range product.Rewards {
-		if reward.Type == "pet" || reward.Type == "class" || reward.Type == "piece_style" || reward.Type == "background" {
+		if _, ok := NormalizeItemCategory(reward.Type); ok {
 			mutator.RemoveItem(reward.Type, reward.ItemID)
 		}
 	}
 
 	invPending, err := mutator.CompileWrites(ctx, nk, logger, userID)
-	if err == nil && invPending != nil {
+	if err != nil {
+		logger.Error("%s Failed to compile revocation inventory writes: %v", logPrefix, err)
+		return errors.ErrInternalError
+	}
+	if invPending != nil {
 		pending.Merge(invPending)
 	}
 
@@ -1082,27 +1085,24 @@ func RevokeIAPPurchaseInternal(ctx context.Context, logger runtime.Logger, db *s
 			{Collection: storageCollectionEquipment, Key: storageKeyPieceStyle, UserID: userID},
 		}
 		equipObjs, err := nk.StorageRead(ctx, equipReads)
-		if err == nil && len(equipObjs) > 0 {
+		if err != nil {
+			logger.Error("%s Failed to read equipment for revocation cleanup: %v", logPrefix, err)
+			return errors.ErrCouldNotReadStorage
+		}
+		if len(equipObjs) > 0 {
 			pack := GetStarterPack()
 			for _, reward := range product.Rewards {
+				spec, ok := NormalizeItemCategory(reward.Type)
+				if !ok {
+					continue
+				}
 				for _, obj := range equipObjs {
-					if obj == nil {
+					if obj == nil || obj.Key != spec.StorageKey {
 						continue
 					}
 					var eq EquipmentData
 					if err := json.Unmarshal([]byte(obj.Value), &eq); err == nil && eq.ID == reward.ItemID {
-						var defaultID uint32
-						switch obj.Key {
-						case storageKeyPet:
-							defaultID = pack.DefaultPet()
-						case storageKeyClass:
-							defaultID = pack.DefaultClass()
-						case storageKeyBackground:
-							defaultID = pack.DefaultBackground()
-						case storageKeyPieceStyle:
-							defaultID = pack.DefaultPieceStyle()
-						}
-						eqBytes, _ := json.Marshal(EquipmentData{ID: defaultID})
+						eqBytes, _ := json.Marshal(EquipmentData{ID: spec.DefaultID(pack)})
 						pending.AddStorageWrite(&runtime.StorageWrite{
 							Collection:      storageCollectionEquipment,
 							Key:             obj.Key,

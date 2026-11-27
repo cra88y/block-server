@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"block-server/errors"
@@ -48,7 +49,7 @@ func (s *StarterPack) DefaultBackground() uint32 {
 	if s != nil && len(s.Backgrounds) > 0 {
 		return s.Backgrounds[0]
 	}
-	return 0
+	return 30
 }
 
 func (s *StarterPack) DefaultPieceStyle() uint32 {
@@ -59,31 +60,31 @@ func (s *StarterPack) DefaultPieceStyle() uint32 {
 }
 
 type Pet struct {
-	Name               string   `json:"name"`
-	SpriteCount        int      `json:"spriteCount"`
-	AbilityIDs         []uint32 `json:"abilityIds"`
-	AbilitySet         map[uint32]struct{}
-	BackgroundIDs      []uint32 `json:"backgroundIds"`
-	StyleIDs           []uint32 `json:"styleIds"`
-	LevelTreeName      string   `json:"levelTreeName"`
-	HealthCurveID      string   `json:"healthCurveId"`
-	AttackCurveID      string   `json:"attackCurveId"`
-	PetIDs             []uint32 `json:"petIds"`
-	ClassIDs           []uint32 `json:"classIds"`
+	Name          string   `json:"name"`
+	SpriteCount   int      `json:"spriteCount"`
+	AbilityIDs    []uint32 `json:"abilityIds"`
+	AbilitySet    map[uint32]struct{}
+	BackgroundIDs []uint32 `json:"backgroundIds"`
+	StyleIDs      []uint32 `json:"styleIds"`
+	LevelTreeName string   `json:"levelTreeName"`
+	HealthCurveID string   `json:"healthCurveId"`
+	AttackCurveID string   `json:"attackCurveId"`
+	PetIDs        []uint32 `json:"petIds"`
+	ClassIDs      []uint32 `json:"classIds"`
 }
 
 type Class struct {
-	Name               string   `json:"name"`
-	SpriteCount        int      `json:"spriteCount"`
-	AbilityIDs         []uint32 `json:"abilityIds"`
-	AbilitySet         map[uint32]struct{}
-	BackgroundIDs      []uint32 `json:"backgroundIds"`
-	StyleIDs           []uint32 `json:"styleIds"`
-	LevelTreeName      string   `json:"levelTreeName"`
-	HealthCurveID      string   `json:"healthCurveId"`
-	AttackCurveID      string   `json:"attackCurveId"`
-	PetIDs             []uint32 `json:"petIds"`
-	ClassIDs           []uint32 `json:"classIds"`
+	Name          string   `json:"name"`
+	SpriteCount   int      `json:"spriteCount"`
+	AbilityIDs    []uint32 `json:"abilityIds"`
+	AbilitySet    map[uint32]struct{}
+	BackgroundIDs []uint32 `json:"backgroundIds"`
+	StyleIDs      []uint32 `json:"styleIds"`
+	LevelTreeName string   `json:"levelTreeName"`
+	HealthCurveID string   `json:"healthCurveId"`
+	AttackCurveID string   `json:"attackCurveId"`
+	PetIDs        []uint32 `json:"petIds"`
+	ClassIDs      []uint32 `json:"classIds"`
 }
 
 type Background struct {
@@ -274,12 +275,12 @@ type DailyJourney struct {
 // getDailyJourneyState reads state from storage; returns initialized struct for new users.
 func getDailyJourneyState(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule) (DailyJourney, *api.StorageObject, error) {
 	var data DailyJourney
-	
+
 	userID, err := GetUserIDFromContext(ctx, logger)
 	if err != nil {
 		return data, nil, errors.ErrNoUserIdFound
 	}
-	
+
 	objects, err := nk.StorageRead(ctx, []*runtime.StorageRead{{
 		Collection: storageCollectionProgression,
 		Key:        ProgressionKeyDailyJourney,
@@ -313,7 +314,7 @@ func getDailyJourneyState(ctx context.Context, logger runtime.Logger, nk runtime
 func CheckAndResetDailyJourney(dj *DailyJourney) bool {
 	nowUTC := time.Now().UTC()
 	midnightUTC := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC)
-	
+
 	if time.Unix(dj.ResetUnix, 0).UTC().Before(midnightUTC) {
 		dj.DailyMatches = 0
 		dj.DailyWarmupClaimed = false
@@ -518,6 +519,29 @@ type MatchHistoryResponse struct {
 // GetUsersLoadoutsPayload is the request payload for get_users_loadouts
 type GetUsersLoadoutsPayload struct {
 	UserIDs []string `json:"user_ids"`
+}
+
+type ItemCategorySpec struct {
+	StorageKey   string
+	SingularType string
+	DefaultID    func(*StarterPack) uint32
+}
+
+var itemCategorySpecs = map[string]ItemCategorySpec{
+	"pet":          {StorageKey: storageKeyPet, SingularType: "pet", DefaultID: (*StarterPack).DefaultPet},
+	"pets":         {StorageKey: storageKeyPet, SingularType: "pet", DefaultID: (*StarterPack).DefaultPet},
+	"class":        {StorageKey: storageKeyClass, SingularType: "class", DefaultID: (*StarterPack).DefaultClass},
+	"classes":      {StorageKey: storageKeyClass, SingularType: "class", DefaultID: (*StarterPack).DefaultClass},
+	"background":   {StorageKey: storageKeyBackground, SingularType: "background", DefaultID: (*StarterPack).DefaultBackground},
+	"backgrounds":  {StorageKey: storageKeyBackground, SingularType: "background", DefaultID: (*StarterPack).DefaultBackground},
+	"piece_style":  {StorageKey: storageKeyPieceStyle, SingularType: "piece_style", DefaultID: (*StarterPack).DefaultPieceStyle},
+	"piece_styles": {StorageKey: storageKeyPieceStyle, SingularType: "piece_style", DefaultID: (*StarterPack).DefaultPieceStyle},
+}
+
+// NormalizeItemCategory maps canonical singular/plural category tokens to storage key, singular wire type, and starter default.
+func NormalizeItemCategory(raw string) (ItemCategorySpec, bool) {
+	spec, ok := itemCategorySpecs[strings.ToLower(strings.TrimSpace(raw))]
+	return spec, ok
 }
 
 // PlayerLoadout represents the authoritative stats for a player entering a match

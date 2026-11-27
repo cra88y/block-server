@@ -235,33 +235,18 @@ func PrepareRewardItems(ctx context.Context, nk runtime.NakamaModule, logger run
 			}
 
 		case "backgrounds", "piece_styles", "pets", "classes":
-			storageKey := storageKeyBackground
-			if rewardType == "piece_styles" {
-				storageKey = storageKeyPieceStyle
-			} else if rewardType == "pets" {
-				storageKey = storageKeyPet
-			} else if rewardType == "classes" {
-				storageKey = storageKeyClass
-			}
-
-			singularType := rewardType
-			if rewardType == "backgrounds" {
-				singularType = "background"
-			} else if rewardType == "piece_styles" {
-				singularType = "piece_style"
-			} else if rewardType == "pets" {
-				singularType = "pet"
-			} else if rewardType == "classes" {
-				singularType = "class"
+			spec, ok := NormalizeItemCategory(rewardType)
+			if !ok {
+				continue
 			}
 
 			rewardIDs := GetRewardItemIDs(itemType, itemID, rewardType, amount)
 
 			for _, id := range rewardIDs {
-				mutator.AddItem(storageKey, id)
+				mutator.AddItem(spec.StorageKey, id)
 				grantedItems = append(grantedItems, notify.ItemGrant{
 					ID:   id,
-					Type: singularType,
+					Type: spec.SingularType,
 				})
 			}
 		default:

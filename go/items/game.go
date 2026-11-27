@@ -254,7 +254,7 @@ func GetStarterPack() *StarterPack {
 	return &StarterPack{
 		Pets:        []uint32{0},
 		Classes:     []uint32{0},
-		Backgrounds: []uint32{0},
+		Backgrounds: []uint32{30},
 		PieceStyles: []uint32{61},
 	}
 }

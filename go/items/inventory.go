@@ -36,17 +36,11 @@ func PrepareEquipDefaults(ctx context.Context, nk runtime.NakamaModule, userID s
 			version = objects[i].Version
 		}
 
-		var itemID uint32
-		switch key {
-		case storageKeyPet:
-			itemID = pack.DefaultPet()
-		case storageKeyClass:
-			itemID = pack.DefaultClass()
-		case storageKeyBackground:
-			itemID = pack.DefaultBackground()
-		case storageKeyPieceStyle:
-			itemID = pack.DefaultPieceStyle()
+		spec, ok := NormalizeItemCategory(key)
+		if !ok {
+			continue
 		}
+		itemID := spec.DefaultID(pack)
 
 		data := EquipmentData{ID: itemID}
 		value, err := json.Marshal(data)

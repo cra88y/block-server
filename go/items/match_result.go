@@ -315,6 +315,7 @@ func RpcSubmitMatchResult(ctx context.Context, logger runtime.Logger, db *sql.DB
 		}
 	}
 
+	req.MatchDurationSec = clampMatchDurationSec(activeMatch, req.MatchDurationSec, time.Now().UnixMilli())
 	validateRounds(ctx, nk, &req, userID, logger, activeMatch)
 
 	// Consensus check (unified path: solo short-circuits in resolveMatchConsensus)
@@ -883,6 +884,27 @@ func resolveMatchConsensus(ctx context.Context, nk runtime.NakamaModule, logger 
 	}
 
 	return &oppRecord, ConsensusResultOk, nil
+}
+
+// clampMatchDurationSec bounds client-reported active play duration against server StartTime wall-clock elapsed.
+func clampMatchDurationSec(activeMatch *ActiveMatch, reportedSec int, nowMs int64) int {
+	if activeMatch == nil || activeMatch.StartTime <= 0 {
+		if reportedSec < 0 {
+			return 0
+		}
+		return reportedSec
+	}
+	wallSec := int((nowMs - activeMatch.StartTime) / 1000)
+	if wallSec < 0 {
+		wallSec = 0
+	}
+	if reportedSec <= 0 {
+		return wallSec
+	}
+	if reportedSec > wallSec+2 {
+		return wallSec
+	}
+	return reportedSec
 }
 
 func clearActiveMatch(ctx context.Context, nk runtime.NakamaModule, logger runtime.Logger, userID string) {

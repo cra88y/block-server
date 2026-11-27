@@ -30,34 +30,20 @@ func NewInventoryMutator() *InventoryMutator {
 
 // AddItem queues an item to be granted.
 func (m *InventoryMutator) AddItem(itemType string, itemID uint32) {
-	key := m.resolveStorageKey(itemType)
-	if key == "" {
+	spec, ok := NormalizeItemCategory(itemType)
+	if !ok {
 		return
 	}
-	m.adds[key] = append(m.adds[key], itemID)
+	m.adds[spec.StorageKey] = append(m.adds[spec.StorageKey], itemID)
 }
 
 // RemoveItem queues an item for surgical revocation.
 func (m *InventoryMutator) RemoveItem(itemType string, itemID uint32) {
-	key := m.resolveStorageKey(itemType)
-	if key == "" {
+	spec, ok := NormalizeItemCategory(itemType)
+	if !ok {
 		return
 	}
-	m.removes[key] = append(m.removes[key], itemID)
-}
-
-func (m *InventoryMutator) resolveStorageKey(itemType string) string {
-	switch itemType {
-	case "pet", storageKeyPet:
-		return storageKeyPet
-	case "class", storageKeyClass:
-		return storageKeyClass
-	case "background", storageKeyBackground:
-		return storageKeyBackground
-	case "piece_style", storageKeyPieceStyle:
-		return storageKeyPieceStyle
-	}
-	return ""
+	m.removes[spec.StorageKey] = append(m.removes[spec.StorageKey], itemID)
 }
 
 // CompileWrites executes a single database read batch, applies in-memory mutations,
